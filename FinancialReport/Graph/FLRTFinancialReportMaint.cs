@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using PX.Data;
 using PX.Data.BQL.Fluent;
 using System.Collections.Generic;
@@ -252,7 +252,7 @@ namespace FinancialReport
             return accountData;
         }
 
-        private FinancialApiData FetchAllApiData(string period)
+        private FinancialApiData FetchAllApiData(string branch, string ledger, string period)
         {
             string accessToken = AuthenticateAndGetToken();
             using (HttpClient client = new HttpClient())
@@ -276,8 +276,8 @@ namespace FinancialReport
                     "790000", "999999"
                 };
 
-                // Fetch data for the provided period
-                var accountData = FetchEndingBalances(client, "SOFT", "ACTUALSOFT", period, accounts);
+                // 🟢 Use the selected Branch and Ledger dynamically
+                var accountData = FetchEndingBalances(client, branch, ledger, period, accounts);
 
                 // Build the result object
                 var apiData = new FinancialApiData();
@@ -309,6 +309,27 @@ namespace FinancialReport
                 }
             }
         }
+
+        protected void FLRTFinancialReport_Branch_FieldUpdated(PXCache cache, PXFieldUpdatedEventArgs e)
+        {
+            var row = (FLRTFinancialReport)e.Row;
+            if (row != null && string.IsNullOrEmpty(row.Branch))
+            {
+                PXTrace.WriteError("Branch cannot be empty.");
+                throw new PXException(Messages.PleaseSelectABranch);
+            }
+        }
+
+        protected void FLRTFinancialReport_Ledger_FieldUpdated(PXCache cache, PXFieldUpdatedEventArgs e)
+        {
+            var row = (FLRTFinancialReport)e.Row;
+            if (row != null && string.IsNullOrEmpty(row.Ledger))
+            {
+                PXTrace.WriteError("Ledger cannot be empty.");
+                throw new PXException(Messages.PleaseSelectALedger);
+            }
+        }
+
 
         public PXSave<FLRTFinancialReport> Save;
         public PXCancel<FLRTFinancialReport> Cancel;
@@ -342,6 +363,16 @@ namespace FinancialReport
                 if (selectedRecord.Noteid == null)
                     throw new PXException(Messages.TemplateHasNoFiles);
 
+                // 🟢 Step 2: Retrieve dynamic Branch & Ledger from the UI
+                string branch = selectedRecord?.Branch;
+                string ledger = selectedRecord?.Ledger;
+
+                if (string.IsNullOrEmpty(branch))
+                    throw new PXException(Messages.PleaseSelectABranch);
+
+                if (string.IsNullOrEmpty(ledger))
+                    throw new PXException(Messages.PleaseSelectALedger);
+
                 // Fetch template file content
                 var templateFileContent = GetFileContent(selectedRecord.Noteid);
                 if (templateFileContent == null || templateFileContent.Length == 0)
@@ -359,11 +390,11 @@ namespace FinancialReport
                 int currYearInt = int.TryParse(currYear, out int parsedYear) ? parsedYear : DateTime.Now.Year;
                 string prevYear = (currYearInt - 1).ToString();
 
-                PXTrace.WriteInformation($"Fetching data for CurrYear: {currYear}");
-                var currYearData = FetchAllApiData($"12{currYear}"); // Fetch data for the current year
+                PXTrace.WriteInformation($"Fetching data for CurrYear: {currYear}, Branch: {branch}, Ledger: {ledger}");
+                var currYearData = FetchAllApiData(branch, ledger, $"12{currYear}"); // ✅ Corrected
 
-                PXTrace.WriteInformation($"Fetching data for PrevYear: {prevYear}");
-                var prevYearData = FetchAllApiData($"12{prevYear}"); // Fetch data for the previous year
+                PXTrace.WriteInformation($"Fetching data for PrevYear: {prevYear}, Branch: {branch}, Ledger: {ledger}");
+                var prevYearData = FetchAllApiData(branch, ledger, $"12{prevYear}"); // ✅ Corrected
 
                 // Step 3: Prepare placeholder data (use the fetched data)
                 var placeholderData = GetPlaceholderData(currYearData, prevYearData);

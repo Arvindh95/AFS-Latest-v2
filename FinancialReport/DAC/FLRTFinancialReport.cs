@@ -90,5 +90,21 @@ namespace FinancialReport
     public virtual string CurrYear { get; set; }
     public abstract class currYear : PX.Data.BQL.BqlString.Field<currYear> { }
 
+    #region Branch
+    [PXDBString(10, IsUnicode = true)]
+    [PXUIField(DisplayName = "Branch")]
+    [PXSelector(typeof(Search<Branch.branchCD>))]
+    public virtual string Branch { get; set; }
+    public abstract class branch : PX.Data.BQL.BqlString.Field<branch> { }
+    #endregion
+
+    #region Ledger
+    [PXDBString(20, IsUnicode = true)]
+    [PXUIField(DisplayName = "Ledger")]
+    [PXSelector(typeof(Search<Ledger.ledgerCD>), typeof(Ledger.descr))]
+    public virtual string Ledger { get; set; }
+    public abstract class ledger : PX.Data.BQL.BqlString.Field<ledger> { }
+    #endregion
+
     }
 }
