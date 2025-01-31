@@ -387,14 +387,28 @@ namespace FinancialReport
 
                 // Step 2: Fetch data for CurrYear and PrevYear
                 string currYear = selectedRecord?.CurrYear ?? DateTime.Now.ToString("yyyy");
+                string selectedMonth = selectedRecord?.FinancialMonth ?? "12"; // Default to December
+                string selectedPeriod = $"{selectedMonth}{currYear}";
                 int currYearInt = int.TryParse(currYear, out int parsedYear) ? parsedYear : DateTime.Now.Year;
                 string prevYear = (currYearInt - 1).ToString();
 
-                PXTrace.WriteInformation($"Fetching data for CurrYear: {currYear}, Branch: {branch}, Ledger: {ledger}");
-                var currYearData = FetchAllApiData(branch, ledger, $"12{currYear}"); // ✅ Corrected
+                //PXTrace.WriteInformation($"Fetching data for CurrYear: {currYear}, Branch: {branch}, Ledger: {ledger}");
+                //var currYearData = FetchAllApiData(branch, ledger, $"12{currYear}"); 
 
-                PXTrace.WriteInformation($"Fetching data for PrevYear: {prevYear}, Branch: {branch}, Ledger: {ledger}");
-                var prevYearData = FetchAllApiData(branch, ledger, $"12{prevYear}"); // ✅ Corrected
+                //PXTrace.WriteInformation($"Fetching data for PrevYear: {prevYear}, Branch: {branch}, Ledger: {ledger}");
+                //var prevYearData = FetchAllApiData(branch, ledger, $"12{prevYear}");                
+
+                PXTrace.WriteInformation($"Fetching data for Period: {selectedPeriod}, Branch: {branch}, Ledger: {ledger}");
+                var currYearData = FetchAllApiData(branch, ledger, selectedPeriod);
+
+                // Compute previous year's period (same month, previous year)
+                string prevYearPeriod = selectedMonth + prevYear;
+
+                PXTrace.WriteInformation($"Fetching data for Prev Year Period: {prevYearPeriod}, Branch: {branch}, Ledger: {ledger}");
+                var prevYearData = FetchAllApiData(branch, ledger, prevYearPeriod);
+
+
+
 
                 // Step 3: Prepare placeholder data (use the fetched data)
                 var placeholderData = GetPlaceholderData(currYearData, prevYearData);
@@ -420,6 +434,7 @@ namespace FinancialReport
         private Dictionary<string, string> GetPlaceholderData(FinancialApiData currYearData, FinancialApiData prevYearData)
         {
             var selectedRecord = FinancialReport.Current;
+            string selectedMonth = selectedRecord?.FinancialMonth ?? "12"; // Default to December
             string currYear = selectedRecord?.CurrYear ?? DateTime.Now.ToString("yyyy");
 
             // Validate CurrYear
@@ -430,8 +445,14 @@ namespace FinancialReport
             int currYearInt = int.TryParse(currYear, out int parsedYear) ? parsedYear : DateTime.Now.Year;
             string prevYear = (currYearInt - 1).ToString();
 
+
+            // ✅ Convert "01" to "January", "02" to "February", etc.
+            int monthNumber = int.Parse(selectedMonth);
+            string monthName = new DateTime(1, monthNumber, 1).ToString("MMMM");
+
             var placeholderData = new Dictionary<string, string>
             {
+                { "{{financialMonth}}", monthName},
                 { "{{branchName}}", "Censof-Test" },
                 { "{{testData}}", DateTime.Now.ToShortDateString() },
                 { "{{month/year}}", DateTime.Now.ToString("MMMM dd, yyyy") },
