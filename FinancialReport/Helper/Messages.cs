@@ -29,5 +29,8 @@ namespace FinancialReport
         public const string FailedToSelectBranch = "Please select a Branch";
         public const string FailedToSelectLedger = "Please select a Ledger";
         public const string MissingConfig = "Missing Config. Check Web Configurations";
+        public const string PleaseSelectABranch = "Please select a Branch";
+        public const string PleaseSelectALedger = "Please select a Ledger";
+
     }
 }
