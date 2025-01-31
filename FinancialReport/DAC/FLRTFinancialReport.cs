@@ -104,7 +104,17 @@ namespace FinancialReport
     [PXSelector(typeof(Search<Ledger.ledgerCD>), typeof(Ledger.descr))]
     public virtual string Ledger { get; set; }
     public abstract class ledger : PX.Data.BQL.BqlString.Field<ledger> { }
+        #endregion
+
+    #region FinancialMonth
+    [PXDBString(2, IsFixed = true)]
+    [PXDefault("12")] // Default to December
+    [PXUIField(DisplayName = "Financial Month")]
+    [PXStringList(new string[]{"01", "02", "03", "04", "05", "06","07", "08", "09", "10", "11", "12"},new string[]{"January", "February", "March", "April", "May", "June","July", "August", "September", "October", "November", "December"})]
+    public virtual string FinancialMonth { get; set; }
+    public abstract class financialMonth : PX.Data.BQL.BqlString.Field<financialMonth> { }
     #endregion
+
 
     }
 }
