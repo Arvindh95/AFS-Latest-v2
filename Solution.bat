@@ -1,0 +1,1 @@
+"C:\TCourseInstances\Acumatica_PDFGen\App_Data\Projects\FinancialReport\FinancialReport.sln"
