@@ -104,7 +104,7 @@ namespace FinancialReport
     [PXSelector(typeof(Search<Ledger.ledgerCD>), typeof(Ledger.descr))]
     public virtual string Ledger { get; set; }
     public abstract class ledger : PX.Data.BQL.BqlString.Field<ledger> { }
-        #endregion
+    #endregion
 
     #region FinancialMonth
     [PXDBString(2, IsFixed = true)]
@@ -114,6 +114,14 @@ namespace FinancialReport
     public virtual string FinancialMonth { get; set; }
     public abstract class financialMonth : PX.Data.BQL.BqlString.Field<financialMonth> { }
     #endregion
+
+    #region GeneratedFileID
+    [PXDBGuid]
+    [PXUIField(DisplayName = "Generated File ID", Visible = true)]
+    public virtual Guid? GeneratedFileID { get; set; }
+    public abstract class generatedFileID : PX.Data.BQL.BqlGuid.Field<generatedFileID> { }
+    #endregion
+
 
 
     }
