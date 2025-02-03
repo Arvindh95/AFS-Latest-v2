@@ -31,6 +31,8 @@ namespace FinancialReport
         public const string MissingConfig = "Missing Config. Check Web Configurations";
         public const string PleaseSelectABranch = "Please select a Branch";
         public const string PleaseSelectALedger = "Please select a Ledger";
+        public const string NoRecordIsSelected = "No record is selected";
+        public const string NoGeneratedFile = "No generated file is available for download. Please generate the report first.";
 
     }
 }

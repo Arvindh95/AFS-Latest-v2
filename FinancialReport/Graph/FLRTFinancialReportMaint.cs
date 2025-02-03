@@ -13,6 +13,7 @@ using DocumentFormat.OpenXml.Wordprocessing;
 using Newtonsoft.Json.Linq;
 using System.Net.Http.Headers;
 using System.Configuration;
+using System.Collections;
 
 namespace FinancialReport
 {
@@ -308,6 +309,7 @@ namespace FinancialReport
                     item.Selected = false;
                 }
             }
+
         }
 
         protected void FLRTFinancialReport_Branch_FieldUpdated(PXCache cache, PXFieldUpdatedEventArgs e)
@@ -334,13 +336,64 @@ namespace FinancialReport
         public PXSave<FLRTFinancialReport> Save;
         public PXCancel<FLRTFinancialReport> Cancel;
 
+        //public PXAction<FLRTFinancialReport> GenerateReport;
+        //[PXButton(CommitChanges = false)]
+        //[PXUIField(DisplayName = "Generate Report")]
+        //protected virtual void generateReport()
+        //{
+        //    GenerateFinancialReport();
+        //    PXTrace.WriteInformation("Generate Report button was pressed.");
+        //}
+
         public PXAction<FLRTFinancialReport> GenerateReport;
         [PXButton(CommitChanges = false)]
         [PXUIField(DisplayName = "Generate Report")]
-        protected virtual void generateReport()
+        protected virtual IEnumerable generateReport(PXAdapter adapter)
         {
-            GenerateFinancialReport();
-            PXTrace.WriteInformation("Generate Report button was pressed.");
+            // Get the current selected record
+            FLRTFinancialReport selectedRecord = FinancialReport.Cache.Cached
+                                .Cast<FLRTFinancialReport>()
+                                .FirstOrDefault(item => item.Selected == true);
+
+            if (selectedRecord == null)
+                throw new PXException(Messages.PleaseSelectTemplate);
+            if (selectedRecord.Noteid == null)
+                throw new PXException(Messages.TemplateHasNoFiles);
+
+            // Persist the record and ensure its state is stored in the database.
+            selectedRecord.Selected = true;
+            FinancialReport.Update(selectedRecord);
+            Actions.PressSave();
+
+            int? reportID = selectedRecord.ReportID;
+            if (reportID == null)
+                throw new PXException(Messages.PleaseSelectTemplate);
+
+            // Start the background operation.
+            PXLongOperation.StartOperation(this, () =>
+            {
+                FLRTFinancialReportMaint reportGraph = PXGraph.CreateInstance<FLRTFinancialReportMaint>();
+                // Retrieve the record from the database using ReportID.
+                FLRTFinancialReport dbRecord = PXSelect<FLRTFinancialReport,
+                    Where<FLRTFinancialReport.reportID, Equal<Required<FLRTFinancialReport.reportID>>>>
+                    .Select(reportGraph, reportID);
+
+                if (dbRecord == null)
+                    throw new PXException(Messages.FailedToRetrieveFile);
+                if (dbRecord.Noteid == null)
+                    throw new PXException(Messages.TemplateHasNoFiles);
+
+                // Set the record explicitly for the background graph.
+                reportGraph.FinancialReport.Current = dbRecord;
+
+                // Generate the report.
+                reportGraph.GenerateFinancialReport();
+
+                // Log or store the file ID so the UI can later display a download link.
+                PXTrace.WriteInformation("Report has been generated and is ready for download.");
+            });
+
+            return adapter.Get();
         }
 
         #endregion
@@ -351,81 +404,71 @@ namespace FinancialReport
         {
             try
             {
-                // Step 1: Get the selected record
-                var selectedRecord = FinancialReport.Cache
-                    .Cached
-                    .Cast<FLRTFinancialReport>()
-                    .FirstOrDefault(item => item.Selected == true);
-
-                if (selectedRecord == null)
+                // Use the persisted current record.
+                var currentRecord = FinancialReport.Current;
+                if (currentRecord == null)
                     throw new PXException(Messages.PleaseSelectTemplate);
-
-                if (selectedRecord.Noteid == null)
+                if (currentRecord.Noteid == null)
                     throw new PXException(Messages.TemplateHasNoFiles);
 
-                // 🟢 Step 2: Retrieve dynamic Branch & Ledger from the UI
-                string branch = selectedRecord?.Branch;
-                string ledger = selectedRecord?.Ledger;
+                // Use currentRecord directly (avoid searching the cache for Selected).
+                string branch = currentRecord.Branch;
+                string ledger = currentRecord.Ledger;
 
                 if (string.IsNullOrEmpty(branch))
                     throw new PXException(Messages.PleaseSelectABranch);
-
                 if (string.IsNullOrEmpty(ledger))
                     throw new PXException(Messages.PleaseSelectALedger);
 
                 // Fetch template file content
-                var templateFileContent = GetFileContent(selectedRecord.Noteid);
+                var templateFileContent = GetFileContent(currentRecord.Noteid);
                 if (templateFileContent == null || templateFileContent.Length == 0)
                     throw new PXException(Messages.TemplateFileIsEmpty);
 
                 // Create paths for template and output
-                string templatePath = Path.Combine(Path.GetTempPath(), $"{selectedRecord.ReportCD}_Template.docx");
+                string templatePath = Path.Combine(Path.GetTempPath(), $"{currentRecord.ReportCD}_Template.docx");
                 File.WriteAllBytes(templatePath, templateFileContent);
 
-                string uniqueFileName = $"{selectedRecord.ReportCD}_Generated_{DateTime.Now:yyyyMMdd_HHmmssfff}.docx";
+                string uniqueFileName = $"{currentRecord.ReportCD}_Generated_{DateTime.Now:yyyyMMdd_HHmmssfff}.docx";
                 string outputPath = Path.Combine(Path.GetTempPath(), uniqueFileName);
 
-                // Step 2: Fetch data for CurrYear and PrevYear
-                string currYear = selectedRecord?.CurrYear ?? DateTime.Now.ToString("yyyy");
-                string selectedMonth = selectedRecord?.FinancialMonth ?? "12"; // Default to December
+                // Determine periods for current and previous years.
+                string currYear = currentRecord.CurrYear ?? DateTime.Now.ToString("yyyy");
+                string selectedMonth = currentRecord.FinancialMonth ?? "12"; // Default to December
                 string selectedPeriod = $"{selectedMonth}{currYear}";
                 int currYearInt = int.TryParse(currYear, out int parsedYear) ? parsedYear : DateTime.Now.Year;
                 string prevYear = (currYearInt - 1).ToString();
-
-                //PXTrace.WriteInformation($"Fetching data for CurrYear: {currYear}, Branch: {branch}, Ledger: {ledger}");
-                //var currYearData = FetchAllApiData(branch, ledger, $"12{currYear}"); 
-
-                //PXTrace.WriteInformation($"Fetching data for PrevYear: {prevYear}, Branch: {branch}, Ledger: {ledger}");
-                //var prevYearData = FetchAllApiData(branch, ledger, $"12{prevYear}");                
+                string prevYearPeriod = selectedMonth + prevYear;
 
                 PXTrace.WriteInformation($"Fetching data for Period: {selectedPeriod}, Branch: {branch}, Ledger: {ledger}");
                 var currYearData = FetchAllApiData(branch, ledger, selectedPeriod);
 
-                // Compute previous year's period (same month, previous year)
-                string prevYearPeriod = selectedMonth + prevYear;
-
                 PXTrace.WriteInformation($"Fetching data for Prev Year Period: {prevYearPeriod}, Branch: {branch}, Ledger: {ledger}");
                 var prevYearData = FetchAllApiData(branch, ledger, prevYearPeriod);
 
-
-
-
-                // Step 3: Prepare placeholder data (use the fetched data)
+                // Prepare placeholder data and populate the template.
                 var placeholderData = GetPlaceholderData(currYearData, prevYearData);
-
-                // Step 4: Populate the template with the placeholder data
                 PopulateTemplate(templatePath, outputPath, placeholderData);
 
-                // Step 5: Upload the generated document
+                // Upload the generated document and store the file ID (instead of redirecting immediately).
                 byte[] generatedFileContent = File.ReadAllBytes(outputPath);
-                Guid fileID = SaveGeneratedDocument(uniqueFileName, generatedFileContent, selectedRecord);
+                Guid fileID = SaveGeneratedDocument(uniqueFileName, generatedFileContent, currentRecord);
+
+                PXTrace.WriteInformation("Report generated successfully.");
 
                 // Redirect to the generated file
-                throw new PXRedirectToFileException(fileID, 1, false);
+                //throw new PXRedirectToFileException(fileID, 1, false);
+
+                // Optionally, store the fileID on the record or in a related table so that the UI can display a download link.
+                // For example:
+                currentRecord.GeneratedFileID = fileID;
+                FinancialReport.Update(currentRecord);
+                Actions.PressSave();
+
+                
             }
             finally
             {
-                // Always log out from the external API
                 Logout();
             }
         }
@@ -661,6 +704,32 @@ namespace FinancialReport
             string rp2 = r2.RunProperties?.OuterXml ?? string.Empty;
             return rp1 == rp2;
         }
+
+        #endregion
+
+        #region Adding download button
+
+        public PXAction<FLRTFinancialReport> DownloadReport;
+        [PXButton]
+        [PXUIField(DisplayName = "Download Report", MapEnableRights = PXCacheRights.Select, Visible = true)]
+        protected virtual IEnumerable downloadReport(PXAdapter adapter)
+        {
+            // Get the current record from the grid.
+            FLRTFinancialReport currentRecord = FinancialReport.Current;
+            if (currentRecord == null)
+            {
+                throw new PXException(Messages.NoRecordIsSelected);
+            }
+
+            if (currentRecord.GeneratedFileID == null)
+            {
+                throw new PXException(Messages.NoGeneratedFile);
+            }
+
+            // Trigger the file download using PXRedirectToFileException.
+            throw new PXRedirectToFileException(currentRecord.GeneratedFileID.Value, 1, false);
+        }
+
 
         #endregion
     }
