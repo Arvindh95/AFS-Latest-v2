@@ -14,6 +14,8 @@ using Newtonsoft.Json.Linq;
 using System.Net.Http.Headers;
 using System.Configuration;
 using System.Collections;
+using PX.Objects.GL;
+using static PX.Objects.GL.AccountEntityType;
 
 namespace FinancialReport
 {
@@ -35,6 +37,26 @@ namespace FinancialReport
         private string _clientSecret => GetConfigValue("Acumatica.ClientSecret");
         private string _username => GetConfigValue("Acumatica.Username");
         private string _password => GetConfigValue("Acumatica.Password");
+
+        private List<string> GetAccountNumbers()
+        {
+            var accountNumbers = PXSelect<Account>
+            .Select(this)
+                                 .RowCast<Account>()
+                                 .Select(a => a.AccountCD.Trim())
+                                 .ToList();
+
+            // Log the fetched account numbers
+            PXTrace.WriteInformation("Fetched Account Numbers:");
+            foreach (var account in accountNumbers)
+            {
+                PXTrace.WriteInformation($"AccountCD: {account}");
+            }
+
+            return accountNumbers;
+        }
+
+
 
 
 
@@ -261,21 +283,23 @@ namespace FinancialReport
                 client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
 
                 // Define the accounts to fetch data for
-                var accounts = new List<string>
-                {
-                    "101000", "102000", "102050", "104000", "105000",
-                    "110000", "120000", "130000", "138000", "139000",
-                    "140000", "150000", "190000",
-                    "200000", "200010", "200011", "210000", "213000",
-                    "215000", "230000", "244000", "250020", "270800",
-                    "301000", "302000", "303000", "403000", "405000",
-                    "410000", "431000", "432000", "435000", "440000",
-                    "455000", "460000", "490000", "520000", "530000",
-                    "540000", "550000", "595000", "610000", "615000",
-                    "620000", "630000", "631000", "675000", "740000",
-                    "745000", "755000", "758000", "760000", "770000",
-                    "790000", "999999"
-                };
+                //var accounts = new List<string>
+                //{
+                //    "101000", "102000", "102050", "104000", "105000",
+                //    "110000", "120000", "130000", "138000", "139000",
+                //    "140000", "150000", "190000",
+                //    "200000", "200010", "200011", "210000", "213000",
+                //    "215000", "230000", "244000", "250020", "270800",
+                //    "301000", "302000", "303000", "403000", "405000",
+                //    "410000", "431000", "432000", "435000", "440000",
+                //    "455000", "460000", "490000", "520000", "530000",
+                //    "540000", "550000", "595000", "610000", "615000",
+                //    "620000", "630000", "631000", "675000", "740000",
+                //    "745000", "755000", "758000", "760000", "770000",
+                //    "790000", "999999"
+                //};
+
+                var accounts = GetAccountNumbers();
 
                 // 🟢 Use the selected Branch and Ledger dynamically
                 var accountData = FetchEndingBalances(client, branch, ledger, period, accounts);
