@@ -2,6 +2,8 @@ using System;
 using PX.Data;
 using PX.Objects.GL; // For Ledger and Branch tables
 using PX.Objects;
+using PX.Objects.GL.FinPeriods.TableDefinition;
+using PX.Data.BQL.Fluent;
 
 namespace FinancialReport
 {
@@ -77,21 +79,37 @@ namespace FinancialReport
     [PXNote()]
     public virtual Guid? Noteid { get; set; }
     public abstract class noteid : PX.Data.BQL.BqlGuid.Field<noteid> { }
-    #endregion
-      
+        #endregion
+
+
+    #region Select 
     [PXBool]
     [PXUnboundDefault(false)]
-    [PXUIField(DisplayName = "Selected")]
+    [PXUIField(DisplayName = "Select")]
     public virtual bool? Selected { get; set; }
     public abstract class selected : PX.Data.BQL.BqlBool.Field<selected> { }
-      
+        #endregion
+
+
+    #region Current Year
     [PXDBString(4, IsUnicode = true)]
     [PXUIField(DisplayName = "Current Year")]
+    [PXSelector(typeof(SelectFrom<FinPeriod>
+                .AggregateTo<GroupBy<FinPeriod.finYear>>       // distinct
+                .OrderBy<FinPeriod.finYear.Desc>               // descending
+                .SearchFor<FinPeriod.finYear>),                // the field you want
+        new Type[] { typeof(FinPeriod.finYear) },
+        DescriptionField = typeof(FinPeriod.finYear))]
     public virtual string CurrYear { get; set; }
     public abstract class currYear : PX.Data.BQL.BqlString.Field<currYear> { }
+    #endregion
 
-    #region Branch
-    [PXDBString(10, IsUnicode = true)]
+
+
+
+
+        #region Branch
+        [PXDBString(10, IsUnicode = true)]
     [PXUIField(DisplayName = "Branch")]
     [PXSelector(typeof(Search<Branch.branchCD>))]
     public virtual string Branch { get; set; }
