@@ -521,11 +521,14 @@ namespace FinancialReport
             {
                 { "{{financialMonth}}", monthName},
                 { "{{branchName}}", "Censof-Test" },
+                { "{{agencyname}}", "Suruhanjaya Tenaga" },
+                { "{{chairmanname}}", "Dato' Khir bin Osman" },
+                { "{{chairmanname2}}", "Dato' Shaik Hussein bin Anggota" },
                 { "{{testData}}", DateTime.Now.ToShortDateString() },
                 { "{{month/year}}", DateTime.Now.ToString("MMMM dd, yyyy") },
-                { "{{curryear}}", currYear },
+                { "{{CY}}", currYear },
                 { "{{currmonth}}", DateTime.Now.ToString("MMMM") },
-                { "{{prevyear}}", prevYear }
+                { "{{PY}}", prevYear }
             };
 
             // Add fetched data for CurrYear
@@ -554,10 +557,13 @@ namespace FinancialReport
             if (noteID == null)
                 throw new PXException(Messages.NoteIDIsNull);
 
-            var uploadedFiles = PXSelectJoin<UploadFile,
+            var uploadedFiles = new PXSelectJoin<UploadFile,
                 InnerJoin<NoteDoc, On<UploadFile.fileID, Equal<NoteDoc.fileID>>>,
-                Where<NoteDoc.noteID, Equal<Required<NoteDoc.noteID>>>>
-                .Select(this, noteID);
+                Where<
+                    NoteDoc.noteID, Equal<Required<NoteDoc.noteID>>,
+                    And<UploadFile.name, Like<Required<UploadFile.name>>>>,
+                OrderBy<Asc<UploadFile.createdDateTime>>>(this)
+                .Select(noteID, "%FRTemplate%");
 
             if (uploadedFiles == null || uploadedFiles.Count == 0)
                 throw new PXException(Messages.NoFilesAssociated);
@@ -577,6 +583,7 @@ namespace FinancialReport
 
             throw new PXException(Messages.FailedToRetrieveFile);
         }
+
 
         private Guid SaveGeneratedDocument(string fileName, byte[] fileContent, FLRTFinancialReport currentRecord)
         {
