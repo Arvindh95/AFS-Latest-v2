@@ -23,9 +23,9 @@ namespace FinancialReport.Services
         }
 
         public Dictionary<string, (decimal EndingBalance, string Description)> FetchEndingBalances(
-            string branch, string ledger, string period, List<string> accounts)
+            string accessToken, string branch, string ledger, string period, List<string> accounts)
         {
-            string accessToken = _authService.AuthenticateAndGetToken();
+
             using (HttpClient client = new HttpClient())
             {
                 client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
@@ -82,8 +82,9 @@ namespace FinancialReport.Services
 
         public FinancialApiData FetchAllApiData(string branch, string ledger, string period)
         {
+            string accessToken = _authService.AuthenticateAndGetToken();
             var accounts = _getAccountNumbers(); // Fetch account numbers using the delegate
-            var accountData = FetchEndingBalances(branch, ledger, period, accounts);
+            var accountData = FetchEndingBalances(accessToken, branch, ledger, period, accounts);
 
             var apiData = new FinancialApiData();
             foreach (var kvp in accountData)

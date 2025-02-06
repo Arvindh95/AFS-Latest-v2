@@ -22,15 +22,42 @@ namespace FinancialReport
 {
     public class FLRTFinancialReportMaint : PXGraph<FLRTFinancialReportMaint>
     {
-        public SelectFrom<FLRTFinancialReport>.View FinancialReport;
+
+        #region Services     
+
+        // Handles Authentication with Acumatica API
         private readonly AuthService _authService;
+
+        // Fetches financial data from Acumatica API
         private readonly FinancialDataService _dataService;
+
+        // Manages file operations such as fetching templates & saving reports
         private readonly FileService _fileService;
+
+        // Handles Word template population and formatting
+        private readonly WordTemplateService _wordTemplateService;
+
+        #endregion
+
+        #region Configuration & Utility Methods
+
         private string GetConfigValue(string key)
         {
             return ConfigurationManager.AppSettings[key] ?? throw new PXException(Messages.MissingConfig);
         }
         private string _baseUrl => GetConfigValue("Acumatica.BaseUrl");
+
+        public FLRTFinancialReportMaint()
+        {
+            _authService = new AuthService(_baseUrl, GetConfigValue("Acumatica.ClientId"), GetConfigValue("Acumatica.ClientSecret"), GetConfigValue("Acumatica.Username"), GetConfigValue("Acumatica.Password"));
+            _dataService = new FinancialDataService(_baseUrl, _authService, GetAccountNumbers);
+            _fileService = new FileService(this);
+            _wordTemplateService = new WordTemplateService();
+        }
+
+        #endregion
+
+        #region Utility Methods
 
         private List<string> GetAccountNumbers()
         {
@@ -50,14 +77,6 @@ namespace FinancialReport
             return accountNumbers;
         }
 
-        public FLRTFinancialReportMaint()
-        {
-            _authService = new AuthService(_baseUrl, GetConfigValue("Acumatica.ClientId"), GetConfigValue("Acumatica.ClientSecret"), GetConfigValue("Acumatica.Username"), GetConfigValue("Acumatica.Password"));
-            _dataService = new FinancialDataService(_baseUrl, _authService, GetAccountNumbers);
-            _fileService = new FileService(this); 
-        }
-        
-
         private string FormatNumber(string value)
         {
             if (decimal.TryParse(value, out decimal number))
@@ -67,18 +86,12 @@ namespace FinancialReport
             return value; // Return original if parsing fails
         }
 
-
-        protected void FLRTFinancialReport_CurrYear_FieldUpdated(PXCache cache, PXFieldUpdatedEventArgs e)
-        {
-            var row = (FLRTFinancialReport)e.Row;
-            if (row != null)
-            {
-                PXTrace.WriteInformation($"CurrYear Updated to: {row.CurrYear}");
-            }
-        }
+        #endregion
 
 
-
+        public SelectFrom<FLRTFinancialReport>.View FinancialReport;
+               
+    
         #region Events and Actions
 
         protected void FLRTFinancialReport_Selected_FieldUpdated(PXCache cache, PXFieldUpdatedEventArgs e)
@@ -116,11 +129,23 @@ namespace FinancialReport
                 throw new PXException(Messages.PleaseSelectALedger);
             }
         }
-        
+
+        protected void FLRTFinancialReport_CurrYear_FieldUpdated(PXCache cache, PXFieldUpdatedEventArgs e)
+        {
+            var row = (FLRTFinancialReport)e.Row;
+            if (row != null)
+            {
+                PXTrace.WriteInformation($"CurrYear Updated to: {row.CurrYear}");
+            }
+        }
+
         #endregion
 
         public PXSave<FLRTFinancialReport> Save;
         public PXCancel<FLRTFinancialReport> Cancel;
+
+
+        #region Business Logic
 
         public PXAction<FLRTFinancialReport> GenerateReport;
         [PXButton(CommitChanges = false)]
@@ -173,10 +198,6 @@ namespace FinancialReport
             return adapter.Get();
         }
 
-        
-
-        #region Main Report Generation GenerateFinancialReport()
-
         private void GenerateFinancialReport()
         {
             try
@@ -221,11 +242,11 @@ namespace FinancialReport
                 var currYearData = _dataService.FetchAllApiData(branch, ledger, selectedPeriod) ?? new FinancialApiData();
 
                 PXTrace.WriteInformation($"Fetching data for Prev Year Period: {prevYearPeriod}, Branch: {branch}, Ledger: {ledger}");
-                var prevYearData = _dataService.FetchAllApiData(branch, ledger, prevYearPeriod) ?? new FinancialApiData(); 
+                var prevYearData = _dataService.FetchAllApiData(branch, ledger, prevYearPeriod) ?? new FinancialApiData();
 
                 // Prepare placeholder data and populate the template.
                 var placeholderData = GetPlaceholderData(currYearData, prevYearData);
-                PopulateTemplate(templatePath, outputPath, placeholderData);
+                _wordTemplateService.PopulateTemplate(templatePath, outputPath, placeholderData);
 
                 // Upload the generated document and store the file ID (instead of redirecting immediately).
                 byte[] generatedFileContent = File.ReadAllBytes(outputPath);
@@ -242,7 +263,7 @@ namespace FinancialReport
                 FinancialReport.Update(currentRecord);
                 Actions.PressSave();
 
-                
+
             }
             finally
             {
@@ -250,6 +271,10 @@ namespace FinancialReport
             }
         }
 
+        #endregion
+
+
+        #region Supporting Methods
 
         private Dictionary<string, string> GetPlaceholderData(FinancialApiData currYearData, FinancialApiData prevYearData)
         {
@@ -300,11 +325,6 @@ namespace FinancialReport
             return placeholderData;
         }
 
-
-        #endregion
-
-        #region File Retrieval and Storage
-
         private byte[] GetFileContent(Guid? noteID)
         {
             return _fileService.GetFileContent(noteID);
@@ -318,137 +338,8 @@ namespace FinancialReport
 
         #endregion
 
-        #region Word Template Population
 
-        private void PopulateTemplate(string templatePath, string outputPath, Dictionary<string, string> data)
-        {
-            File.Copy(templatePath, outputPath, true);
-            using (WordprocessingDocument doc = WordprocessingDocument.Open(outputPath, true))
-            {
-                var mainPart = doc.MainDocumentPart;
-                var paragraphs = mainPart.Document.Descendants<Paragraph>();
-
-                foreach (var kvp in data)
-                {
-                    PXTrace.WriteInformation($"Placeholder: {kvp.Key}, Value: {kvp.Value}");
-                }
-
-                foreach (var kvp in data)
-                {
-                    string placeholder = kvp.Key;
-                    string replacement = kvp.Value;
-
-                    foreach (var paragraph in paragraphs)
-                    {
-                        ReplacePlaceholderInRuns(paragraph, placeholder, replacement);
-                    }
-                }
-            }
-        }
-
-        private void ReplacePlaceholderInRuns(Paragraph paragraph, string placeholder, string replacement)
-        {
-            MergeRunsWithSameFormatting(paragraph);
-            var runs = paragraph.Elements<Run>().ToList();
-
-            for (int i = 0; i < runs.Count; i++)
-            {
-                Run run = runs[i];
-                Text textElement = run.GetFirstChild<Text>();
-                if (textElement == null) continue;
-
-                string runText = textElement.Text;
-                int idx;
-                while ((idx = runText.IndexOf(placeholder, StringComparison.Ordinal)) >= 0)
-                {
-                    string before = runText.Substring(0, idx);
-                    string after = runText.Substring(idx + placeholder.Length);
-
-                    paragraph.RemoveChild(run);
-                    runs.RemoveAt(i);
-
-                    int insertPos = i;
-
-                    if (!string.IsNullOrEmpty(before))
-                    {
-                        var beforeRun = CloneRunWithNewText(run, before);
-                        paragraph.InsertBefore(beforeRun, insertPos < runs.Count ? runs[insertPos] : null);
-                        runs.Insert(insertPos, beforeRun);
-                        insertPos++;
-                        i++;
-                    }
-
-                    var replacementRun = CloneRunWithNewText(run, replacement);
-                    paragraph.InsertBefore(replacementRun, insertPos < runs.Count ? runs[insertPos] : null);
-                    runs.Insert(insertPos, replacementRun);
-                    insertPos++;
-                    i++;
-
-                    if (!string.IsNullOrEmpty(after))
-                    {
-                        run = CloneRunWithNewText(run, after);
-                        paragraph.InsertBefore(run, insertPos < runs.Count ? runs[insertPos] : null);
-                        runs.Insert(insertPos, run);
-
-                        runText = after;
-                    }
-                    else
-                    {
-                        runText = string.Empty;
-                        break;
-                    }
-                }
-            }
-        }
-
-        private Run CloneRunWithNewText(Run originalRun, string newText)
-        {
-            var newRun = new Run();
-            if (originalRun.RunProperties != null)
-            {
-                newRun.RunProperties = (RunProperties)originalRun.RunProperties.CloneNode(true);
-            }
-            newRun.AppendChild(new Text(newText));
-            return newRun;
-        }
-
-        private void MergeRunsWithSameFormatting(Paragraph paragraph)
-        {
-            var runs = paragraph.Elements<Run>().ToList();
-            for (int i = 0; i < runs.Count - 1;)
-            {
-                if (HaveSameFormatting(runs[i], runs[i + 1]))
-                {
-                    var text1 = runs[i].GetFirstChild<Text>();
-                    var text2 = runs[i + 1].GetFirstChild<Text>();
-
-                    if (text1 == null || text2 == null)
-                    {
-                        i++;
-                        continue;
-                    }
-
-                    text1.Text += text2.Text;
-                    runs[i + 1].Remove();
-                    runs.RemoveAt(i + 1);
-                }
-                else
-                {
-                    i++;
-                }
-            }
-        }
-
-        private bool HaveSameFormatting(Run r1, Run r2)
-        {
-            string rp1 = r1.RunProperties?.OuterXml ?? string.Empty;
-            string rp2 = r2.RunProperties?.OuterXml ?? string.Empty;
-            return rp1 == rp2;
-        }
-
-        #endregion
-
-        #region Adding download button
+        #region Download Method
 
         public PXAction<FLRTFinancialReport> DownloadReport;
         [PXButton]
