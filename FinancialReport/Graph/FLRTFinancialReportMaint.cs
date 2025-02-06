@@ -56,7 +56,14 @@ namespace FinancialReport
             return accountNumbers;
         }
 
-
+        private string FormatNumber(string value)
+        {
+            if (decimal.TryParse(value, out decimal number))
+            {
+                return number.ToString("N2"); // Formats as ###,###.00
+            }
+            return value; // Return original if parsing fails
+        }
 
 
 
@@ -534,14 +541,14 @@ namespace FinancialReport
             // Add fetched data for CurrYear
             foreach (var account in currYearData.AccountData)
             {
-                placeholderData[$"{{{{{account.Key}_CY}}}}"] = account.Value.EndingBalance; // {{101000_2024}}
+                placeholderData[$"{{{{{account.Key}_CY}}}}"] = FormatNumber(account.Value.EndingBalance); // {{101000_2024}}
                 placeholderData[$"{{{{description_{account.Key}_CY}}}}"] = account.Value.Description; // {{description_101000_CurrYear}}
             }
 
             // Add fetched data for PrevYear
             foreach (var account in prevYearData.AccountData)
             {
-                placeholderData[$"{{{{{account.Key}_PY}}}}"] = account.Value.EndingBalance; // {{101000_2023}}
+                placeholderData[$"{{{{{account.Key}_PY}}}}"] = FormatNumber(account.Value.EndingBalance); // {{101000_2023}}
             }
 
             return placeholderData;

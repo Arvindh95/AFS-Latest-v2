@@ -64,11 +64,10 @@
     <Compile Include="Graph\FLRTFinancialReportMaint.cs" />
     <Compile Include="DAC\FLRTFinancialReport.cs" />
     <Compile Include="Helper\Messages.cs" />
-    <Compile Include="Graph\IntegrationTokenStorageMaint.cs" />
-    <Compile Include="DAC\IntegrationTokenStorage.cs" />
     <Compile Include="Graph\AccountHistoryBySubEnq.cs" />
     <Compile Include="DAC\GLHistoryEnqFilter.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="Services\AuthServices.cs" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="DocumentFormat.OpenXml">
