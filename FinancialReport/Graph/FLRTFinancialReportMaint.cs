@@ -25,6 +25,7 @@ namespace FinancialReport
         public SelectFrom<FLRTFinancialReport>.View FinancialReport;
         private readonly AuthService _authService;
         private readonly FinancialDataService _dataService;
+        private readonly FileService _fileService;
         private string GetConfigValue(string key)
         {
             return ConfigurationManager.AppSettings[key] ?? throw new PXException(Messages.MissingConfig);
@@ -53,6 +54,7 @@ namespace FinancialReport
         {
             _authService = new AuthService(_baseUrl, GetConfigValue("Acumatica.ClientId"), GetConfigValue("Acumatica.ClientSecret"), GetConfigValue("Acumatica.Username"), GetConfigValue("Acumatica.Password"));
             _dataService = new FinancialDataService(_baseUrl, _authService, GetAccountNumbers);
+            _fileService = new FileService(this); 
         }
         
 
@@ -305,56 +307,13 @@ namespace FinancialReport
 
         private byte[] GetFileContent(Guid? noteID)
         {
-            if (noteID == null)
-                throw new PXException(Messages.NoteIDIsNull);
-
-            var uploadedFiles = new PXSelectJoin<UploadFile,
-                InnerJoin<NoteDoc, On<UploadFile.fileID, Equal<NoteDoc.fileID>>>,
-                Where<
-                    NoteDoc.noteID, Equal<Required<NoteDoc.noteID>>,
-                    And<UploadFile.name, Like<Required<UploadFile.name>>>>,
-                OrderBy<Asc<UploadFile.createdDateTime>>>(this)
-                .Select(noteID, "%FRTemplate%");
-
-            if (uploadedFiles == null || uploadedFiles.Count == 0)
-                throw new PXException(Messages.NoFilesAssociated);
-
-            foreach (PXResult<UploadFile, NoteDoc> result in uploadedFiles)
-            {
-                var file = (UploadFile)result;
-                var fileRevision = (UploadFileRevision)PXSelect<UploadFileRevision,
-                    Where<UploadFileRevision.fileID, Equal<Required<UploadFileRevision.fileID>>>>
-                    .Select(this, file.FileID).FirstOrDefault();
-
-                if (fileRevision?.Data != null)
-                {
-                    return fileRevision.Data;
-                }
-            }
-
-            throw new PXException(Messages.FailedToRetrieveFile);
+            return _fileService.GetFileContent(noteID);
         }
 
 
         private Guid SaveGeneratedDocument(string fileName, byte[] fileContent, FLRTFinancialReport currentRecord)
         {
-            var fileGraph = PXGraph.CreateInstance<UploadFileMaintenance>();
-            var fileInfo = new PX.SM.FileInfo(fileName, null, fileContent)
-            {
-                IsPublic = true
-            };
-
-            bool saved = fileGraph.SaveFile(fileInfo);
-            if (!saved)
-            {
-                throw new PXException(Messages.UnableToSaveGeneratedFile);
-            }
-
-            if (fileInfo.UID.HasValue)
-            {
-                PXNoteAttribute.SetFileNotes(FinancialReport.Cache, currentRecord, fileInfo.UID.Value);
-            }
-            return fileInfo.UID ?? Guid.Empty;
+            return _fileService.SaveGeneratedDocument(fileName, fileContent, currentRecord);
         }
 
         #endregion
