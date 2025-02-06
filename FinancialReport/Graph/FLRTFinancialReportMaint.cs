@@ -16,27 +16,20 @@ using System.Configuration;
 using System.Collections;
 using PX.Objects.GL;
 using static PX.Objects.GL.AccountEntityType;
+using FinancialReport.Services;
 
 namespace FinancialReport
 {
     public class FLRTFinancialReportMaint : PXGraph<FLRTFinancialReportMaint>
     {
         public SelectFrom<FLRTFinancialReport>.View FinancialReport;
-
-        private string _accessToken = null;
-        private string _refreshToken = null;
-        private DateTime _tokenExpiry = DateTime.MinValue;
-
+        private readonly AuthService _authService;
+        private readonly FinancialDataService _dataService;
         private string GetConfigValue(string key)
         {
             return ConfigurationManager.AppSettings[key] ?? throw new PXException(Messages.MissingConfig);
         }
-
         private string _baseUrl => GetConfigValue("Acumatica.BaseUrl");
-        private string _clientId => GetConfigValue("Acumatica.ClientId");
-        private string _clientSecret => GetConfigValue("Acumatica.ClientSecret");
-        private string _username => GetConfigValue("Acumatica.Username");
-        private string _password => GetConfigValue("Acumatica.Password");
 
         private List<string> GetAccountNumbers()
         {
@@ -56,6 +49,13 @@ namespace FinancialReport
             return accountNumbers;
         }
 
+        public FLRTFinancialReportMaint()
+        {
+            _authService = new AuthService(_baseUrl, GetConfigValue("Acumatica.ClientId"), GetConfigValue("Acumatica.ClientSecret"), GetConfigValue("Acumatica.Username"), GetConfigValue("Acumatica.Password"));
+            _dataService = new FinancialDataService(_baseUrl, _authService, GetAccountNumbers);
+        }
+        
+
         private string FormatNumber(string value)
         {
             if (decimal.TryParse(value, out decimal number))
@@ -66,8 +66,6 @@ namespace FinancialReport
         }
 
 
-
-        #region Current Year Value Update
         protected void FLRTFinancialReport_CurrYear_FieldUpdated(PXCache cache, PXFieldUpdatedEventArgs e)
         {
             var row = (FLRTFinancialReport)e.Row;
@@ -77,253 +75,7 @@ namespace FinancialReport
             }
         }
 
-        #endregion
 
-        #region Authentication and Token Management
-
-        private string AuthenticateAndGetToken()
-        {
-            if (!string.IsNullOrEmpty(_accessToken) && _tokenExpiry > DateTime.Now)
-            {
-                PXTrace.WriteInformation("Reusing existing access token.");
-                return _accessToken;
-            }
-
-            if (!string.IsNullOrEmpty(_refreshToken))
-            {
-                PXTrace.WriteInformation("Attempting to refresh access token using refresh token...");
-                try
-                {
-                    return RefreshAccessToken(_refreshToken);
-                }
-                catch (PXException ex)
-                {
-                    PXTrace.WriteError($"Refresh token failed: {ex.Message}. Falling back to password grant.");
-                }
-            }
-
-            PXTrace.WriteInformation("Requesting a new access token...");
-            string tokenUrl = $"{_baseUrl}/identity/connect/token";
-
-            using (HttpClient client = new HttpClient())
-            {
-                var tokenRequest = new[]
-                {
-                    new KeyValuePair<string, string>("grant_type", "password"),
-                    new KeyValuePair<string, string>("client_id", _clientId),
-                    new KeyValuePair<string, string>("client_secret", _clientSecret),
-                    new KeyValuePair<string, string>("username", _username),
-                    new KeyValuePair<string, string>("password", _password),
-                    new KeyValuePair<string, string>("scope", "api")
-                };
-
-                HttpResponseMessage tokenResponse = client.PostAsync(tokenUrl, new FormUrlEncodedContent(tokenRequest)).Result;
-
-                if (!tokenResponse.IsSuccessStatusCode)
-                {
-                    PXTrace.WriteError($"Authentication failed: {tokenResponse.StatusCode}");
-                    throw new PXException(Messages.FailedToAuthenticate);
-                }
-
-                string responseContent = tokenResponse.Content.ReadAsStringAsync().Result;
-                JObject tokenResult = JObject.Parse(responseContent);
-
-                _accessToken = tokenResult["access_token"]?.ToString() ?? throw new PXException(Messages.AccessTokenNotFound);
-                _refreshToken = tokenResult["refresh_token"]?.ToString() ?? string.Empty;
-
-                int expiresIn = tokenResult["expires_in"]?.ToObject<int>() ?? 0;
-                if (expiresIn == 0)
-                {
-                    throw new PXException(Messages.TokenExpirationNotFound);
-                }
-                _tokenExpiry = DateTime.Now.AddSeconds(expiresIn - 60);
-
-                PXTrace.WriteInformation("New access token retrieved.");
-                return _accessToken;
-            }
-        }
-
-
-        private string RefreshAccessToken(string refreshToken)
-        {
-            string tokenUrl = $"{_baseUrl}/identity/connect/token";
-            using (HttpClient client = new HttpClient())
-            {
-                var tokenRequest = new[]
-                {
-                    new KeyValuePair<string, string>("grant_type", "refresh_token"),
-                    new KeyValuePair<string, string>("client_id", _clientId),
-                    new KeyValuePair<string, string>("client_secret", _clientSecret),
-                    new KeyValuePair<string, string>("refresh_token", refreshToken)
-                };
-
-                HttpResponseMessage tokenResponse = client.PostAsync(tokenUrl, new FormUrlEncodedContent(tokenRequest)).Result;
-                if (!tokenResponse.IsSuccessStatusCode)
-                {
-                    string errorContent = tokenResponse.Content.ReadAsStringAsync().Result;
-                    PXTrace.WriteError($"Failed to refresh access token: {tokenResponse.StatusCode}, Response: {errorContent}");
-                    throw new PXException(Messages.FailedToRefreshToken);
-                }
-
-                string responseContent = tokenResponse.Content.ReadAsStringAsync().Result;
-                JObject tokenResult = JObject.Parse(responseContent);
-
-                // Retrieve and save access token
-                _accessToken = tokenResult["access_token"]?.ToString();
-                if (string.IsNullOrEmpty(_accessToken))
-                {
-                    throw new PXException(Messages.AccessTokenNotFound);
-                }
-
-                // Set token expiry
-                int expiresIn = tokenResult["expires_in"]?.ToObject<int>() ?? 0;
-                _tokenExpiry = DateTime.Now.AddSeconds(expiresIn - 60);
-
-                PXTrace.WriteInformation("Access token successfully refreshed.");
-                return _accessToken;
-            }
-        }
-
-        private void Logout()
-        {
-            try
-            {
-                string logoutUrl = $"{_baseUrl}/entity/auth/logout";
-                using (HttpClient client = new HttpClient())
-                {
-                    client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
-                    HttpResponseMessage response = client.PostAsync(logoutUrl, null).Result;
-
-                    if (response.IsSuccessStatusCode)
-                    {
-                        PXTrace.WriteInformation("Successfully logged out from Acumatica API.");
-                    }
-                    else
-                    {
-                        string errorResponse = response.Content.ReadAsStringAsync().Result;
-                        PXTrace.WriteError($"Failed to logout. Status Code: {response.StatusCode}, Response: {errorResponse}");
-                    }
-                }
-
-                _accessToken = null;
-                _refreshToken = null;
-                _tokenExpiry = DateTime.MinValue;
-            }
-            catch (Exception ex)
-            {
-                PXTrace.WriteError($"Error during logout: {ex.Message}");
-            }
-        }
-
-        #endregion
-
-        #region Data Models
-
-        private class FinancialApiData
-        {
-            public Dictionary<string, (string EndingBalance, string Description)> AccountData { get; set; }
-                = new Dictionary<string, (string EndingBalance, string Description)>();
-        }
-
-        #endregion
-
-        #region Data Fetching
-
-        private Dictionary<string, (decimal EndingBalance, string Description)> FetchEndingBalances(
-            HttpClient client, string branch, string ledger, string period, List<string> accounts)
-        {
-            string apiUrl = $"{_baseUrl}/entity/AccountsFilter/24.200.001/AccountBySubaccount";
-            var accountData = new Dictionary<string, (decimal EndingBalance, string Description)>();
-
-            foreach (var account in accounts)
-            {
-                try
-                {
-                    var payload = new
-                    {
-                        Company_Branch = new { value = branch },
-                        Ledger = new { value = ledger },
-                        Period = new { value = period },
-                        Account = new { value = account }
-                    };
-
-                    string payloadJson = JsonConvert.SerializeObject(payload);
-                    var httpContent = new StringContent(payloadJson, Encoding.UTF8, "application/json");
-                    HttpResponseMessage response = client.PutAsync(apiUrl, httpContent).Result;
-
-                    if (!response.IsSuccessStatusCode)
-                    {
-                        string errorResponse = response.Content.ReadAsStringAsync().Result;
-                        PXTrace.WriteError($"PUT request failed for Account {account}. Status: {response.StatusCode}, Response: {errorResponse}");
-                        continue;
-                    }
-
-                    string jsonResponse = response.Content.ReadAsStringAsync().Result;
-                    var parsed = JObject.Parse(jsonResponse);
-
-                    string endingBalanceStr = parsed["EndingBalance"]?["value"]?.ToString();
-                    string description = parsed["Description"]?["value"]?.ToString() ?? "No Description";
-
-                    if (decimal.TryParse(endingBalanceStr, out decimal endingBalance))
-                    {
-                        PXTrace.WriteInformation($"Account {account}: EndingBalance = {endingBalance}, Description = {description}");
-                        accountData[account] = (endingBalance, description);
-                    }
-                    else
-                    {
-                        PXTrace.WriteError($"Invalid or missing EndingBalance for Account {account}");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    PXTrace.WriteError($"Error fetching data for Account {account}: {ex.Message}");
-                }
-            }
-            return accountData;
-        }
-
-        private FinancialApiData FetchAllApiData(string branch, string ledger, string period)
-        {
-            string accessToken = AuthenticateAndGetToken();
-            using (HttpClient client = new HttpClient())
-            {
-                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-
-                // Define the accounts to fetch data for
-                //var accounts = new List<string>
-                //{
-                //    "101000", "102000", "102050", "104000", "105000",
-                //    "110000", "120000", "130000", "138000", "139000",
-                //    "140000", "150000", "190000",
-                //    "200000", "200010", "200011", "210000", "213000",
-                //    "215000", "230000", "244000", "250020", "270800",
-                //    "301000", "302000", "303000", "403000", "405000",
-                //    "410000", "431000", "432000", "435000", "440000",
-                //    "455000", "460000", "490000", "520000", "530000",
-                //    "540000", "550000", "595000", "610000", "615000",
-                //    "620000", "630000", "631000", "675000", "740000",
-                //    "745000", "755000", "758000", "760000", "770000",
-                //    "790000", "999999"
-                //};
-
-                var accounts = GetAccountNumbers();
-
-                // 🟢 Use the selected Branch and Ledger dynamically
-                var accountData = FetchEndingBalances(client, branch, ledger, period, accounts);
-
-                // Build the result object
-                var apiData = new FinancialApiData();
-                foreach (var kvp in accountData)
-                {
-                    apiData.AccountData[kvp.Key] = (kvp.Value.EndingBalance.ToString(), kvp.Value.Description);
-                }
-
-                return apiData;
-            }
-        }
-
-
-        #endregion
 
         #region Events and Actions
 
@@ -362,19 +114,11 @@ namespace FinancialReport
                 throw new PXException(Messages.PleaseSelectALedger);
             }
         }
-
+        
+        #endregion
 
         public PXSave<FLRTFinancialReport> Save;
         public PXCancel<FLRTFinancialReport> Cancel;
-
-        //public PXAction<FLRTFinancialReport> GenerateReport;
-        //[PXButton(CommitChanges = false)]
-        //[PXUIField(DisplayName = "Generate Report")]
-        //protected virtual void generateReport()
-        //{
-        //    GenerateFinancialReport();
-        //    PXTrace.WriteInformation("Generate Report button was pressed.");
-        //}
 
         public PXAction<FLRTFinancialReport> GenerateReport;
         [PXButton(CommitChanges = false)]
@@ -427,7 +171,7 @@ namespace FinancialReport
             return adapter.Get();
         }
 
-        #endregion
+        
 
         #region Main Report Generation GenerateFinancialReport()
 
@@ -472,10 +216,10 @@ namespace FinancialReport
                 string prevYearPeriod = selectedMonth + prevYear;
 
                 PXTrace.WriteInformation($"Fetching data for Period: {selectedPeriod}, Branch: {branch}, Ledger: {ledger}");
-                var currYearData = FetchAllApiData(branch, ledger, selectedPeriod);
+                var currYearData = _dataService.FetchAllApiData(branch, ledger, selectedPeriod) ?? new FinancialApiData();
 
                 PXTrace.WriteInformation($"Fetching data for Prev Year Period: {prevYearPeriod}, Branch: {branch}, Ledger: {ledger}");
-                var prevYearData = FetchAllApiData(branch, ledger, prevYearPeriod);
+                var prevYearData = _dataService.FetchAllApiData(branch, ledger, prevYearPeriod) ?? new FinancialApiData(); 
 
                 // Prepare placeholder data and populate the template.
                 var placeholderData = GetPlaceholderData(currYearData, prevYearData);
@@ -500,7 +244,7 @@ namespace FinancialReport
             }
             finally
             {
-                Logout();
+                _authService.Logout();
             }
         }
 
