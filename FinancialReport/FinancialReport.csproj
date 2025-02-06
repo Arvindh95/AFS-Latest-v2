@@ -70,6 +70,7 @@
     <Compile Include="Services\AuthService.cs" />
     <Compile Include="Services\FileService.cs" />
     <Compile Include="Services\FinancialDataService.cs" />
+    <Compile Include="Services\WordTemplateService.cs" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="DocumentFormat.OpenXml">
