@@ -34,7 +34,7 @@ namespace FinancialReport.Services
                 Where<
                     NoteDoc.noteID, Equal<Required<NoteDoc.noteID>>,
                     And<UploadFile.name, Like<Required<UploadFile.name>>>>,
-                OrderBy<Asc<UploadFile.createdDateTime>>>(_graph)
+                OrderBy<Desc<UploadFile.createdDateTime>>>(_graph)
                 .Select(noteID, "%FRTemplate%");
 
             if (uploadedFiles == null || uploadedFiles.Count == 0)
@@ -45,7 +45,8 @@ namespace FinancialReport.Services
                 var file = (UploadFile)result;
                 // ✅ Retrieve UploadFileRevision separately with proper casting
                 UploadFileRevision fileRevision = PXSelect<UploadFileRevision,
-                    Where<UploadFileRevision.fileID, Equal<Required<UploadFileRevision.fileID>>>>
+                    Where<UploadFileRevision.fileID, Equal<Required<UploadFileRevision.fileID>>>,
+                     OrderBy<Desc<UploadFileRevision.createdDateTime>>>
                     .Select(_graph, file.FileID)
                     .RowCast<UploadFileRevision>() // ✅ Ensure proper casting
                     .FirstOrDefault();
