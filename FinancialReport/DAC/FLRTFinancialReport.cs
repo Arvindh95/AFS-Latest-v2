@@ -137,7 +137,7 @@ namespace FinancialReport
     #region Status
     [PXDBString(20, IsUnicode = true)]
     [PXDefault(ReportStatus.Pending)] // Default status
-    [PXUIField(DisplayName = "Status")]
+    [PXUIField(DisplayName = "Status", IsReadOnly = true)]
     [PXStringList(new string[]
     {
         ReportStatus.Pending,
