@@ -129,9 +129,46 @@ namespace FinancialReport
 
     #region GeneratedFileID
     [PXDBGuid]
-    [PXUIField(DisplayName = "Generated File ID", Visible = true)]
+    [PXUIField(DisplayName = "Generated File ID", Visible = false)]
     public virtual Guid? GeneratedFileID { get; set; }
     public abstract class generatedFileID : PX.Data.BQL.BqlGuid.Field<generatedFileID> { }
+    #endregion
+
+    #region Status
+    [PXDBString(20, IsUnicode = true)]
+    [PXDefault(ReportStatus.Pending)] // Default status
+    [PXUIField(DisplayName = "Status")]
+    [PXStringList(new string[]
+    {
+        ReportStatus.Pending,
+        ReportStatus.InProgress,
+        ReportStatus.Completed,
+        ReportStatus.Failed
+    },
+    new string[]
+    {
+        "Pending",
+        "In Progress",
+        "Completed",
+        "Failed"
+    })]
+    public virtual string Status { get; set; }
+    public abstract class status : PX.Data.BQL.BqlString.Field<status> { }
+        #endregion
+
+    #region Report Status
+    public static class ReportStatus
+    {
+        public const string Pending = "Pending";
+        public const string InProgress = "In Progress";
+        public const string Completed = "Completed";
+        public const string Failed = "Failed";
+
+        public class pending : PX.Data.BQL.BqlString.Constant<pending> { public pending() : base(Pending) { } }
+        public class inProgress : PX.Data.BQL.BqlString.Constant<inProgress> { public inProgress() : base(InProgress) { } }
+        public class completed : PX.Data.BQL.BqlString.Constant<completed> { public completed() : base(Completed) { } }
+        public class failed : PX.Data.BQL.BqlString.Constant<failed> { public failed() : base(Failed) { } }
+    }
     #endregion
 
     }

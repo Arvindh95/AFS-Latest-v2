@@ -17,6 +17,7 @@ using System.Collections;
 using PX.Objects.GL;
 using static PX.Objects.GL.AccountEntityType;
 using FinancialReport.Services;
+using static FinancialReport.FLRTFinancialReport;
 
 namespace FinancialReport
 {
@@ -164,6 +165,7 @@ namespace FinancialReport
 
             // Persist the record and ensure its state is stored in the database.
             selectedRecord.Selected = true;
+            selectedRecord.Status = ReportStatus.InProgress;
             FinancialReport.Update(selectedRecord);
             Actions.PressSave();
 
@@ -260,10 +262,26 @@ namespace FinancialReport
                 // Optionally, store the fileID on the record or in a related table so that the UI can display a download link.
                 // For example:
                 currentRecord.GeneratedFileID = fileID;
+                currentRecord.Status = ReportStatus.Completed;
                 FinancialReport.Update(currentRecord);
                 Actions.PressSave();
 
 
+            }
+            catch (Exception ex)
+            {
+                PXTrace.WriteError($"Report generation failed: {ex.Message}");
+
+                var currentRecord = FinancialReport.Current;
+                if (currentRecord != null)
+                {
+                    // Set status to "Failed" if an error occurs
+                    currentRecord.Status = ReportStatus.Failed;
+                    FinancialReport.Update(currentRecord);
+                    Actions.PressSave();
+                }
+
+                throw new PXException(Messages.FailedToRetrieveFile);
             }
             finally
             {
