@@ -81,7 +81,6 @@ namespace FinancialReport
     public abstract class noteid : PX.Data.BQL.BqlGuid.Field<noteid> { }
         #endregion
 
-
     #region Select 
     [PXBool]
     [PXUnboundDefault(false)]
@@ -89,7 +88,6 @@ namespace FinancialReport
     public virtual bool? Selected { get; set; }
     public abstract class selected : PX.Data.BQL.BqlBool.Field<selected> { }
         #endregion
-
 
     #region Current Year
     [PXDBString(4, IsUnicode = true)]
@@ -104,12 +102,8 @@ namespace FinancialReport
     public abstract class currYear : PX.Data.BQL.BqlString.Field<currYear> { }
     #endregion
 
-
-
-
-
-        #region Branch
-        [PXDBString(10, IsUnicode = true)]
+    #region Branch
+    [PXDBString(10, IsUnicode = true)]
     [PXUIField(DisplayName = "Branch")]
     [PXSelector(typeof(Search<Branch.branchCD>))]
     public virtual string Branch { get; set; }
@@ -139,8 +133,6 @@ namespace FinancialReport
     public virtual Guid? GeneratedFileID { get; set; }
     public abstract class generatedFileID : PX.Data.BQL.BqlGuid.Field<generatedFileID> { }
     #endregion
-
-
 
     }
 }
