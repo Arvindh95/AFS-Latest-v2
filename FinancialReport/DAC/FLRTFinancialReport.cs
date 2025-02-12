@@ -149,7 +149,7 @@ namespace FinancialReport
     {
         "Pending",
         "In Progress",
-        "Completed",
+        "Ready to Download",
         "Failed"
     })]
     public virtual string Status { get; set; }
@@ -159,10 +159,10 @@ namespace FinancialReport
     #region Report Status
     public static class ReportStatus
     {
-        public const string Pending = "Pending";
-        public const string InProgress = "In Progress";
-        public const string Completed = "Completed";
-        public const string Failed = "Failed";
+        public const string Pending = "File not Generated";
+        public const string InProgress = "File Generation In Progress";
+        public const string Completed = "Ready to Download";
+        public const string Failed = "Failed to Generate File";
 
         public class pending : PX.Data.BQL.BqlString.Constant<pending> { public pending() : base(Pending) { } }
         public class inProgress : PX.Data.BQL.BqlString.Constant<inProgress> { public inProgress() : base(InProgress) { } }

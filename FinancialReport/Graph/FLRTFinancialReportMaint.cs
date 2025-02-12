@@ -82,7 +82,7 @@ namespace FinancialReport
         {
             if (decimal.TryParse(value, out decimal number))
             {
-                return number.ToString("N2"); // Formats as ###,###.00
+                return number.ToString("N0"); // Formats as ###,###.00
             }
             return value; // Return original if parsing fails
         }
@@ -318,10 +318,9 @@ namespace FinancialReport
                 { "{{financialMonth}}", monthName},
                 { "{{branchName}}", "Censof-Test" },
                 { "{{agencyname}}", "Suruhanjaya Tenaga" },
-                { "{{chairmanname}}", "Dato' Khir bin Osman" },
-                { "{{chairmanname2}}", "Dato' Shaik Hussein bin Anggota" },
-                { "{{testData}}", DateTime.Now.ToShortDateString() },
-                { "{{month/year}}", DateTime.Now.ToString("MMMM dd, yyyy") },
+                { "{{name1}}", "Dato' Khir bin Osman" },
+                { "{{name2}}", "Dato' Shaik Hussein bin Anggota" },
+                { "{{agencyName}}", "Suruhanjaya Tenaga" },
                 { "{{CY}}", currYear },
                 { "{{currmonth}}", DateTime.Now.ToString("MMMM") },
                 { "{{PY}}", prevYear }
