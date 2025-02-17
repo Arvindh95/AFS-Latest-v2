@@ -153,19 +153,31 @@ namespace FinancialReport
         [PXUIField(DisplayName = "Generate Report")]
         protected virtual IEnumerable generateReport(PXAdapter adapter)
         {
+
             // Get the current selected record
             FLRTFinancialReport selectedRecord = FinancialReport.Cache.Cached
                                 .Cast<FLRTFinancialReport>()
                                 .FirstOrDefault(item => item.Selected == true);
 
+
+            
+            
+
             if (selectedRecord == null)
                 throw new PXException(Messages.PleaseSelectTemplate);
+
+            if (selectedRecord.Status == ReportStatus.InProgress)
+            {
+                throw new PXException(Messages.FileGenerationInProgress);
+            }
+
             if (selectedRecord.Noteid == null)
                 throw new PXException(Messages.TemplateHasNoFiles);
 
+            selectedRecord.Status = ReportStatus.InProgress;
             // Persist the record and ensure its state is stored in the database.
             selectedRecord.Selected = true;
-            selectedRecord.Status = ReportStatus.InProgress;
+            
             FinancialReport.Update(selectedRecord);
             Actions.PressSave();
 
@@ -190,11 +202,19 @@ namespace FinancialReport
                 // Set the record explicitly for the background graph.
                 reportGraph.FinancialReport.Current = dbRecord;
 
-                // Generate the report.
-                reportGraph.GenerateFinancialReport();
-
-                // Log or store the file ID so the UI can later display a download link.
-                PXTrace.WriteInformation("Report has been generated and is ready for download.");
+                try
+                {
+                    // Generate the report.
+                    reportGraph.GenerateFinancialReport();
+                    // Log or store the file ID so the UI can later display a download link.
+                    PXTrace.WriteInformation("Report has been generated and is ready for download.");
+                }
+                catch (Exception ex)
+                {
+                    PXTrace.WriteError($"Report generation failed: {ex.Message}");
+                    // Set status to "Failed" if an error occurs
+                    dbRecord.Status = ReportStatus.Failed;
+                }
             });
 
             return adapter.Get();

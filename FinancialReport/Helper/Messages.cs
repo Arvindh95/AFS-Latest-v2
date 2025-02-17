@@ -33,6 +33,7 @@ namespace FinancialReport
         public const string PleaseSelectALedger = "Please select a Ledger";
         public const string NoRecordIsSelected = "No record is selected";
         public const string NoGeneratedFile = "No generated file is available for download. Please generate the report first.";
+        public const string FileGenerationInProgress = "A report generation process is already running for this template.";
 
     }
 }
