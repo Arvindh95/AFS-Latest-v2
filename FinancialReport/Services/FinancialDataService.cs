@@ -14,6 +14,7 @@ namespace FinancialReport.Services
         private readonly string _baseUrl;
         private readonly AuthService _authService;
         private readonly Func<List<string>> _getAccountNumbers;  // Function delegate for fetching accounts
+        private readonly Dictionary<string, (FinancialApiData Data, DateTime Expiry)> _cache = new Dictionary<string, (FinancialApiData, DateTime)>();
 
         public FinancialDataService(string baseUrl, AuthService authService, Func<List<string>> getAccountNumbers)
         {
@@ -82,6 +83,17 @@ namespace FinancialReport.Services
 
         public FinancialApiData FetchAllApiData(string branch, string ledger, string period)
         {
+
+            string cacheKey = $"{branch}_{ledger}_{period}";
+            DateTime now = DateTime.UtcNow;
+
+            // ✅ Check if data exists in cache and has not expired
+            if (_cache.ContainsKey(cacheKey) && _cache[cacheKey].Expiry > now)
+            {
+                PXTrace.WriteInformation($"Using cached data for: {cacheKey}");
+                return _cache[cacheKey].Data;
+            }
+
             string accessToken = _authService.AuthenticateAndGetToken();
             var accounts = _getAccountNumbers(); // Fetch account numbers using the delegate
             var accountData = FetchEndingBalances(accessToken, branch, ledger, period, accounts);
