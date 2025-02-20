@@ -146,6 +146,7 @@ namespace FinancialReport
         public PXCancel<FLRTFinancialReport> Cancel;
 
 
+
         #region Business Logic
 
         public PXAction<FLRTFinancialReport> GenerateReport;
@@ -173,6 +174,41 @@ namespace FinancialReport
 
             if (selectedRecord.Noteid == null)
                 throw new PXException(Messages.TemplateHasNoFiles);
+
+            // Retrieve CompanyID from the database
+            int? companyID = GetCompanyIDFromDB(selectedRecord.ReportID);
+            PXTrace.WriteInformation($"CompanyID retrieved: {companyID}");
+
+            // Map CompanyID to a tenant name
+            string tenantName = MapCompanyIDToTenantName(companyID);
+            PXTrace.WriteInformation($"Mapped Tenant Name: {tenantName}");
+
+            // Fetch credentials based on the tenant
+            AcumaticaCredentials tenantCredentials = CredentialProvider.GetCredentials(tenantName);
+            PXTrace.WriteInformation($"API Credentials: ClientId={tenantCredentials.ClientId}, Username={tenantCredentials.Username}");
+
+            // Initialize AuthService with these credentials
+            AuthService authService = new AuthService(
+                                        _baseUrl,
+                                        tenantCredentials.ClientId,
+                                        tenantCredentials.ClientSecret,
+                                        tenantCredentials.Username,
+                                        tenantCredentials.Password
+            );
+
+            string token;
+            try
+            {
+                token = authService.AuthenticateAndGetToken();
+                PXTrace.WriteInformation($"Successfully authenticated for {tenantName}. Token: {token}");
+            }
+            catch (Exception ex)
+            {
+                PXTrace.WriteError($"Authentication failed for {tenantName}: {ex.Message}");
+                throw new PXException(Messages.InvalidCredentials);
+            }
+
+            PXTrace.WriteInformation($"Using API Credentials for {tenantName}");
 
             selectedRecord.Status = ReportStatus.InProgress;
             // Persist the record and ensure its state is stored in the database.
@@ -205,7 +241,7 @@ namespace FinancialReport
                 try
                 {
                     // Generate the report.
-                    reportGraph.GenerateFinancialReport();
+                    reportGraph.GenerateFinancialReport(token);
                     // Log or store the file ID so the UI can later display a download link.
                     PXTrace.WriteInformation("Report has been generated and is ready for download.");
                 }
@@ -220,7 +256,7 @@ namespace FinancialReport
             return adapter.Get();
         }
 
-        private void GenerateFinancialReport()
+        private void GenerateFinancialReport(string authToken)
         {
             try
             {
@@ -259,6 +295,8 @@ namespace FinancialReport
                 int currYearInt = int.TryParse(currYear, out int parsedYear) ? parsedYear : DateTime.Now.Year;
                 string prevYear = (currYearInt - 1).ToString();
                 string prevYearPeriod = selectedMonth + prevYear;
+
+                _authService.SetToken(authToken);
 
                 PXTrace.WriteInformation($"Fetching data for Period: {selectedPeriod}, Branch: {branch}, Ledger: {ledger}");
                 var currYearData = _dataService.FetchAllApiData(branch, ledger, selectedPeriod) ?? new FinancialApiData();
@@ -401,5 +439,56 @@ namespace FinancialReport
 
 
         #endregion
+
+        private int? GetCompanyIDFromDB(int? reportID)
+        {
+            if (reportID == null) return null;
+
+            using (PXTransactionScope ts = new PXTransactionScope())
+            {
+                var result = PXDatabase.SelectSingle<FLRTFinancialReport>(
+                    new PXDataField("CompanyID"), // Column name in DB
+                    new PXDataFieldValue("ReportID", reportID) // Filtering by ReportID
+                );
+
+                if (result != null)
+                {
+                    return (int?)result.GetInt32(0);
+                }
+            }
+
+            return null;
+        }
+
+        private string MapCompanyIDToTenantName(int? companyID)
+        {
+            if (companyID == null)
+                return string.Empty; // Default to general credentials
+
+            switch (companyID)
+            {
+                case 3:
+                    return "TenantA"; // Maps to Acumatica.TenantA in web.config
+                case 4:
+                    return "TenantB"; // Maps to Acumatica.TenantB in web.config
+                case 5:
+                    return "TenantC"; // Add more mappings if needed
+                case 6:
+                    return "TenantD"; // Add more mappings if needed
+                case 7:
+                    return "TenantE"; // Add more mappings if needed
+                case 8:
+                    return "TenantF"; // Add more mappings if needed
+                case 9:
+                    return "TenantG"; // Add more mappings if needed
+                default:
+                    return string.Empty; // Default to general credentials
+            }
+        }
+
+
+
+
+
     }
 }
