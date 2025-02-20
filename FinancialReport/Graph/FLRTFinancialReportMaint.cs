@@ -113,12 +113,7 @@ namespace FinancialReport
 
         protected void FLRTFinancialReport_Branch_FieldUpdated(PXCache cache, PXFieldUpdatedEventArgs e)
         {
-            var row = (FLRTFinancialReport)e.Row;
-            if (row != null && string.IsNullOrEmpty(row.Branch))
-            {
-                PXTrace.WriteError("Branch cannot be empty.");
-                throw new PXException(Messages.PleaseSelectABranch);
-            }
+            //No Code here
         }
 
         protected void FLRTFinancialReport_Ledger_FieldUpdated(PXCache cache, PXFieldUpdatedEventArgs e)
@@ -270,9 +265,17 @@ namespace FinancialReport
                 // Use currentRecord directly (avoid searching the cache for Selected).
                 string branch = currentRecord.Branch;
                 string ledger = currentRecord.Ledger;
+                string organization = currentRecord.Organization;
+
+                branch = string.IsNullOrEmpty(branch) ? organization : branch;
 
                 if (string.IsNullOrEmpty(branch))
+                {
                     throw new PXException(Messages.PleaseSelectABranch);
+                }
+
+                //if (string.IsNullOrEmpty(branch))
+                //    throw new PXException(Messages.PleaseSelectABranch);
                 if (string.IsNullOrEmpty(ledger))
                     throw new PXException(Messages.PleaseSelectALedger);
 

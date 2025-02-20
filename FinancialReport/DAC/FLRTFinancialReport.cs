@@ -4,6 +4,7 @@ using PX.Objects.GL; // For Ledger and Branch tables
 using PX.Objects;
 using PX.Objects.GL.FinPeriods.TableDefinition;
 using PX.Data.BQL.Fluent;
+using PX.Objects.GL.DAC;
 
 namespace FinancialReport
 {
@@ -108,6 +109,15 @@ namespace FinancialReport
     [PXSelector(typeof(Search<Branch.branchCD>))]
     public virtual string Branch { get; set; }
     public abstract class branch : PX.Data.BQL.BqlString.Field<branch> { }
+        #endregion
+
+    #region Organization
+    [PXDBString(10, IsUnicode = true)]
+    [PXUIField(DisplayName = "Organization")]
+    // You can use a selector if you have an Organization table or list; if not, you may remove this.
+    [PXSelector(typeof(Search<Organization.organizationCD>))]
+    public virtual string Organization { get; set; }
+    public abstract class organization : PX.Data.BQL.BqlString.Field<organization> { }
     #endregion
 
     #region Ledger
