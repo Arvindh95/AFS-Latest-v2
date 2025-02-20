@@ -48,6 +48,10 @@
     <Reference Include="PX.Data.BQL.Fluent">
       <HintPath>..\..\..\..\Bin\PX.Data.BQL.Fluent.dll</HintPath>
     </Reference>
+    <Reference Include="PX.DbServices, Version=1.0.0.0, Culture=neutral, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>..\..\..\..\Bin\PX.DbServices.dll</HintPath>
+    </Reference>
     <Reference Include="PX.Objects">
       <HintPath>..\..\..\..\Bin\PX.Objects.DLL</HintPath>
     </Reference>
@@ -68,6 +72,7 @@
     <Compile Include="DAC\GLHistoryEnqFilter.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Services\AuthService.cs" />
+    <Compile Include="Services\CredentialProvider.cs" />
     <Compile Include="Services\FileService.cs" />
     <Compile Include="Services\FinancialDataService.cs" />
     <Compile Include="Services\WordTemplateService.cs" />

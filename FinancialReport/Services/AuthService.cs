@@ -32,6 +32,13 @@ namespace FinancialReport.Services
             _password = password;
         }
 
+        public void SetToken(string token)
+        {
+            _accessToken = token;
+            _tokenExpiry = DateTime.Now.AddMinutes(30); // Assume token is valid for 30 minutes
+            PXTrace.WriteInformation("AuthService: Token has been set manually.");
+        }
+
 
         #region AuthenticationAndGetToken();
 

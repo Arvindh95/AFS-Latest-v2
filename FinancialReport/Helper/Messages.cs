@@ -34,6 +34,8 @@ namespace FinancialReport
         public const string NoRecordIsSelected = "No record is selected";
         public const string NoGeneratedFile = "No generated file is available for download. Please generate the report first.";
         public const string FileGenerationInProgress = "A report generation process is already running for this template.";
-
+        public const string NoAPIFound = "No API credentials found for company";
+        public const string UnabletoDetermineCompany = "Unable to determine the current company.";
+        public const string InvalidCredentials = "Failed to authenticate. Please check credentials.";
     }
 }
