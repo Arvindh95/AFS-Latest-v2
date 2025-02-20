@@ -112,7 +112,7 @@ namespace FinancialReport
         #endregion
 
     #region Organization
-    [PXDBString(10, IsUnicode = true)]
+    [PXDBString(50, IsUnicode = true)]
     [PXUIField(DisplayName = "Organization")]
     // You can use a selector if you have an Organization table or list; if not, you may remove this.
     [PXSelector(typeof(Search<Organization.organizationCD>))]

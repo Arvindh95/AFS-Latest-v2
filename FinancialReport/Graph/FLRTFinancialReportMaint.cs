@@ -113,7 +113,7 @@ namespace FinancialReport
 
         protected void FLRTFinancialReport_Branch_FieldUpdated(PXCache cache, PXFieldUpdatedEventArgs e)
         {
-            //No Code here
+            //No need to implement this method
         }
 
         protected void FLRTFinancialReport_Ledger_FieldUpdated(PXCache cache, PXFieldUpdatedEventArgs e)
@@ -156,8 +156,6 @@ namespace FinancialReport
                                 .FirstOrDefault(item => item.Selected == true);
 
 
-            
-            
 
             if (selectedRecord == null)
                 throw new PXException(Messages.PleaseSelectTemplate);
@@ -269,10 +267,8 @@ namespace FinancialReport
 
                 branch = string.IsNullOrEmpty(branch) ? organization : branch;
 
-                if (string.IsNullOrEmpty(branch))
-                {
+                if (string.IsNullOrEmpty(branch) && string.IsNullOrEmpty(organization))
                     throw new PXException(Messages.PleaseSelectABranch);
-                }
 
                 //if (string.IsNullOrEmpty(branch))
                 //    throw new PXException(Messages.PleaseSelectABranch);
