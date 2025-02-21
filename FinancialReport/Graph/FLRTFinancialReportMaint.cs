@@ -51,7 +51,7 @@ namespace FinancialReport
         public FLRTFinancialReportMaint()
         {
             _authService = new AuthService(_baseUrl, GetConfigValue("Acumatica.ClientId"), GetConfigValue("Acumatica.ClientSecret"), GetConfigValue("Acumatica.Username"), GetConfigValue("Acumatica.Password"));
-            _dataService = new FinancialDataService(_baseUrl, _authService, GetAccountNumbers);
+            _dataService = new FinancialDataService(_baseUrl, _authService);
             _fileService = new FileService(this);
             _wordTemplateService = new WordTemplateService();
         }

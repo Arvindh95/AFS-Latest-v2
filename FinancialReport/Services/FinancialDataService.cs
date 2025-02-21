@@ -13,81 +13,19 @@ namespace FinancialReport.Services
     {
         private readonly string _baseUrl;
         private readonly AuthService _authService;
-        private readonly Func<List<string>> _getAccountNumbers;  // Function delegate for fetching accounts
         private readonly Dictionary<string, (FinancialApiData Data, DateTime Expiry)> _cache = new Dictionary<string, (FinancialApiData, DateTime)>();
 
-        public FinancialDataService(string baseUrl, AuthService authService, Func<List<string>> getAccountNumbers)
+        public FinancialDataService(string baseUrl, AuthService authService)
         {
             _baseUrl = baseUrl ?? throw new ArgumentNullException(nameof(baseUrl));
             _authService = authService ?? throw new ArgumentNullException(nameof(authService));
-            _getAccountNumbers = getAccountNumbers ?? throw new ArgumentNullException(nameof(getAccountNumbers));
-        }
-
-        public Dictionary<string, (decimal EndingBalance, string Description)> FetchEndingBalances(
-            string accessToken, string branch, string ledger, string period, List<string> accounts)
-        {
-
-            using (HttpClient client = new HttpClient())
-            {
-                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-                string apiUrl = $"{_baseUrl}/entity/AccountsFilter/24.200.001/AccountBySubaccount";
-                var accountData = new Dictionary<string, (decimal EndingBalance, string Description)>();
-
-                foreach (var account in accounts)
-                {
-                    try
-                    {
-                        var payload = new
-                        {
-                            Company_Branch = new { value = branch },
-                            Ledger = new { value = ledger },
-                            Period = new { value = period },
-                            Account = new { value = account }
-                        };
-
-                        string payloadJson = JsonConvert.SerializeObject(payload);
-                        var httpContent = new StringContent(payloadJson, Encoding.UTF8, "application/json");
-                        HttpResponseMessage response = client.PutAsync(apiUrl, httpContent).Result;
-
-                        if (!response.IsSuccessStatusCode)
-                        {
-                            string errorResponse = response.Content.ReadAsStringAsync().Result;
-                            PXTrace.WriteError($"PUT request failed for Account {account}. Status: {response.StatusCode}, Response: {errorResponse}");
-                            continue;
-                        }
-
-                        string jsonResponse = response.Content.ReadAsStringAsync().Result;
-                        var parsed = JObject.Parse(jsonResponse);
-
-                        string endingBalanceStr = parsed["EndingBalance"]?["value"]?.ToString();
-                        string description = parsed["Description"]?["value"]?.ToString() ?? "No Description";
-
-                        if (decimal.TryParse(endingBalanceStr, out decimal endingBalance))
-                        {
-                            PXTrace.WriteInformation($"Account {account}: EndingBalance = {endingBalance}, Description = {description}");
-                            accountData[account] = (endingBalance, description);
-                        }
-                        else
-                        {
-                            PXTrace.WriteError($"Invalid or missing EndingBalance for Account {account}");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        PXTrace.WriteError($"Error fetching data for Account {account}: {ex.Message}");
-                    }
-                }
-                return accountData;
-            }
         }
 
         public FinancialApiData FetchAllApiData(string branch, string ledger, string period)
         {
-
             string cacheKey = $"{branch}_{ledger}_{period}";
             DateTime now = DateTime.UtcNow;
 
-            // ✅ Check if data exists in cache and has not expired
             if (_cache.ContainsKey(cacheKey) && _cache[cacheKey].Expiry > now)
             {
                 PXTrace.WriteInformation($"Using cached data for: {cacheKey}");
@@ -95,8 +33,7 @@ namespace FinancialReport.Services
             }
 
             string accessToken = _authService.AuthenticateAndGetToken();
-            var accounts = _getAccountNumbers(); // Fetch account numbers using the delegate
-            var accountData = FetchEndingBalances(accessToken, branch, ledger, period, accounts);
+            var accountData = FetchEndingBalances(accessToken, branch, ledger, period);
 
             var apiData = new FinancialApiData();
             foreach (var kvp in accountData)
@@ -104,7 +41,45 @@ namespace FinancialReport.Services
                 apiData.AccountData[kvp.Key] = (kvp.Value.EndingBalance.ToString(), kvp.Value.Description);
             }
 
+            _cache[cacheKey] = (apiData, DateTime.UtcNow.AddMinutes(10));
             return apiData;
+        }
+
+        private Dictionary<string, (decimal EndingBalance, string Description)> FetchEndingBalances(
+            string accessToken, string branch, string ledger, string period)
+        {
+            using (HttpClient client = new HttpClient())
+            {
+                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+                string odataUrl = $"http://localhost/Acumatica_PDFGen/t/Company/api/odata/gi/TrialBalance?$filter=FinancialPeriod eq '{period}' and OrganizationID eq '{branch}' and LedgerID eq '{ledger}'&$select=Account,EndingBalance,Description";
+
+                PXTrace.WriteInformation($"Fetching data from OData: {odataUrl}");
+
+                HttpResponseMessage response = client.GetAsync(odataUrl).Result;
+                if (!response.IsSuccessStatusCode)
+                {
+                    string errorResponse = response.Content.ReadAsStringAsync().Result;
+                    PXTrace.WriteError($"GET request failed. Status: {response.StatusCode}, Response: {errorResponse}");
+                    throw new PXException(Messages.FailedToFetchOData);
+                }
+
+                string jsonResponse = response.Content.ReadAsStringAsync().Result;
+                PXTrace.WriteInformation($"OData Raw Response: {jsonResponse}");
+                JObject parsedResponse = JObject.Parse(jsonResponse);
+
+                var accountData = new Dictionary<string, (decimal EndingBalance, string Description)>();
+                foreach (var item in parsedResponse["value"])
+                {
+                    string accountId = item["Account"]?.ToString();
+                    string description = item["Description"]?.ToString() ?? "No Description";
+                    decimal endingBalance = item["EndingBalance"]?.ToObject<decimal>() ?? 0;
+
+                    PXTrace.WriteInformation($"Account {accountId}: EndingBalance = {endingBalance}, Description = {description}");
+                    accountData[accountId] = (endingBalance, description);
+                }
+
+                return accountData;
+            }
         }
     }
 
