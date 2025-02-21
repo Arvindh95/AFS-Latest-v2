@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Configuration;
+using PX.Data;
 
 namespace FinancialReport.Services
 {
@@ -18,15 +19,27 @@ namespace FinancialReport.Services
     {
         public static AcumaticaCredentials GetCredentials(string tenant)
         {
-            string prefix = string.IsNullOrEmpty(tenant) ? "Acumatica" : $"Acumatica.{tenant}";
+            string prefix = string.IsNullOrEmpty(tenant) ? "Acumatica.Company" : $"Acumatica.{tenant}";
 
-            return new AcumaticaCredentials
+            AcumaticaCredentials credentials = new AcumaticaCredentials
             {
                 ClientId = ConfigurationManager.AppSettings[$"{prefix}.ClientId"],
                 ClientSecret = ConfigurationManager.AppSettings[$"{prefix}.ClientSecret"],
                 Username = ConfigurationManager.AppSettings[$"{prefix}.Username"],
                 Password = ConfigurationManager.AppSettings[$"{prefix}.Password"]
             };
+
+            // Log missing config issues
+            if (string.IsNullOrEmpty(credentials.ClientId) ||
+                string.IsNullOrEmpty(credentials.ClientSecret) ||
+                string.IsNullOrEmpty(credentials.Username) ||
+                string.IsNullOrEmpty(credentials.Password))
+            {
+                PXTrace.WriteError($"Missing credentials for {tenant}. Check Web.config.");
+                throw new PXException(Messages.TenantMissingFromConfig);
+            }
+
+            return credentials;
         }
     }
 

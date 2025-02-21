@@ -27,10 +27,10 @@ namespace FinancialReport
         #region Services     
 
         // Handles Authentication with Acumatica API
-        private readonly AuthService _authService;
+        //private readonly AuthService _authService;
 
         // Fetches financial data from Acumatica API
-        private readonly FinancialDataService _dataService;
+        //private readonly FinancialDataService _dataService;
 
         // Manages file operations such as fetching templates & saving reports
         private readonly FileService _fileService;
@@ -50,8 +50,8 @@ namespace FinancialReport
 
         public FLRTFinancialReportMaint()
         {
-            _authService = new AuthService(_baseUrl, GetConfigValue("Acumatica.ClientId"), GetConfigValue("Acumatica.ClientSecret"), GetConfigValue("Acumatica.Username"), GetConfigValue("Acumatica.Password"));
-            _dataService = new FinancialDataService(_baseUrl, _authService);
+            //_authService = new AuthService(_baseUrl, GetConfigValue("Acumatica.ClientId"), GetConfigValue("Acumatica.ClientSecret"), GetConfigValue("Acumatica.Username"), GetConfigValue("Acumatica.Password"));
+            //_dataService = new FinancialDataService(_baseUrl, _authService);
             _fileService = new FileService(this);
             _wordTemplateService = new WordTemplateService();
         }
@@ -251,100 +251,120 @@ namespace FinancialReport
 
         private void GenerateFinancialReport(string authToken)
         {
+            AuthService localAuthService = null;
             try
             {
-                // Use the persisted current record.
-                var currentRecord = FinancialReport.Current;
+                // 1. Retrieve current FLRTFinancialReport record
+                FLRTFinancialReport currentRecord = FinancialReport.Current;
                 if (currentRecord == null)
                     throw new PXException(Messages.PleaseSelectTemplate);
+
                 if (currentRecord.Noteid == null)
                     throw new PXException(Messages.TemplateHasNoFiles);
 
-                // Use currentRecord directly (avoid searching the cache for Selected).
-                string branch = currentRecord.Branch;
-                string ledger = currentRecord.Ledger;
-                string organization = currentRecord.Organization;
+                // 2. Derive the tenant name from the record’s CompanyID
+                int? companyID = GetCompanyIDFromDB(currentRecord.ReportID);
+                string tenantName = MapCompanyIDToTenantName(companyID);
+                PXTrace.WriteInformation($"Mapped Tenant Name: {tenantName}");
 
-                branch = string.IsNullOrEmpty(branch) ? organization : branch;
+                // 3. Fetch credentials from Web.config for that tenant
+                AcumaticaCredentials creds = CredentialProvider.GetCredentials(tenantName);
+                PXTrace.WriteInformation($"Tenant Credentials: ClientId={creds.ClientId}, Username={creds.Username}");
 
-                if (string.IsNullOrEmpty(branch) && string.IsNullOrEmpty(organization))
+                // 4. Create a local AuthService using the tenant credentials
+                localAuthService = new AuthService(
+                    _baseUrl,
+                    creds.ClientId,
+                    creds.ClientSecret,
+                    creds.Username,
+                    creds.Password
+                );
+
+                // 5. Use the token from the caller (already authenticated)
+                //    instead of calling AuthenticateAndGetToken() again
+                localAuthService.SetToken(authToken);
+                PXTrace.WriteInformation("AuthService: Token has been set from the caller.");
+
+                // 6. Create a local FinancialDataService
+                var localDataService = new FinancialDataService(_baseUrl, localAuthService, tenantName);
+
+                // 7. Validate Branch & Ledger
+                string branch = string.IsNullOrEmpty(currentRecord.Branch)
+                                ? currentRecord.Organization
+                                : currentRecord.Branch;
+
+                if (string.IsNullOrEmpty(branch) && string.IsNullOrEmpty(currentRecord.Organization))
                     throw new PXException(Messages.PleaseSelectABranch);
 
-                //if (string.IsNullOrEmpty(branch))
-                //    throw new PXException(Messages.PleaseSelectABranch);
-                if (string.IsNullOrEmpty(ledger))
+                if (string.IsNullOrEmpty(currentRecord.Ledger))
                     throw new PXException(Messages.PleaseSelectALedger);
 
-                // Fetch template file content
-                var templateFileContent = GetFileContent(currentRecord.Noteid);
+                // 8. Retrieve the template file from FileService
+                byte[] templateFileContent = GetFileContent(currentRecord.Noteid);
                 if (templateFileContent == null || templateFileContent.Length == 0)
                     throw new PXException(Messages.TemplateFileIsEmpty);
 
-                // Create paths for template and output
                 string templatePath = Path.Combine(Path.GetTempPath(), $"{currentRecord.ReportCD}_Template.docx");
                 File.WriteAllBytes(templatePath, templateFileContent);
 
+                // 9. Build an output path
                 string uniqueFileName = $"{currentRecord.ReportCD}_Generated_{DateTime.Now:yyyyMMdd_HHmmssfff}.docx";
                 string outputPath = Path.Combine(Path.GetTempPath(), uniqueFileName);
 
-                // Determine periods for current and previous years.
+                // 10. Derive selectedPeriod for the current year
                 string currYear = currentRecord.CurrYear ?? DateTime.Now.ToString("yyyy");
-                string selectedMonth = currentRecord.FinancialMonth ?? "12"; // Default to December
+                string selectedMonth = currentRecord.FinancialMonth ?? "12";
                 string selectedPeriod = $"{selectedMonth}{currYear}";
+
                 int currYearInt = int.TryParse(currYear, out int parsedYear) ? parsedYear : DateTime.Now.Year;
                 string prevYear = (currYearInt - 1).ToString();
                 string prevYearPeriod = selectedMonth + prevYear;
 
-                _authService.SetToken(authToken);
+                PXTrace.WriteInformation($"Fetching data for Period: {selectedPeriod}, Branch: {branch}, Ledger: {currentRecord.Ledger}");
+                var currYearData = localDataService.FetchAllApiData(branch, currentRecord.Ledger, selectedPeriod)
+                    ?? new FinancialApiData();
 
-                PXTrace.WriteInformation($"Fetching data for Period: {selectedPeriod}, Branch: {branch}, Ledger: {ledger}");
-                var currYearData = _dataService.FetchAllApiData(branch, ledger, selectedPeriod) ?? new FinancialApiData();
+                PXTrace.WriteInformation($"Fetching data for Prev Year Period: {prevYearPeriod}, Branch: {branch}, Ledger: {currentRecord.Ledger}");
+                var prevYearData = localDataService.FetchAllApiData(branch, currentRecord.Ledger, prevYearPeriod)
+                    ?? new FinancialApiData();
 
-                PXTrace.WriteInformation($"Fetching data for Prev Year Period: {prevYearPeriod}, Branch: {branch}, Ledger: {ledger}");
-                var prevYearData = _dataService.FetchAllApiData(branch, ledger, prevYearPeriod) ?? new FinancialApiData();
-
-                // Prepare placeholder data and populate the template.
+                // 11. Prepare placeholders & populate the template
                 var placeholderData = GetPlaceholderData(currYearData, prevYearData);
                 _wordTemplateService.PopulateTemplate(templatePath, outputPath, placeholderData);
 
-                // Upload the generated document and store the file ID (instead of redirecting immediately).
+                // 12. Upload generated doc to Acumatica
                 byte[] generatedFileContent = File.ReadAllBytes(outputPath);
                 Guid fileID = SaveGeneratedDocument(uniqueFileName, generatedFileContent, currentRecord);
 
                 PXTrace.WriteInformation("Report generated successfully.");
 
-                // Redirect to the generated file
-                //throw new PXRedirectToFileException(fileID, 1, false);
-
-                // Optionally, store the fileID on the record or in a related table so that the UI can display a download link.
-                // For example:
+                // 13. Mark record as completed
                 currentRecord.GeneratedFileID = fileID;
-                currentRecord.Status = ReportStatus.Completed;
+                currentRecord.Status = FLRTFinancialReport.ReportStatus.Completed;
                 FinancialReport.Update(currentRecord);
                 Actions.PressSave();
-
-
             }
             catch (Exception ex)
             {
+                // Handle or log error
                 PXTrace.WriteError($"Report generation failed: {ex.Message}");
-
                 var currentRecord = FinancialReport.Current;
                 if (currentRecord != null)
                 {
-                    // Set status to "Failed" if an error occurs
-                    currentRecord.Status = ReportStatus.Failed;
+                    currentRecord.Status = FLRTFinancialReport.ReportStatus.Failed;
                     FinancialReport.Update(currentRecord);
                     Actions.PressSave();
                 }
-
                 throw new PXException(Messages.FailedToRetrieveFile);
             }
             finally
             {
-                _authService.Logout();
+                // 14. Ensure we log out from the localAuthService
+                localAuthService?.Logout();
             }
         }
+
+
 
         #endregion
 
@@ -462,30 +482,29 @@ namespace FinancialReport
         private string MapCompanyIDToTenantName(int? companyID)
         {
             if (companyID == null)
-                return string.Empty; // Default to general credentials
+                return string.Empty;
 
-            switch (companyID)
+            string mappingConfig = ConfigurationManager.AppSettings["TenantMapping"];
+
+            if (string.IsNullOrEmpty(mappingConfig))
             {
-                case 3:
-                    return "TenantA"; // Maps to Acumatica.TenantA in web.config
-                case 4:
-                    return "TenantB"; // Maps to Acumatica.TenantB in web.config
-                case 5:
-                    return "TenantC"; // Add more mappings if needed
-                case 6:
-                    return "TenantD"; // Add more mappings if needed
-                case 7:
-                    return "TenantE"; // Add more mappings if needed
-                case 8:
-                    return "TenantF"; // Add more mappings if needed
-                case 9:
-                    return "TenantG"; // Add more mappings if needed
-                default:
-                    return string.Empty; // Default to general credentials
+                PXTrace.WriteError("TenantMapping is missing from Web.config.");
+                throw new PXException(Messages.TenantMissingFromConfig);
             }
+
+            var tenantMap = mappingConfig.Split(',')
+                .Select(entry => entry.Split(':'))
+                .Where(parts => parts.Length == 2)
+                .ToDictionary(parts => int.Parse(parts[0]), parts => parts[1]);
+
+            if (!tenantMap.TryGetValue(companyID.Value, out string tenant))
+            {
+                PXTrace.WriteError($"No tenant found for CompanyID: {companyID}");
+                throw new PXException(Messages.TenantMissingFromConfig);
+            }
+
+            return tenant;
         }
-
-
 
 
 

@@ -37,5 +37,6 @@ namespace FinancialReport
         public const string NoAPIFound = "No API credentials found for company";
         public const string UnabletoDetermineCompany = "Unable to determine the current company.";
         public const string InvalidCredentials = "Failed to authenticate. Please check credentials.";
+        public const string TenantMissingFromConfig = "Tenant mapping is missing in Web.config.";
     }
 }

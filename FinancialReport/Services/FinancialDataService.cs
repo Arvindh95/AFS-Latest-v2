@@ -12,13 +12,15 @@ namespace FinancialReport.Services
     public class FinancialDataService
     {
         private readonly string _baseUrl;
+        private readonly string _tenantName;
         private readonly AuthService _authService;
         private readonly Dictionary<string, (FinancialApiData Data, DateTime Expiry)> _cache = new Dictionary<string, (FinancialApiData, DateTime)>();
 
-        public FinancialDataService(string baseUrl, AuthService authService)
+        public FinancialDataService(string baseUrl, AuthService authService, string tenantName)
         {
             _baseUrl = baseUrl ?? throw new ArgumentNullException(nameof(baseUrl));
             _authService = authService ?? throw new ArgumentNullException(nameof(authService));
+            _tenantName = tenantName ?? throw new ArgumentNullException(nameof(tenantName));
         }
 
         public FinancialApiData FetchAllApiData(string branch, string ledger, string period)
@@ -51,7 +53,9 @@ namespace FinancialReport.Services
             using (HttpClient client = new HttpClient())
             {
                 client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-                string odataUrl = $"http://localhost/Acumatica_PDFGen/t/Company/api/odata/gi/TrialBalance?$filter=FinancialPeriod eq '{period}' and OrganizationID eq '{branch}' and LedgerID eq '{ledger}'&$select=Account,EndingBalance,Description";
+                //string odataUrl = $"{_baseUrl}/api/odata/gi/TrialBalance?$filter=FinancialPeriod eq '{period}' and OrganizationID eq '{branch}' and LedgerID eq '{ledger}'&$select=Account,EndingBalance,Description";
+                //string odataUrl = $"{_baseUrl}/t/{tenant}/api/odata/gi/TrialBalance?$filter=FinancialPeriod eq '{period}' and OrganizationID eq '{branch}' and LedgerID eq '{ledger}'&$select=Account,EndingBalance,Description";
+                string odataUrl = $"{_baseUrl}/t/{_tenantName}/api/odata/gi/TrialBalance?$filter=FinancialPeriod eq '{period}' and OrganizationID eq '{branch}' and LedgerID eq '{ledger}'&$select=Account,EndingBalance,Description";
 
                 PXTrace.WriteInformation($"Fetching data from OData: {odataUrl}");
 
