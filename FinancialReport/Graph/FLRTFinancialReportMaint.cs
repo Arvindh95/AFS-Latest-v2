@@ -254,7 +254,6 @@ namespace FinancialReport
             AuthService localAuthService = null;
             try
             {
-                // 1. Retrieve current FLRTFinancialReport record
                 FLRTFinancialReport currentRecord = FinancialReport.Current;
                 if (currentRecord == null)
                     throw new PXException(Messages.PleaseSelectTemplate);
@@ -262,44 +261,22 @@ namespace FinancialReport
                 if (currentRecord.Noteid == null)
                     throw new PXException(Messages.TemplateHasNoFiles);
 
-                // 2. Derive the tenant name from the record’s CompanyID
                 int? companyID = GetCompanyIDFromDB(currentRecord.ReportID);
                 string tenantName = MapCompanyIDToTenantName(companyID);
                 PXTrace.WriteInformation($"Mapped Tenant Name: {tenantName}");
 
-                // 3. Fetch credentials from Web.config for that tenant
                 AcumaticaCredentials creds = CredentialProvider.GetCredentials(tenantName);
-                PXTrace.WriteInformation($"Tenant Credentials: ClientId={creds.ClientId}, Username={creds.Username}");
-
-                // 4. Create a local AuthService using the tenant credentials
-                localAuthService = new AuthService(
-                    _baseUrl,
-                    creds.ClientId,
-                    creds.ClientSecret,
-                    creds.Username,
-                    creds.Password
-                );
-
-                // 5. Use the token from the caller (already authenticated)
-                //    instead of calling AuthenticateAndGetToken() again
+                localAuthService = new AuthService(_baseUrl, creds.ClientId, creds.ClientSecret, creds.Username, creds.Password);
                 localAuthService.SetToken(authToken);
-                PXTrace.WriteInformation("AuthService: Token has been set from the caller.");
 
-                // 6. Create a local FinancialDataService
                 var localDataService = new FinancialDataService(_baseUrl, localAuthService, tenantName);
 
-                // 7. Validate Branch & Ledger
-                string branch = string.IsNullOrEmpty(currentRecord.Branch)
-                                ? currentRecord.Organization
-                                : currentRecord.Branch;
-
-                if (string.IsNullOrEmpty(branch) && string.IsNullOrEmpty(currentRecord.Organization))
+                string branch = string.IsNullOrEmpty(currentRecord.Branch) ? currentRecord.Organization : currentRecord.Branch;
+                if (string.IsNullOrEmpty(branch))
                     throw new PXException(Messages.PleaseSelectABranch);
-
                 if (string.IsNullOrEmpty(currentRecord.Ledger))
                     throw new PXException(Messages.PleaseSelectALedger);
 
-                // 8. Retrieve the template file from FileService
                 byte[] templateFileContent = GetFileContent(currentRecord.Noteid);
                 if (templateFileContent == null || templateFileContent.Length == 0)
                     throw new PXException(Messages.TemplateFileIsEmpty);
@@ -307,38 +284,32 @@ namespace FinancialReport
                 string templatePath = Path.Combine(Path.GetTempPath(), $"{currentRecord.ReportCD}_Template.docx");
                 File.WriteAllBytes(templatePath, templateFileContent);
 
-                // 9. Build an output path
                 string uniqueFileName = $"{currentRecord.ReportCD}_Generated_{DateTime.Now:yyyyMMdd_HHmmssfff}.docx";
                 string outputPath = Path.Combine(Path.GetTempPath(), uniqueFileName);
 
-                // 10. Derive selectedPeriod for the current year
                 string currYear = currentRecord.CurrYear ?? DateTime.Now.ToString("yyyy");
                 string selectedMonth = currentRecord.FinancialMonth ?? "12";
                 string selectedPeriod = $"{selectedMonth}{currYear}";
-
                 int currYearInt = int.TryParse(currYear, out int parsedYear) ? parsedYear : DateTime.Now.Year;
                 string prevYear = (currYearInt - 1).ToString();
                 string prevYearPeriod = selectedMonth + prevYear;
 
                 PXTrace.WriteInformation($"Fetching data for Period: {selectedPeriod}, Branch: {branch}, Ledger: {currentRecord.Ledger}");
-                var currYearData = localDataService.FetchAllApiData(branch, currentRecord.Ledger, selectedPeriod)
-                    ?? new FinancialApiData();
+                var currYearData = localDataService.FetchAllApiData(branch, currentRecord.Ledger, selectedPeriod) ?? new FinancialApiData();
 
                 PXTrace.WriteInformation($"Fetching data for Prev Year Period: {prevYearPeriod}, Branch: {branch}, Ledger: {currentRecord.Ledger}");
-                var prevYearData = localDataService.FetchAllApiData(branch, currentRecord.Ledger, prevYearPeriod)
-                    ?? new FinancialApiData();
+                var prevYearData = localDataService.FetchAllApiData(branch, currentRecord.Ledger, prevYearPeriod) ?? new FinancialApiData();
 
-                // 11. Prepare placeholders & populate the template
-                var placeholderData = GetPlaceholderData(currYearData, prevYearData);
+                PXTrace.WriteInformation($"Fetching January {prevYear} Beginning Balance, Branch: {branch}, Ledger: {currentRecord.Ledger}");
+                var januaryBeginningData = localDataService.FetchJanuaryBeginningBalance(branch, currentRecord.Ledger, prevYear) ?? new FinancialApiData();
+
+                var placeholderData = GetPlaceholderData(currYearData, prevYearData, januaryBeginningData); // Updated to include January data
                 _wordTemplateService.PopulateTemplate(templatePath, outputPath, placeholderData);
 
-                // 12. Upload generated doc to Acumatica
                 byte[] generatedFileContent = File.ReadAllBytes(outputPath);
                 Guid fileID = SaveGeneratedDocument(uniqueFileName, generatedFileContent, currentRecord);
 
                 PXTrace.WriteInformation("Report generated successfully.");
-
-                // 13. Mark record as completed
                 currentRecord.GeneratedFileID = fileID;
                 currentRecord.Status = FLRTFinancialReport.ReportStatus.Completed;
                 FinancialReport.Update(currentRecord);
@@ -346,7 +317,6 @@ namespace FinancialReport
             }
             catch (Exception ex)
             {
-                // Handle or log error
                 PXTrace.WriteError($"Report generation failed: {ex.Message}");
                 var currentRecord = FinancialReport.Current;
                 if (currentRecord != null)
@@ -359,40 +329,33 @@ namespace FinancialReport
             }
             finally
             {
-                // 14. Ensure we log out from the localAuthService
                 localAuthService?.Logout();
             }
         }
-
-
 
         #endregion
 
 
         #region Supporting Methods
 
-        private Dictionary<string, string> GetPlaceholderData(FinancialApiData currYearData, FinancialApiData prevYearData)
+        private Dictionary<string, string> GetPlaceholderData(FinancialApiData currYearData, FinancialApiData prevYearData, FinancialApiData januaryBeginningData)
         {
             var selectedRecord = FinancialReport.Current;
-            string selectedMonth = selectedRecord?.FinancialMonth ?? "12"; // Default to December
+            string selectedMonth = selectedRecord?.FinancialMonth ?? "12";
             string currYear = selectedRecord?.CurrYear ?? DateTime.Now.ToString("yyyy");
 
-            // Validate CurrYear
             if (string.IsNullOrEmpty(currYear))
                 throw new PXException(Messages.CurrentYearNotSpecified);
 
-            // Compute PrevYear
             int currYearInt = int.TryParse(currYear, out int parsedYear) ? parsedYear : DateTime.Now.Year;
             string prevYear = (currYearInt - 1).ToString();
 
-
-            // ✅ Convert "01" to "January", "02" to "February", etc.
             int monthNumber = int.Parse(selectedMonth);
             string monthName = new DateTime(1, monthNumber, 1).ToString("MMMM");
 
             var placeholderData = new Dictionary<string, string>
             {
-                { "{{financialMonth}}", monthName},
+                { "{{financialMonth}}", monthName },
                 { "{{branchName}}", "Censof-Test" },
                 { "{{agencyname}}", "Suruhanjaya Tenaga" },
                 { "{{name1}}", "Dato' Khir bin Osman" },
@@ -403,17 +366,20 @@ namespace FinancialReport
                 { "{{PY}}", prevYear }
             };
 
-            // Add fetched data for CurrYear
             foreach (var account in currYearData.AccountData)
             {
-                placeholderData[$"{{{{{account.Key}_CY}}}}"] = FormatNumber(account.Value.EndingBalance); // {{101000_2024}}
-                placeholderData[$"{{{{description_{account.Key}_CY}}}}"] = account.Value.Description; // {{description_101000_CurrYear}}
+                placeholderData[$"{{{{{account.Key}_CY}}}}"] = FormatNumber(account.Value.EndingBalance);
+                placeholderData[$"{{{{description_{account.Key}_CY}}}}"] = account.Value.Description;
             }
 
-            // Add fetched data for PrevYear
             foreach (var account in prevYearData.AccountData)
             {
-                placeholderData[$"{{{{{account.Key}_PY}}}}"] = FormatNumber(account.Value.EndingBalance); // {{101000_2023}}
+                placeholderData[$"{{{{{account.Key}_PY}}}}"] = FormatNumber(account.Value.EndingBalance);
+            }
+
+            foreach (var account in januaryBeginningData.AccountData)
+            {
+                placeholderData[$"{{{{{account.Key}_Jan1_PY}}}}"] = FormatNumber(account.Value.EndingBalance); // e.g., {{A10999_Jan1_2023}}
             }
 
             return placeholderData;
