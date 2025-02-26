@@ -82,7 +82,9 @@ namespace FinancialReport
         {
             if (decimal.TryParse(value, out decimal number))
             {
-                return number.ToString("N0"); // Formats as ###,###.00
+                //return number.ToString("N0"); // Formats as ###,###.00                                             
+                //return number.ToString("#,##0;(#,##0)");// Custom format: positive numbers as usual, negative numbers in parentheses
+                return number.ToString("#,##0");
             }
             return value; // Return original if parsing fails
         }
@@ -301,9 +303,10 @@ namespace FinancialReport
                 var prevYearData = localDataService.FetchAllApiData(branch, currentRecord.Ledger, prevYearPeriod) ?? new FinancialApiData();
 
                 PXTrace.WriteInformation($"Fetching January {prevYear} Beginning Balance, Branch: {branch}, Ledger: {currentRecord.Ledger}");
-                var januaryBeginningData = localDataService.FetchJanuaryBeginningBalance(branch, currentRecord.Ledger, prevYear) ?? new FinancialApiData();
+                var januaryBeginningDataPY = localDataService.FetchJanuaryBeginningBalance(branch, currentRecord.Ledger, prevYear) ?? new FinancialApiData();
+                var januaryBeginningDataCY = localDataService.FetchJanuaryBeginningBalance(branch, currentRecord.Ledger, currYear) ?? new FinancialApiData();
 
-                var placeholderData = GetPlaceholderData(currYearData, prevYearData, januaryBeginningData); // Updated to include January data
+                var placeholderData = GetPlaceholderData(currYearData, prevYearData, januaryBeginningDataPY, januaryBeginningDataCY); // Updated to include January data
                 _wordTemplateService.PopulateTemplate(templatePath, outputPath, placeholderData);
 
                 byte[] generatedFileContent = File.ReadAllBytes(outputPath);
@@ -338,7 +341,7 @@ namespace FinancialReport
 
         #region Supporting Methods
 
-        private Dictionary<string, string> GetPlaceholderData(FinancialApiData currYearData, FinancialApiData prevYearData, FinancialApiData januaryBeginningData)
+        private Dictionary<string, string> GetPlaceholderData(FinancialApiData currYearData, FinancialApiData prevYearData, FinancialApiData januaryBeginningDataPY, FinancialApiData januaryBeginningDataCY)
         {
             var selectedRecord = FinancialReport.Current;
             string selectedMonth = selectedRecord?.FinancialMonth ?? "12";
@@ -356,30 +359,49 @@ namespace FinancialReport
             var placeholderData = new Dictionary<string, string>
             {
                 { "{{financialMonth}}", monthName },
-                { "{{branchName}}", "Censof-Test" },
-                { "{{agencyname}}", "Suruhanjaya Tenaga" },
-                { "{{name1}}", "Dato' Khir bin Osman" },
-                { "{{name2}}", "Dato' Shaik Hussein bin Anggota" },
-                { "{{agencyName}}", "Suruhanjaya Tenaga" },
+                { "{{testValue}}", "Success" },
                 { "{{CY}}", currYear },
                 { "{{currmonth}}", DateTime.Now.ToString("MMMM") },
                 { "{{PY}}", prevYear }
             };
 
+            // Current Year (CY) - 2023
             foreach (var account in currYearData.AccountData)
             {
-                placeholderData[$"{{{{{account.Key}_CY}}}}"] = FormatNumber(account.Value.EndingBalance);
-                placeholderData[$"{{{{description_{account.Key}_CY}}}}"] = account.Value.Description;
+                string accountId = account.Key;
+                var data = account.Value;
+                placeholderData[$"{{{{{accountId}_CY}}}}"] = FormatNumber(data.EndingBalance.ToString());
+                placeholderData[$"{{{{description_{accountId}_CY}}}}"] = data.Description;
+                placeholderData[$"{{{{{accountId}_debit_CY}}}}"] = FormatNumber(data.Debit.ToString());
+                placeholderData[$"{{{{{accountId}_credit_CY}}}}"] = FormatNumber(data.Credit.ToString());
             }
 
+            // Previous Year (PY) - 2022
             foreach (var account in prevYearData.AccountData)
             {
-                placeholderData[$"{{{{{account.Key}_PY}}}}"] = FormatNumber(account.Value.EndingBalance);
+                string accountId = account.Key;
+                var data = account.Value;
+                placeholderData[$"{{{{{accountId}_PY}}}}"] = FormatNumber(data.EndingBalance.ToString());
+                placeholderData[$"{{{{{accountId}_debit_PY}}}}"] = FormatNumber(data.Debit.ToString());
+                placeholderData[$"{{{{{accountId}_credit_PY}}}}"] = FormatNumber(data.Credit.ToString());
             }
 
-            foreach (var account in januaryBeginningData.AccountData)
+            // January 1 of Previous Year (Jan1_PY)
+            foreach (var account in januaryBeginningDataPY.AccountData)
             {
-                placeholderData[$"{{{{{account.Key}_Jan1_PY}}}}"] = FormatNumber(account.Value.EndingBalance); // e.g., {{A10999_Jan1_2023}}
+                string accountId = account.Key;
+                var data = account.Value;
+                placeholderData[$"{{{{{accountId}_Jan1_PY}}}}"] = FormatNumber(data.EndingBalance.ToString()); // Note: EndingBalance here is BeginningBalance for January
+                //placeholderData[$"{{{{{accountId}_debit_Jan1_PY}}}}"] = FormatNumber(data.Debit.ToString());
+                //placeholderData[$"{{{{{accountId}_credit_Jan1_PY}}}}"] = FormatNumber(data.Credit.ToString());
+            }
+
+            // January 1 of Current Year (Jan1_CY)
+            foreach (var account in januaryBeginningDataCY.AccountData)
+            {
+                string accountId = account.Key;
+                var data = account.Value;
+                placeholderData[$"{{{{{accountId}_Jan1_CY}}}}"] = FormatNumber(data.EndingBalance.ToString());
             }
 
             return placeholderData;
