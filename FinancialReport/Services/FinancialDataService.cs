@@ -55,9 +55,7 @@ namespace FinancialReport.Services
                 apiData.AccountData[kvp.Key] = new FinancialPeriodData
                 {
                     BeginningBalance = kvp.Value.BeginningBalance,
-                    EndingBalance = kvp.Value.BeginningBalance, // Use BeginningBalance for January (store as EndingBalance for consistency with placeholders)
-                    //Debit = kvp.Value.Debit,
-                    //Credit = kvp.Value.Credit,
+                    EndingBalance = kvp.Value.BeginningBalance,
                     Description = kvp.Value.Description
                 };
             }
@@ -65,7 +63,76 @@ namespace FinancialReport.Services
             return apiData;
         }
 
-        private Dictionary<string, FinancialPeriodData> FetchPeriodData(string accessToken, string branch, string ledger, string period,string selectColumns = "Account,BeginningBalance,EndingBalance,Debit,Credit,Description")
+        /// ✅ **NEW FUNCTION: Fetch Cumulative Debit & Credit for a Given Range**
+        public FinancialApiData FetchRangeApiData(string branch, string ledger, string fromPeriod, string toPeriod)
+        {
+            string accessToken = _authService.AuthenticateAndGetToken();
+
+            string filter = $"FinancialPeriod ge '{fromPeriod}' and FinancialPeriod le '{toPeriod}' and OrganizationID eq '{branch}' and LedgerID eq '{ledger}'";
+            string selectColumns = "Account,Debit,Credit,Description,FinancialPeriod,EndingBalance";
+
+            string odataUrl = $"{_baseUrl}/t/{_tenantName}/api/odata/gi/TrialBalance?$filter={filter}&$select={selectColumns}";
+
+            PXTrace.WriteInformation($"Fetching cumulative range data from OData: {odataUrl}");
+
+            using (HttpClient client = new HttpClient())
+            {
+                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+                HttpResponseMessage response = client.GetAsync(odataUrl).Result;
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    string errorResponse = response.Content.ReadAsStringAsync().Result;
+                    PXTrace.WriteError($"GET request failed. Status: {response.StatusCode}, Response: {errorResponse}");
+                    throw new PXException(Messages.FailedToFetchOData);
+                }
+
+                string jsonResponse = response.Content.ReadAsStringAsync().Result;
+                PXTrace.WriteInformation($"OData Raw Response: {jsonResponse}");
+                JObject parsedResponse = JObject.Parse(jsonResponse);
+
+                var cumulativeDict = new Dictionary<string, FinancialPeriodData>();
+
+                // ✅ Loop over each record returned for each month within the range
+                foreach (var item in parsedResponse["value"])
+                {
+                    string accountId = item["Account"]?.ToString();
+                    decimal debit = item["Debit"]?.ToObject<decimal>() ?? 0;
+                    decimal credit = item["Credit"]?.ToObject<decimal>() ?? 0;
+                    string description = item["Description"]?.ToString() ?? "No Description";
+                    decimal endingBalance = item["EndingBalance"]?.ToObject<decimal>() ?? 0;
+
+                    if (!cumulativeDict.ContainsKey(accountId))
+                    {
+                        cumulativeDict[accountId] = new FinancialPeriodData
+                        {
+                            Description = description
+                        };
+                    }
+
+                    // ✅ Sum up Debits & Credits across all rows
+                    cumulativeDict[accountId].Debit += debit;
+                    cumulativeDict[accountId].Credit += credit;
+
+                    // ✅ Store the latest Ending Balance (last month in the range)
+                    cumulativeDict[accountId].EndingBalance = endingBalance;
+                }
+
+                // Convert dictionary to FinancialApiData
+                var apiData = new FinancialApiData();
+                foreach (var kvp in cumulativeDict)
+                {
+                    string acctId = kvp.Key;
+                    var data = kvp.Value;
+
+                    apiData.AccountData[acctId] = data;
+                }
+
+                return apiData;
+            }
+        }
+
+        private Dictionary<string, FinancialPeriodData> FetchPeriodData(string accessToken, string branch, string ledger, string period, string selectColumns = "Account,BeginningBalance,EndingBalance,Debit,Credit,Description")
         {
             using (HttpClient client = new HttpClient())
             {

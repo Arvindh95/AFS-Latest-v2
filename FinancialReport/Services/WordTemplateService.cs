@@ -32,13 +32,13 @@ namespace FinancialReport.Services
 
                     foreach (var paragraph in paragraphs)
                     {
-                        ReplacePlaceholderInRuns(paragraph, placeholder, replacement);
+                        ReplaceAllPlaceholdersInRuns(paragraph, data);
                     }
                 }
             }
         }
 
-        private void ReplacePlaceholderInRuns(Paragraph paragraph, string placeholder, string replacement)
+        private void ReplaceAllPlaceholdersInRuns(Paragraph paragraph, Dictionary<string, string> data)
         {
             MergeRunsWithSameFormatting(paragraph);
             var runs = paragraph.Elements<Run>().ToList();
@@ -50,48 +50,33 @@ namespace FinancialReport.Services
                 if (textElement == null) continue;
 
                 string runText = textElement.Text;
-                int idx;
-                while ((idx = runText.IndexOf(placeholder, StringComparison.Ordinal)) >= 0)
+
+                while (true)
                 {
-                    string before = runText.Substring(0, idx);
-                    string after = runText.Substring(idx + placeholder.Length);
+                    int startIdx = runText.IndexOf("{{");
+                    if (startIdx < 0) break;
 
-                    paragraph.RemoveChild(run);
-                    runs.RemoveAt(i);
+                    int endIdx = runText.IndexOf("}}", startIdx + 2);
+                    if (endIdx < 0) break;
 
-                    int insertPos = i;
+                    // Full placeholder with braces
+                    string placeholderWithBraces = runText.Substring(startIdx, endIdx - startIdx + 2);
 
-                    if (!string.IsNullOrEmpty(before))
-                    {
-                        var beforeRun = CloneRunWithNewText(run, before);
-                        paragraph.InsertBefore(beforeRun, insertPos < runs.Count ? runs[insertPos] : null);
-                        runs.Insert(insertPos, beforeRun);
-                        insertPos++;
-                        i++;
-                    }
+                    // Check dictionary: if found => use its value, else => "0"
+                    string replacementValue = data.TryGetValue(placeholderWithBraces, out string foundValue)
+                        ? foundValue
+                        : "0";
 
-                    var replacementRun = CloneRunWithNewText(run, replacement);
-                    paragraph.InsertBefore(replacementRun, insertPos < runs.Count ? runs[insertPos] : null);
-                    runs.Insert(insertPos, replacementRun);
-                    insertPos++;
-                    i++;
-
-                    if (!string.IsNullOrEmpty(after))
-                    {
-                        run = CloneRunWithNewText(run, after);
-                        paragraph.InsertBefore(run, insertPos < runs.Count ? runs[insertPos] : null);
-                        runs.Insert(insertPos, run);
-
-                        runText = after;
-                    }
-                    else
-                    {
-                        runText = string.Empty;
-                        break;
-                    }
+                    // Rebuild
+                    string before = runText.Substring(0, startIdx);
+                    string after = runText.Substring(endIdx + 2);
+                    runText = before + replacementValue + after;
                 }
+
+                textElement.Text = runText;
             }
         }
+
 
         private Run CloneRunWithNewText(Run originalRun, string newText)
         {

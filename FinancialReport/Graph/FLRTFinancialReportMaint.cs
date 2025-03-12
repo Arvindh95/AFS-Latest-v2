@@ -84,6 +84,11 @@ namespace FinancialReport
             {
                 //return number.ToString("N0"); // Formats as ###,###.00                                             
                 //return number.ToString("#,##0;(#,##0)");// Custom format: positive numbers as usual, negative numbers in parentheses
+                //number = Math.Abs(number); // Convert to absolute value (removes negative sign)
+                //if (number == 0)
+                //{
+                //    return "(0)"; // Replace zero values with (0)
+                //}
                 return number.ToString("#,##0");
             }
             return value; // Return original if parsing fails
@@ -291,22 +296,39 @@ namespace FinancialReport
 
                 string currYear = currentRecord.CurrYear ?? DateTime.Now.ToString("yyyy");
                 string selectedMonth = currentRecord.FinancialMonth ?? "12";
-                string selectedPeriod = $"{selectedMonth}{currYear}";
                 int currYearInt = int.TryParse(currYear, out int parsedYear) ? parsedYear : DateTime.Now.Year;
                 string prevYear = (currYearInt - 1).ToString();
-                string prevYearPeriod = selectedMonth + prevYear;
 
+                string selectedPeriod = $"{selectedMonth}{currYear}";
+                string prevYearPeriod = $"{selectedMonth}{prevYear}";
+
+                // ✅ Fetch CY Data
                 PXTrace.WriteInformation($"Fetching data for Period: {selectedPeriod}, Branch: {branch}, Ledger: {currentRecord.Ledger}");
                 var currYearData = localDataService.FetchAllApiData(branch, currentRecord.Ledger, selectedPeriod) ?? new FinancialApiData();
 
+                // ✅ Fetch PY Data
                 PXTrace.WriteInformation($"Fetching data for Prev Year Period: {prevYearPeriod}, Branch: {branch}, Ledger: {currentRecord.Ledger}");
                 var prevYearData = localDataService.FetchAllApiData(branch, currentRecord.Ledger, prevYearPeriod) ?? new FinancialApiData();
 
+                // ✅ Fetch January Beginning Balance
                 PXTrace.WriteInformation($"Fetching January {prevYear} Beginning Balance, Branch: {branch}, Ledger: {currentRecord.Ledger}");
                 var januaryBeginningDataPY = localDataService.FetchJanuaryBeginningBalance(branch, currentRecord.Ledger, prevYear) ?? new FinancialApiData();
                 var januaryBeginningDataCY = localDataService.FetchJanuaryBeginningBalance(branch, currentRecord.Ledger, currYear) ?? new FinancialApiData();
 
-                var placeholderData = GetPlaceholderData(currYearData, prevYearData, januaryBeginningDataPY, januaryBeginningDataCY); // Updated to include January data
+                // ✅ Fetch Cumulative Debit/Credit Data
+                string fromPeriodCY = "01" + currYear;
+                string toPeriodCY = selectedMonth + currYear;
+                PXTrace.WriteInformation($"Fetching CY cumulative data from {fromPeriodCY} to {toPeriodCY}");
+                var cumulativeCYData = localDataService.FetchRangeApiData(branch, currentRecord.Ledger, fromPeriodCY, toPeriodCY);
+
+                string fromPeriodPY = "01" + prevYear;
+                string toPeriodPY = "12" + prevYear;
+                PXTrace.WriteInformation($"Fetching PY cumulative data from {fromPeriodPY} to {toPeriodPY}");
+                var cumulativePYData = localDataService.FetchRangeApiData(branch, currentRecord.Ledger, fromPeriodPY, toPeriodPY);
+
+                // ✅ Store all data in placeholders
+                var placeholderData = GetPlaceholderData(currYearData, prevYearData, januaryBeginningDataPY, januaryBeginningDataCY, cumulativeCYData, cumulativePYData);
+
                 _wordTemplateService.PopulateTemplate(templatePath, outputPath, placeholderData);
 
                 byte[] generatedFileContent = File.ReadAllBytes(outputPath);
@@ -336,12 +358,15 @@ namespace FinancialReport
             }
         }
 
+
         #endregion
 
 
         #region Supporting Methods
 
-        private Dictionary<string, string> GetPlaceholderData(FinancialApiData currYearData, FinancialApiData prevYearData, FinancialApiData januaryBeginningDataPY, FinancialApiData januaryBeginningDataCY)
+        private Dictionary<string, string> GetPlaceholderData(FinancialApiData currYearData, FinancialApiData prevYearData,
+                                                      FinancialApiData januaryBeginningDataPY, FinancialApiData januaryBeginningDataCY,
+                                                      FinancialApiData cumulativeCYData, FinancialApiData cumulativePYData)
         {
             var selectedRecord = FinancialReport.Current;
             string selectedMonth = selectedRecord?.FinancialMonth ?? "12";
@@ -356,6 +381,35 @@ namespace FinancialReport
             int monthNumber = int.Parse(selectedMonth);
             string monthName = new DateTime(1, monthNumber, 1).ToString("MMMM");
 
+            // ✅ Initialize the summation variables
+            decimal sumB_CY = 0m, sumB_PY = 0m;
+            decimal sumH_CY = 0m, sumH_PY = 0m;
+
+            // ✅ Aggregate Cumulative Data by Prefix
+            var cumulativeCYByPrefix = new Dictionary<string, decimal>();
+            var cumulativePYByPrefix = new Dictionary<string, decimal>();
+            var beginningCYByPrefix = new Dictionary<string, decimal>(); // For Beginning Balance CY
+            var beginningPYByPrefix = new Dictionary<string, decimal>(); // For Beginning Balance PY
+
+
+            // ✅ Aggregate Cumulative Data by First 4 Prefix
+            var cumulativeCYBy4Prefix = new Dictionary<string, decimal>();
+            var cumulativePYBy4Prefix = new Dictionary<string, decimal>();
+            var beginningCYBy4Prefix = new Dictionary<string, decimal>(); // For Beginning Balance CY
+            var beginningPYBy4Prefix = new Dictionary<string, decimal>(); // For Beginning Balance PY
+
+            // ✅ Aggregate Cumulative Data by Prefix (3-character)
+            var debitCYByPrefix = new Dictionary<string, decimal>();  // Debit for CY
+            var creditCYByPrefix = new Dictionary<string, decimal>(); // Credit for CY
+            var debitPYByPrefix = new Dictionary<string, decimal>();  // Debit for PY
+            var creditPYByPrefix = new Dictionary<string, decimal>(); // Credit for PY
+
+            // ✅ Aggregate Cumulative Data by First 4 Prefix (4-character)
+            var debitCYBy4Prefix = new Dictionary<string, decimal>();
+            var creditCYBy4Prefix = new Dictionary<string, decimal>();
+            var debitPYBy4Prefix = new Dictionary<string, decimal>();
+            var creditPYBy4Prefix = new Dictionary<string, decimal>();
+
             var placeholderData = new Dictionary<string, string>
             {
                 { "{{financialMonth}}", monthName },
@@ -365,38 +419,51 @@ namespace FinancialReport
                 { "{{PY}}", prevYear }
             };
 
-            // Current Year (CY) - 2023
+            // ✅ Store Current Year (CY) Ending Balance & Description
             foreach (var account in currYearData.AccountData)
             {
                 string accountId = account.Key;
                 var data = account.Value;
                 placeholderData[$"{{{{{accountId}_CY}}}}"] = FormatNumber(data.EndingBalance.ToString());
                 placeholderData[$"{{{{description_{accountId}_CY}}}}"] = data.Description;
-                placeholderData[$"{{{{{accountId}_debit_CY}}}}"] = FormatNumber(data.Debit.ToString());
-                placeholderData[$"{{{{{accountId}_credit_CY}}}}"] = FormatNumber(data.Credit.ToString());
+
+                if (accountId.StartsWith("B"))
+                {
+                    sumB_CY += data.EndingBalance;
+                }
+                if (accountId.StartsWith("H"))
+                {
+                    sumH_CY += data.EndingBalance;
+                }
             }
 
-            // Previous Year (PY) - 2022
+            // ✅ Store Previous Year (PY) Ending Balance
             foreach (var account in prevYearData.AccountData)
             {
                 string accountId = account.Key;
                 var data = account.Value;
                 placeholderData[$"{{{{{accountId}_PY}}}}"] = FormatNumber(data.EndingBalance.ToString());
-                placeholderData[$"{{{{{accountId}_debit_PY}}}}"] = FormatNumber(data.Debit.ToString());
-                placeholderData[$"{{{{{accountId}_credit_PY}}}}"] = FormatNumber(data.Credit.ToString());
+
+                // ✅ Sum up PY balances for accounts starting with 'B' and 'H'
+                if (accountId.StartsWith("B"))
+                {
+                    sumB_PY += data.EndingBalance;
+                }
+                if (accountId.StartsWith("H"))
+                {
+                    sumH_PY += data.EndingBalance;
+                }
             }
 
-            // January 1 of Previous Year (Jan1_PY)
+            // ✅ Store January 1st Balance for Previous Year (Jan1_PY)
             foreach (var account in januaryBeginningDataPY.AccountData)
             {
                 string accountId = account.Key;
                 var data = account.Value;
-                placeholderData[$"{{{{{accountId}_Jan1_PY}}}}"] = FormatNumber(data.EndingBalance.ToString()); // Note: EndingBalance here is BeginningBalance for January
-                //placeholderData[$"{{{{{accountId}_debit_Jan1_PY}}}}"] = FormatNumber(data.Debit.ToString());
-                //placeholderData[$"{{{{{accountId}_credit_Jan1_PY}}}}"] = FormatNumber(data.Credit.ToString());
+                placeholderData[$"{{{{{accountId}_Jan1_PY}}}}"] = FormatNumber(data.EndingBalance.ToString());
             }
 
-            // January 1 of Current Year (Jan1_CY)
+            // ✅ Store January 1st Balance for Current Year (Jan1_CY)
             foreach (var account in januaryBeginningDataCY.AccountData)
             {
                 string accountId = account.Key;
@@ -404,8 +471,262 @@ namespace FinancialReport
                 placeholderData[$"{{{{{accountId}_Jan1_CY}}}}"] = FormatNumber(data.EndingBalance.ToString());
             }
 
+            // ✅ Store Cumulative Debit & Credit for Current Year
+            foreach (var account in cumulativeCYData.AccountData)
+            {
+                string accountId = account.Key;
+                var data = account.Value;
+                placeholderData[$"{{{{{accountId}_debit_CY}}}}"] = FormatNumber(data.Debit.ToString());
+                placeholderData[$"{{{{{accountId}_credit_CY}}}}"] = FormatNumber(data.Credit.ToString());
+            }
+
+            // ✅ Store Cumulative Debit & Credit for Previous Year
+            foreach (var account in cumulativePYData.AccountData)
+            {
+                string accountId = account.Key;
+                var data = account.Value;
+                placeholderData[$"{{{{{accountId}_debit_PY}}}}"] = FormatNumber(data.Debit.ToString());
+                placeholderData[$"{{{{{accountId}_credit_PY}}}}"] = FormatNumber(data.Credit.ToString());
+            }
+
+            // Process CY Data (3 strings)
+            foreach (var account in cumulativeCYData.AccountData)
+            {
+                string accountId = account.Key;
+                string accountPrefix = accountId.Substring(0, 3); // Extract first three characters (e.g., "A11")
+
+                if (!cumulativeCYByPrefix.ContainsKey(accountPrefix))
+                    cumulativeCYByPrefix[accountPrefix] = 0m;
+                cumulativeCYByPrefix[accountPrefix] += account.Value.EndingBalance;
+
+                
+            }
+
+            // Process CY Data (January 1st Beginning Balances)
+            foreach (var account in januaryBeginningDataCY.AccountData)
+            {
+                string accountId = account.Key;
+                string accountPrefix = accountId.Substring(0, 3); // Extract first four characters (e.g., "A110")
+
+                // Sum Beginning Balance
+                if (!beginningCYByPrefix.ContainsKey(accountPrefix))
+                    beginningCYByPrefix[accountPrefix] = 0m;
+                beginningCYByPrefix[accountPrefix] += account.Value.BeginningBalance;
+            }
+
+            // Process PY Data (3 strings)
+            foreach (var account in cumulativePYData.AccountData)
+            {
+                string accountId = account.Key;
+                string accountPrefix = accountId.Substring(0, 3); // Extract first three characters (e.g., "A11")
+
+                if (!cumulativePYByPrefix.ContainsKey(accountPrefix))
+                    cumulativePYByPrefix[accountPrefix] = 0m;
+                cumulativePYByPrefix[accountPrefix] += account.Value.EndingBalance;
+
+            }
+
+            // Process PY Data (January 1st Beginning Balances)
+            foreach (var account in januaryBeginningDataPY.AccountData)
+            {
+                string accountId = account.Key;
+                string accountPrefix = accountId.Substring(0, 3); // Extract first four characters (e.g., "A110")
+
+                if (!beginningPYByPrefix.ContainsKey(accountPrefix))
+                    beginningPYByPrefix[accountPrefix] = 0m;
+                beginningPYByPrefix[accountPrefix] += account.Value.BeginningBalance;
+            }
+
+            // ✅ Store cumulative sums in placeholders
+            foreach (var prefix in cumulativeCYByPrefix.Keys)
+            {
+                placeholderData[$"{{{{Sum_{prefix}_CY}}}}"] = FormatNumber(cumulativeCYByPrefix[prefix].ToString());
+            }
+            foreach (var prefix in cumulativePYByPrefix.Keys)
+            {
+                placeholderData[$"{{{{Sum_{prefix}_PY}}}}"] = FormatNumber(cumulativePYByPrefix[prefix].ToString());
+            }
+
+            // ✅ Store Beginning Balance sums in placeholders
+            foreach (var prefix in beginningCYByPrefix.Keys)
+            {
+                placeholderData[$"{{{{BegSum_{prefix}_CY}}}}"] = FormatNumber(beginningCYByPrefix[prefix].ToString());
+            }
+            foreach (var prefix in beginningPYByPrefix.Keys)
+            {
+                placeholderData[$"{{{{BegSum_{prefix}_PY}}}}"] = FormatNumber(beginningPYByPrefix[prefix].ToString());
+            }
+
+            // Process CY Data (4 strings)
+            foreach (var account in cumulativeCYData.AccountData)
+            {
+                string accountId = account.Key;
+                string accountPrefix = accountId.Substring(0, 4); // Extract first four characters (e.g., "A110")
+
+                if (!cumulativeCYBy4Prefix.ContainsKey(accountPrefix))
+                    cumulativeCYBy4Prefix[accountPrefix] = 0m;
+                cumulativeCYBy4Prefix[accountPrefix] += account.Value.EndingBalance;
+               
+            }
+
+            // Process CY Data (January 1st Beginning Balances)
+            foreach (var account in januaryBeginningDataCY.AccountData)
+            {
+                string accountId = account.Key;
+                string accountPrefix = accountId.Substring(0, 4); // Extract first four characters (e.g., "A110")
+
+                // Sum Beginning Balance
+                if (!beginningCYBy4Prefix.ContainsKey(accountPrefix))
+                    beginningCYBy4Prefix[accountPrefix] = 0m;
+                beginningCYBy4Prefix[accountPrefix] += account.Value.BeginningBalance;
+            }
+
+            // Process PY Data (4 strings)
+            foreach (var account in cumulativePYData.AccountData)
+            {
+                string accountId = account.Key;
+                string accountPrefix = accountId.Substring(0, 4); // Extract first four characters (e.g., "A110")
+
+                if (!cumulativePYBy4Prefix.ContainsKey(accountPrefix))
+                    cumulativePYBy4Prefix[accountPrefix] = 0m;
+                cumulativePYBy4Prefix[accountPrefix] += account.Value.EndingBalance;
+
+            }
+
+            // Process PY Data (January 1st Beginning Balances)
+            foreach (var account in januaryBeginningDataPY.AccountData)
+            {
+                string accountId = account.Key;
+                string accountPrefix = accountId.Substring(0, 4); // Extract first four characters (e.g., "A110")
+
+                if (!beginningPYBy4Prefix.ContainsKey(accountPrefix))
+                    beginningPYBy4Prefix[accountPrefix] = 0m;
+                beginningPYBy4Prefix[accountPrefix] += account.Value.BeginningBalance;
+            }
+
+            // ✅ Store cumulative sums in placeholders
+            foreach (var prefix in cumulativeCYBy4Prefix.Keys)
+            {
+                placeholderData[$"{{{{Sum4_{prefix}_CY}}}}"] = FormatNumber(cumulativeCYBy4Prefix[prefix].ToString());
+            }
+            foreach (var prefix in cumulativePYBy4Prefix.Keys)
+            {
+                placeholderData[$"{{{{Sum4_{prefix}_PY}}}}"] = FormatNumber(cumulativePYBy4Prefix[prefix].ToString());
+            }
+
+            foreach (var prefix in beginningCYBy4Prefix.Keys)
+            {
+                placeholderData[$"{{{{BegSum4_{prefix}_CY}}}}"] = FormatNumber(beginningCYBy4Prefix[prefix].ToString());
+            }
+            foreach (var prefix in beginningPYBy4Prefix.Keys)
+            {
+                placeholderData[$"{{{{BegSum4_{prefix}_PY}}}}"] = FormatNumber(beginningPYBy4Prefix[prefix].ToString());
+            }
+
+            // Process CY Data (3-character prefix) Debit/Credit
+            foreach (var account in cumulativeCYData.AccountData)
+            {
+                string accountId = account.Key;
+                string accountPrefix = accountId.Substring(0, 3); // Extract first 3 characters (e.g., "A11")
+
+                // Sum Debit
+                if (!debitCYByPrefix.ContainsKey(accountPrefix))
+                    debitCYByPrefix[accountPrefix] = 0m;
+                debitCYByPrefix[accountPrefix] += account.Value.Debit;
+
+                // Sum Credit
+                if (!creditCYByPrefix.ContainsKey(accountPrefix))
+                    creditCYByPrefix[accountPrefix] = 0m;
+                creditCYByPrefix[accountPrefix] += account.Value.Credit;
+            }
+
+            // Process CY Data (4-character prefix) Debit/Credit
+            foreach (var account in cumulativeCYData.AccountData)
+            {
+                string accountId = account.Key;
+                string accountPrefix = accountId.Substring(0, 4); // Extract first 4 characters (e.g., "A110")
+
+                // Sum Debit
+                if (!debitCYBy4Prefix.ContainsKey(accountPrefix))
+                    debitCYBy4Prefix[accountPrefix] = 0m;
+                debitCYBy4Prefix[accountPrefix] += account.Value.Debit;
+
+                // Sum Credit
+                if (!creditCYBy4Prefix.ContainsKey(accountPrefix))
+                    creditCYBy4Prefix[accountPrefix] = 0m;
+                creditCYBy4Prefix[accountPrefix] += account.Value.Credit;
+            }
+
+            // Process PY Data (3-character prefix) Debit/Credit
+            foreach (var account in cumulativePYData.AccountData)
+            {
+                string accountId = account.Key;
+                string accountPrefix = accountId.Substring(0, 3); // Extract first 3 characters (e.g., "A11")
+
+                // Sum Debit
+                if (!debitPYByPrefix.ContainsKey(accountPrefix))
+                    debitPYByPrefix[accountPrefix] = 0m;
+                debitPYByPrefix[accountPrefix] += account.Value.Debit;
+
+                // Sum Credit
+                if (!creditPYByPrefix.ContainsKey(accountPrefix))
+                    creditPYByPrefix[accountPrefix] = 0m;
+                creditPYByPrefix[accountPrefix] += account.Value.Credit;
+            }
+
+            // Process PY Data (4-character prefix) Debit/Credit
+            foreach (var account in cumulativePYData.AccountData)
+            {
+                string accountId = account.Key;
+                string accountPrefix = accountId.Substring(0, 4); // Extract first 4 characters (e.g., "A110")
+
+                // Sum Debit
+                if (!debitPYBy4Prefix.ContainsKey(accountPrefix))
+                    debitPYBy4Prefix[accountPrefix] = 0m;
+                debitPYBy4Prefix[accountPrefix] += account.Value.Debit;
+
+                // Sum Credit
+                if (!creditPYBy4Prefix.ContainsKey(accountPrefix))
+                    creditPYBy4Prefix[accountPrefix] = 0m;
+                creditPYBy4Prefix[accountPrefix] += account.Value.Credit;
+            }
+
+            // ✅ Store summed debit & credit for 3-character prefixes
+            foreach (var prefix in debitCYByPrefix.Keys)
+            {
+                placeholderData[$"{{{{DebitSum_{prefix}_CY}}}}"] = FormatNumber(debitCYByPrefix[prefix].ToString());
+                placeholderData[$"{{{{CreditSum_{prefix}_CY}}}}"] = FormatNumber(creditCYByPrefix[prefix].ToString());
+            }
+            foreach (var prefix in debitPYByPrefix.Keys)
+            {
+                placeholderData[$"{{{{DebitSum_{prefix}_PY}}}}"] = FormatNumber(debitPYByPrefix[prefix].ToString());
+                placeholderData[$"{{{{CreditSum_{prefix}_PY}}}}"] = FormatNumber(creditPYByPrefix[prefix].ToString());
+            }
+
+            // ✅ Store summed debit & credit for 4-character prefixes
+            foreach (var prefix in debitCYBy4Prefix.Keys)
+            {
+                placeholderData[$"{{{{DebitSum4_{prefix}_CY}}}}"] = FormatNumber(debitCYBy4Prefix[prefix].ToString());
+                placeholderData[$"{{{{CreditSum4_{prefix}_CY}}}}"] = FormatNumber(creditCYBy4Prefix[prefix].ToString());
+            }
+            foreach (var prefix in debitPYBy4Prefix.Keys)
+            {
+                placeholderData[$"{{{{DebitSum4_{prefix}_PY}}}}"] = FormatNumber(debitPYBy4Prefix[prefix].ToString());
+                placeholderData[$"{{{{CreditSum4_{prefix}_PY}}}}"] = FormatNumber(creditPYBy4Prefix[prefix].ToString());
+            }
+
+
+
+
+            // ✅ Store summed values in placeholders
+            placeholderData["{{B_Total_CY}}"] = FormatNumber(sumB_CY.ToString());
+            placeholderData["{{B_Total_PY}}"] = FormatNumber(sumB_PY.ToString());
+            placeholderData["{{H_Total_CY}}"] = FormatNumber(sumH_CY.ToString());
+            placeholderData["{{H_Total_PY}}"] = FormatNumber(sumH_PY.ToString());
+
             return placeholderData;
         }
+
 
         private byte[] GetFileContent(Guid? noteID)
         {
