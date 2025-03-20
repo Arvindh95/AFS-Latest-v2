@@ -107,6 +107,7 @@ namespace FinancialReport
             AcumaticaCredentials tenantCredentials = CredentialProvider.GetCredentials(tenantName);
             PXTrace.WriteInformation($"API Credentials: ClientId={tenantCredentials.ClientId}, Username={tenantCredentials.Username}");
 
+            // Create a shared AuthService instance
             var authService = new AuthService(
                 _baseUrl,
                 tenantCredentials.ClientId,
@@ -115,17 +116,9 @@ namespace FinancialReport
                 tenantCredentials.Password
             );
 
-            string token;
-            try
-            {
-                token = authService.AuthenticateAndGetToken();
-                PXTrace.WriteInformation($"Successfully authenticated for {tenantName}. Token: {token}");
-            }
-            catch (Exception ex)
-            {
-                PXTrace.WriteError($"Authentication failed for {tenantName}: {ex.Message}");
-                throw new PXException(Messages.InvalidCredentials);
-            }
+            // Optionally authenticate here if you need the token immediately
+            string token = authService.AuthenticateAndGetToken();
+            PXTrace.WriteInformation($"Successfully authenticated for {tenantName}. Token: {token}");
 
             selectedRecord.Status = ReportStatus.InProgress;
             selectedRecord.Selected = true;
@@ -136,12 +129,13 @@ namespace FinancialReport
             if (reportID == null)
                 throw new PXException(Messages.PleaseSelectTemplate);
 
+            // Pass the authService instance to the background operation
             PXLongOperation.StartOperation(this, () =>
             {
                 var reportGraph = PXGraph.CreateInstance<FLRTFinancialReportMaint>();
                 FLRTFinancialReport dbRecord = PXSelect<FLRTFinancialReport,
-                Where<FLRTFinancialReport.reportID, Equal<Required<FLRTFinancialReport.reportID>>>>
-                .SelectSingleBound(reportGraph, null, reportID);
+                    Where<FLRTFinancialReport.reportID, Equal<Required<FLRTFinancialReport.reportID>>>>
+                    .SelectSingleBound(reportGraph, null, reportID);
 
                 if (dbRecord == null)
                     throw new PXException(Messages.FailedToRetrieveFile);
@@ -150,26 +144,25 @@ namespace FinancialReport
                     throw new PXException(Messages.TemplateHasNoFiles);
 
                 reportGraph.FinancialReport.Current = dbRecord;
-                // Rest of the code...
-
                 try
                 {
-                    reportGraph.GenerateFinancialReport(token);
+                    reportGraph.GenerateFinancialReport(authService); // Pass authService instead of token
                     PXTrace.WriteInformation("Report has been generated and is ready for download.");
                 }
                 catch (Exception ex)
                 {
                     PXTrace.WriteError($"Report generation failed: {ex.Message}");
                     dbRecord.Status = ReportStatus.Failed;
+                    reportGraph.FinancialReport.Update(dbRecord);
+                    reportGraph.Actions.PressSave();
                 }
             });
 
             return adapter.Get();
         }
 
-        private void GenerateFinancialReport(string authToken)
+        private void GenerateFinancialReport(AuthService authService)
         {
-            AuthService localAuthService = null;
             try
             {
                 var currentRecord = FinancialReport.Current;
@@ -183,11 +176,8 @@ namespace FinancialReport
                 string tenantName = MapCompanyIDToTenantName(companyID);
                 PXTrace.WriteInformation($"Mapped Tenant Name: {tenantName}");
 
-                var creds = CredentialProvider.GetCredentials(tenantName);
-                localAuthService = new AuthService(_baseUrl, creds.ClientId, creds.ClientSecret, creds.Username, creds.Password);
-                localAuthService.SetToken(authToken);
-
-                var localDataService = new FinancialDataService(_baseUrl, localAuthService, tenantName);
+                // Use the provided authService instance
+                var localDataService = new FinancialDataService(_baseUrl, authService, tenantName);
 
                 string branch = string.IsNullOrEmpty(currentRecord.Branch) ? currentRecord.Organization : currentRecord.Branch;
                 if (string.IsNullOrEmpty(branch))
@@ -195,15 +185,28 @@ namespace FinancialReport
                 if (string.IsNullOrEmpty(currentRecord.Ledger))
                     throw new PXException(Messages.PleaseSelectALedger);
 
-                byte[] templateFileContent = GetFileContent(currentRecord.Noteid);
+                // 1) Retrieve file content + original name
+                var (templateFileContent, originalFileName) = GetFileContent(currentRecord.Noteid);
                 if (templateFileContent == null || templateFileContent.Length == 0)
                     throw new PXException(Messages.TemplateFileIsEmpty);
 
-                string templatePath = Path.Combine(Path.GetTempPath(), $"{currentRecord.ReportCD}_Template.docx");
+                // 2) Parse extension (default to .docx if something is missing)
+                string extension = Path.GetExtension(originalFileName);
+                if (string.IsNullOrEmpty(extension))
+                {
+                    extension = ".docx";
+                }
+
+                // 3) Build your temp file paths using that extension
+                string templatePath = Path.Combine(
+                    Path.GetTempPath(),
+                    $"{currentRecord.ReportCD}_Template{extension}"
+                );
                 File.WriteAllBytes(templatePath, templateFileContent);
 
-                string outputFileName = $"{currentRecord.ReportCD}_Generated_{DateTime.Now:yyyyMMdd_HHmmssfff}.docx";
+                string outputFileName = $"{currentRecord.ReportCD}_Generated_{DateTime.Now:yyyyMMdd_HHmmssfff}{extension}";
                 string outputPath = Path.Combine(Path.GetTempPath(), outputFileName);
+
 
                 string currYear = currentRecord.CurrYear ?? DateTime.Now.ToString("yyyy");
                 string selectedMonth = currentRecord.FinancialMonth ?? "12";
@@ -269,7 +272,7 @@ namespace FinancialReport
             }
             finally
             {
-                localAuthService?.Logout();
+                authService?.Logout();
             }
         }
 
@@ -535,11 +538,11 @@ namespace FinancialReport
 
         #endregion
 
-        #region File Retrieval / Save Helpers
+        #region File Retrieval / Save Helpers / Make Account Values Positive
 
-        private byte[] GetFileContent(Guid? noteID)
+        private (byte[] fileBytes, string originalFileName) GetFileContent(Guid? noteID)
         {
-            return _fileService.GetFileContent(noteID);
+            return _fileService.GetFileContentAndName(noteID);
         }
 
         private Guid SaveGeneratedDocument(string fileName, byte[] fileContent, FLRTFinancialReport currentRecord)
