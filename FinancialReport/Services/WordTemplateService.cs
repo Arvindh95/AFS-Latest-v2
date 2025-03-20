@@ -8,6 +8,9 @@ using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using PX.Data;
 
+
+
+
 namespace FinancialReport.Services
 {
     public class WordTemplateService
@@ -35,6 +38,27 @@ namespace FinancialReport.Services
                         ReplaceAllPlaceholdersInRuns(paragraph, data);
                     }
                 }
+
+                // Now ensure the document settings include an UpdateFieldsOnOpen element.
+                DocumentSettingsPart settingsPart = mainPart.DocumentSettingsPart;
+                if (settingsPart == null)
+                {
+                    settingsPart = mainPart.AddNewPart<DocumentSettingsPart>();
+                    settingsPart.Settings = new Settings();
+                }
+
+                var settings = settingsPart.Settings;
+
+                // Remove any existing updateFields element.
+                var existingUpdateFields = settings.Elements<UpdateFieldsOnOpen>().FirstOrDefault();
+                if (existingUpdateFields != null)
+                {
+                    existingUpdateFields.Remove();
+                }
+
+                // Append the UpdateFieldsOnOpen element with Val=true.
+                settings.AppendChild(new UpdateFieldsOnOpen() { Val = true });
+                settings.Save();
             }
         }
 
