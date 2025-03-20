@@ -24,7 +24,7 @@ namespace FinancialReport.Services
         /// <summary>
         /// Retrieves file content from Acumatica using NoteID.
         /// </summary>
-        public byte[] GetFileContent(Guid? noteID)
+        public (byte[] fileBytes, string fileName) GetFileContentAndName(Guid? noteID)
         {
             if (noteID == null)
                 throw new PXException(Messages.NoteIDIsNull);
@@ -53,7 +53,8 @@ namespace FinancialReport.Services
 
                 if (fileRevision?.BlobData != null) // ✅ Corrected from 'Data' to 'BlobData'
                 {
-                    return fileRevision.BlobData;
+                    // Return both the file content and its original name
+                    return (fileRevision.BlobData, file.Name);
                 }
             }
 
