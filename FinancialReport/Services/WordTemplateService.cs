@@ -49,16 +49,16 @@ namespace FinancialReport.Services
 
                 var settings = settingsPart.Settings;
 
-                // Remove any existing updateFields element.
-                var existingUpdateFields = settings.Elements<UpdateFieldsOnOpen>().FirstOrDefault();
-                if (existingUpdateFields != null)
-                {
-                    existingUpdateFields.Remove();
-                }
+                //// Remove any existing updateFields element.
+                //var existingUpdateFields = settings.Elements<UpdateFieldsOnOpen>().FirstOrDefault();
+                //if (existingUpdateFields != null)
+                //{
+                //    existingUpdateFields.Remove();
+                //}
 
-                // Append the UpdateFieldsOnOpen element with Val=true.
-                settings.AppendChild(new UpdateFieldsOnOpen() { Val = true });
-                settings.Save();
+                //// Append the UpdateFieldsOnOpen element with Val=true.
+                //settings.AppendChild(new UpdateFieldsOnOpen() { Val = true });
+                //settings.Save();
             }
         }
 

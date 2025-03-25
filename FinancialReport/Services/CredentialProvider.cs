@@ -1,10 +1,5 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
+﻿using PX.Data;
 using System.Text;
-using System.Threading.Tasks;
-using System.Configuration;
-using PX.Data;
 
 namespace FinancialReport.Services
 {
@@ -15,33 +10,42 @@ namespace FinancialReport.Services
         public string Username { get; set; }
         public string Password { get; set; }
     }
+
     public static class CredentialProvider
     {
         public static AcumaticaCredentials GetCredentials(string tenant)
         {
-            string prefix = string.IsNullOrEmpty(tenant) ? "Acumatica.Company" : $"Acumatica.{tenant}";
-
-            AcumaticaCredentials credentials = new AcumaticaCredentials
+            PXGraph graph = PXGraph.CreateInstance<PXGraph>();
+            try
             {
-                ClientId = ConfigurationManager.AppSettings[$"{prefix}.ClientId"],
-                ClientSecret = ConfigurationManager.AppSettings[$"{prefix}.ClientSecret"],
-                Username = ConfigurationManager.AppSettings[$"{prefix}.Username"],
-                Password = ConfigurationManager.AppSettings[$"{prefix}.Password"]
-            };
+                // Query the FLRTTenantCredentials table by TenantName
+                FLRTTenantCredentials record = PXSelect<FLRTTenantCredentials,
+                    Where<FLRTTenantCredentials.tenantName, Equal<Required<FLRTTenantCredentials.tenantName>>>>
+                    .Select(graph, tenant);
 
-            // Log missing config issues
-            if (string.IsNullOrEmpty(credentials.ClientId) ||
-                string.IsNullOrEmpty(credentials.ClientSecret) ||
-                string.IsNullOrEmpty(credentials.Username) ||
-                string.IsNullOrEmpty(credentials.Password))
-            {
-                PXTrace.WriteError($"Missing credentials for {tenant}. Check Web.config.");
-                throw new PXException(Messages.TenantMissingFromConfig);
+                if (record == null)
+                {
+                    PXTrace.WriteError($"No credentials found for tenant: {tenant}");
+                    throw new PXException(Messages.TenantMissingFromDatabase);
+                }
+
+                // Convert byte[] fields to strings and return
+                AcumaticaCredentials credentials = new AcumaticaCredentials
+                {
+                    ClientId = Encoding.UTF8.GetString(record.ClientID),
+                    ClientSecret = Encoding.UTF8.GetString(record.SecretID),
+                    Username = Encoding.UTF8.GetString(record.Username),
+                    Password = Encoding.UTF8.GetString(record.Password)
+                };
+
+                PXTrace.WriteInformation($"Credentials retrieved for tenant {tenant} (CompanyNum {record.CompanyNum}): ClientId={credentials.ClientId}, Username={credentials.Username}");
+
+                return credentials;
             }
-
-            return credentials;
+            finally
+            {
+                graph.Clear();
+            }
         }
     }
-
-
 }

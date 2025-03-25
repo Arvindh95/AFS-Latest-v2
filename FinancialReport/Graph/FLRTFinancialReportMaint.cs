@@ -18,6 +18,7 @@ using PX.Objects.GL;
 using static PX.Objects.GL.AccountEntityType;
 using FinancialReport.Services;
 using static FinancialReport.FLRTFinancialReport;
+using PX.Data.Update;
 
 namespace FinancialReport
 {
@@ -238,6 +239,12 @@ namespace FinancialReport
                 PXTrace.WriteInformation($"Fetching PY cumulative data from {fromPeriodPY} to {toPeriodPY}");
                 var cumulativePYData = localDataService.FetchRangeApiData(branch, currentRecord.Ledger, fromPeriodPY, toPeriodPY);
 
+                // Create an instance of your placeholder calculation service.
+                var placeholderService = new PlaceholderCalculationService();
+
+                // Call your method (for example, Susutnilai_Loji_dan_Peralatan) to calculate and return the placeholders.
+                Dictionary<string, string> susutNilaiPlaceholders = placeholderService.Susutnilai_Loji_dan_Peralatan(cumulativeCYData, cumulativePYData);
+
                 var placeholderData = GetPlaceholderData(
                     currYearData,
                     prevYearData,
@@ -246,6 +253,59 @@ namespace FinancialReport
                     cumulativeCYData,
                     cumulativePYData
                 );
+
+                foreach (var kvp in susutNilaiPlaceholders)
+                {
+                    placeholderData[kvp.Key] = kvp.Value;
+                }
+
+
+                // Optionally call additional methods to calculate more placeholders
+                #region Placeholder Calculation Methods
+                placeholderData = placeholderService.Lebihan_Kurangan_Sebelum_Cukai(placeholderData);
+                placeholderData = placeholderService.Pelunasan_Aset_Tak_Ketara(placeholderData);
+                placeholderData = placeholderService.Lebihan_Terkumpul(placeholderData);
+                placeholderData = placeholderService.Emolumen(placeholderData);
+                placeholderData = placeholderService.Manfaat_Pekerja(placeholderData);
+                placeholderData = placeholderService.Perkhidmatan_Ikhtisas_DLL(placeholderData);
+                placeholderData = placeholderService.Perbelanjaan_Kajian_Dan_Program(placeholderData);
+                placeholderData = placeholderService.Baki1JanPenyataPerubahanAsetBersih(placeholderData);
+                placeholderData = placeholderService.Perubahan_Bersih_Pelbagai_Penghutang_Deposit(placeholderData);
+                placeholderData = placeholderService.Perubahan_Bersih_Pelbagai_Pemiutang_Akruan(placeholderData);
+                placeholderData = placeholderService.Perubahan_Bersih_Akaun_Khas(placeholderData);
+                placeholderData = placeholderService.Perubahan_Bersih_Geran_Pembangunan(placeholderData);
+                placeholderData = placeholderService.Penambahan_Loji_Peralatan(placeholderData);
+                placeholderData = placeholderService.Penerimaan_Pelupusan_Loji_Peralatan(placeholderData);
+                placeholderData = placeholderService.Penerimaan_Daripada_Pengeluaran_Simpanan_Tetap(placeholderData);
+                placeholderData = placeholderService.Faedah_Atas_Pelaburan_Diterima(placeholderData);
+                placeholderData = placeholderService.Geran_Pembangunan_Dilunaskan(placeholderData);
+                placeholderData = placeholderService.Lebihan_Terkumpul_Aset_Bersih(placeholderData);
+                placeholderData = placeholderService.Cukai(placeholderData);
+
+                placeholderData = placeholderService.NegatePlaceholders(placeholderData, new Dictionary<string, string>
+                {
+                    //5. Faedah Atas Pelaburan
+                    { "{{Sum3_H75_CY}}", "{{5_CY}}" },
+                    { "{{Sum3_H75_PY}}", "{{5_PY}}" },
+
+                    //21. Akaun Khas Dilunaskan
+                    { "{{H83303_CY}}", "{{21_CY}}" },
+                    { "{{H83303_PY}}", "{{21_PY}}" },
+
+                    //22. Keuntungan Pelupusan Loji dan Peralatan
+                    { "{{H79101_CY}}", "{{22_CY}}" },
+                    { "{{H79101_PY}}", "{{22_PY}}" },
+
+                    //23. Jumlah Hasil
+                    { "{{Sum1_H_CY}}", "{{23_CY}}" },
+                    { "{{Sum1_H_PY}}", "{{23_PY}}" },
+
+                    //25. Kumpulan Wang Komputer
+                    { "{{E14102_CY}}", "{{25_CY}}" },
+                    { "{{E14102_PY}}", "{{25_PY}}" }
+                });
+
+                #endregion
 
                 _wordTemplateService.PopulateTemplate(templatePath, outputPath, placeholderData);
 
