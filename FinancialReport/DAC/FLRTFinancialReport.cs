@@ -19,7 +19,7 @@ namespace FinancialReport
     #endregion
 
     #region ReportCD
-    [PXDBString(15, IsUnicode = true, InputMask = ">aaaaaaaaaaaaaaa")]      
+    [PXDBString(50, IsUnicode = true)]      
     [PXDefault]
     [PXUIField(DisplayName = "Template Name")]
     public virtual string ReportCD { get; set; }
