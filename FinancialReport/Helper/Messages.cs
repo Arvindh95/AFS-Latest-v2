@@ -28,6 +28,7 @@ namespace FinancialReport
         public const string FailedToRefreshToken = "Failed to refresh token";
         public const string FailedToSelectBranch = "Please select a Branch";
         public const string FailedToSelectLedger = "Please select a Ledger";
+        public const string FailedToSelectBranchorOrg = "Please select a Branch or Organization";
         public const string MissingConfig = "Missing Config. Check Web Configurations";
         public const string PleaseSelectABranch = "Please select a Branch";
         public const string PleaseSelectALedger = "Please select a Ledger";
@@ -39,5 +40,8 @@ namespace FinancialReport
         public const string InvalidCredentials = "Failed to authenticate. Please check credentials.";
         public const string TenantMissingFromConfig = "Tenant mapping is missing in Web.config.";
         public const string TenantMissingFromDatabase = "Tenant mapping is missing in Database";
+        public const string NoCalculation = "No placeholder logic configured for this tenant.";
+        public const string NoCompanyID = "CompanyID is required for tenant mapping.";
+        public const string NoTenantMapping = "Tenant mapping not found for the specified company number.";
     }
 }
