@@ -81,34 +81,48 @@ namespace FinancialReport
         public PXSave<FLRTFinancialReport> Save;
         public PXCancel<FLRTFinancialReport> Cancel;
 
+        /// <summary>
+        /// This method is called by the Generate Report button on the Acumatica screen.
+        /// It checks that a valid financial report template has been selected and then
+        /// starts a background (long) operation to generate the report.
+        /// </summary>
         public PXAction<FLRTFinancialReport> GenerateReport;
         [PXButton(CommitChanges = false)]
         [PXUIField(DisplayName = "Generate Report")]
         protected virtual IEnumerable generateReport(PXAdapter adapter)
         {
+            // 1) Retrieve the currently selected report from the cache
             var selectedRecord = FinancialReport.Cache.Cached
                 .Cast<FLRTFinancialReport>()
                 .FirstOrDefault(item => item.Selected == true);
 
+            // 2) Validate that we actually have a selected record
             if (selectedRecord == null)
                 throw new PXException(Messages.PleaseSelectTemplate);
 
+            // 3) Prevent generating if currently in progress
             if (selectedRecord.Status == ReportStatus.InProgress)
                 throw new PXException(Messages.FileGenerationInProgress);
 
+            // 4) Validate that the selected template has an attached file (the .docx, for instance)
             if (selectedRecord.Noteid == null)
                 throw new PXException(Messages.TemplateHasNoFiles);
 
+            // 5) Get the Company ID from the database (mapped to a tenant name later on)
             int? companyID = GetCompanyIDFromDB(selectedRecord.ReportID);
             PXTrace.WriteInformation($"CompanyID retrieved: {companyID}");
 
+            // 6) Map the database's CompanyID to the Acumatica Tenant Name via your custom logic
             string tenantName = MapCompanyIDToTenantName(companyID);
             PXTrace.WriteInformation($"Mapped Tenant Name: {tenantName}");
 
+            // 7) Retrieve the credentials for this tenant from the FLRTTenantCredentials table
             AcumaticaCredentials tenantCredentials = CredentialProvider.GetCredentials(tenantName);
-            PXTrace.WriteInformation($"API Credentials: ClientId={tenantCredentials.ClientId}, Username={tenantCredentials.Username}");
+            PXTrace.WriteInformation(
+                $"API Credentials: ClientId={tenantCredentials.ClientId}, Username={tenantCredentials.Username}"
+            );
 
-            // Create a shared AuthService instance
+            // 8) Create a shared AuthService instance for login/logout and token refresh
             var authService = new AuthService(
                 _baseUrl,
                 tenantCredentials.ClientId,
@@ -117,23 +131,28 @@ namespace FinancialReport
                 tenantCredentials.Password
             );
 
-            // Optionally authenticate here if you need the token immediately
+            // 9) Optionally authenticate here to ensure we can get a token
             string token = authService.AuthenticateAndGetToken();
             PXTrace.WriteInformation($"Successfully authenticated for {tenantName}. Token: {token}");
 
+            // 10) Mark the record as "In Progress" so the user sees status is changing
             selectedRecord.Status = ReportStatus.InProgress;
             selectedRecord.Selected = true;
             FinancialReport.Update(selectedRecord);
             Actions.PressSave();
 
+            // 11) Prepare for background processing
             int? reportID = selectedRecord.ReportID;
             if (reportID == null)
                 throw new PXException(Messages.PleaseSelectTemplate);
 
-            // Pass the authService instance to the background operation
+            // 12) StartOperation runs the code in a background thread so the UI doesn't block
             PXLongOperation.StartOperation(this, () =>
             {
+                // Create a fresh instance of the same graph to avoid concurrency issues
                 var reportGraph = PXGraph.CreateInstance<FLRTFinancialReportMaint>();
+
+                // 12a) Reload the FLRTFinancialReport record from DB
                 FLRTFinancialReport dbRecord = PXSelect<FLRTFinancialReport,
                     Where<FLRTFinancialReport.reportID, Equal<Required<FLRTFinancialReport.reportID>>>>
                     .SelectSingleBound(reportGraph, null, reportID);
@@ -144,10 +163,14 @@ namespace FinancialReport
                 if (dbRecord.Noteid == null)
                     throw new PXException(Messages.TemplateHasNoFiles);
 
+                // 12b) Set the current record in the newly instantiated graph
                 reportGraph.FinancialReport.Current = dbRecord;
+
+                // 12c) Attempt to generate the financial report
                 try
                 {
-                    reportGraph.GenerateFinancialReport(authService); // Pass authService instead of token
+                    // We pass the same AuthService instance (holding token info) for continuity
+                    reportGraph.GenerateFinancialReport(authService);
                     PXTrace.WriteInformation("Report has been generated and is ready for download.");
                 }
                 catch (Exception ex)
@@ -162,53 +185,74 @@ namespace FinancialReport
             return adapter.Get();
         }
 
+        /// <summary>
+        /// Generates the financial report by:
+        ///  - Validating that we have a valid .docx template
+        ///  - Fetching data from the external FinancialDataService using a provided AuthService
+        ///  - Merging placeholders and computations into the Word template
+        ///  - Saving the finished file in Acumatica
+        /// This method is intended to run within a PXLongOperation.
+        /// </summary>
+        /// <param name="authService">An AuthService instance, already authenticated.</param>
         private void GenerateFinancialReport(AuthService authService)
         {
             try
             {
+                // 1) Retrieve the current record
                 var currentRecord = FinancialReport.Current;
                 if (currentRecord == null)
                     throw new PXException(Messages.PleaseSelectTemplate);
 
+                // 2) Make sure there's a note/file attached
                 if (currentRecord.Noteid == null)
                     throw new PXException(Messages.TemplateHasNoFiles);
 
+                // 3) Determine tenant name from the CompanyID in the FLRTFinancialReport record
                 int? companyID = GetCompanyIDFromDB(currentRecord.ReportID);
                 string tenantName = MapCompanyIDToTenantName(companyID);
                 PXTrace.WriteInformation($"Mapped Tenant Name: {tenantName}");
 
-                // Use the provided authService instance
+                // 4) Create a FinancialDataService that will use the provided authService
                 var localDataService = new FinancialDataService(_baseUrl, authService, tenantName);
 
-                string branch = string.IsNullOrEmpty(currentRecord.Branch) ? currentRecord.Organization : currentRecord.Branch;
-                if (string.IsNullOrEmpty(branch))
-                    throw new PXException(Messages.PleaseSelectABranch);
-                if (string.IsNullOrEmpty(currentRecord.Ledger))
+                // 5) Capture Branch & Organization separately
+                string selectedBranch = currentRecord.Branch;
+                string selectedOrganization = currentRecord.Organization;
+                string selectedLedger = currentRecord.Ledger;
+
+                // Ensure that at least one dimension is provided
+                if (string.IsNullOrEmpty(selectedBranch) && string.IsNullOrEmpty(selectedOrganization))
+                {
+                    throw new PXException(Messages.FailedToSelectBranchorOrg);
+                }
+
+                if (string.IsNullOrEmpty(selectedLedger))
                     throw new PXException(Messages.PleaseSelectALedger);
 
-                // 1) Retrieve file content + original name
+                // 6) Retrieve the Word template file content + original filename
                 var (templateFileContent, originalFileName) = GetFileContent(currentRecord.Noteid);
                 if (templateFileContent == null || templateFileContent.Length == 0)
                     throw new PXException(Messages.TemplateFileIsEmpty);
 
-                // 2) Parse extension (default to .docx if something is missing)
+                // 7) Determine extension from the original file name (default to ".docx" if none)
                 string extension = Path.GetExtension(originalFileName);
                 if (string.IsNullOrEmpty(extension))
                 {
                     extension = ".docx";
                 }
 
-                // 3) Build your temp file paths using that extension
+                // 8) Build a local temp file for the template
                 string templatePath = Path.Combine(
                     Path.GetTempPath(),
                     $"{currentRecord.ReportCD}_Template{extension}"
                 );
                 File.WriteAllBytes(templatePath, templateFileContent);
 
+                // 9) Prepare the output file name and path
                 string outputFileName = $"{currentRecord.ReportCD}_Generated_{DateTime.Now:yyyyMMdd_HHmmssfff}{extension}";
                 string outputPath = Path.Combine(Path.GetTempPath(), outputFileName);
 
-
+                // 10) Determine the year and month for the queries
                 string currYear = currentRecord.CurrYear ?? DateTime.Now.ToString("yyyy");
                 string selectedMonth = currentRecord.FinancialMonth ?? "12";
                 int currYearInt = int.TryParse(currYear, out int parsedYear) ? parsedYear : DateTime.Now.Year;
@@ -217,35 +261,37 @@ namespace FinancialReport
                 string selectedPeriod = $"{selectedMonth}{currYear}";
                 string prevYearPeriod = $"{selectedMonth}{prevYear}";
 
-                PXTrace.WriteInformation($"Fetching data for Period: {selectedPeriod}, Branch: {branch}, Ledger: {currentRecord.Ledger}");
-                var currYearData = localDataService.FetchAllApiData(branch, currentRecord.Ledger, selectedPeriod) ?? new FinancialApiData();
+                // 11) Fetch single-period data for Current Year (CY) and Previous Year (PY)
+                PXTrace.WriteInformation($"Fetching data for Period: {selectedPeriod}, Branch: {selectedBranch}, Org: {selectedOrganization}, Ledger: {selectedLedger}");
+                var currYearData = localDataService.FetchAllApiData(selectedBranch, selectedOrganization, selectedLedger, selectedPeriod)
+                                    ?? new FinancialApiData();
 
-                PXTrace.WriteInformation($"Fetching data for Prev Year Period: {prevYearPeriod}, Branch: {branch}, Ledger: {currentRecord.Ledger}");
-                var prevYearData = localDataService.FetchAllApiData(branch, currentRecord.Ledger, prevYearPeriod) ?? new FinancialApiData();
+                PXTrace.WriteInformation($"Fetching data for Prev Year Period: {prevYearPeriod}, Branch: {selectedBranch}, Org: {selectedOrganization}, Ledger: {selectedLedger}");
+                var prevYearData = localDataService.FetchAllApiData(selectedBranch, selectedOrganization, selectedLedger, prevYearPeriod)
+                                    ?? new FinancialApiData();
 
+                // 12) Fetch January beginning balances for both CY and PY
                 PXTrace.WriteInformation($"Fetching January {prevYear} Beginning Balance");
-                var januaryBeginningDataPY = localDataService.FetchJanuaryBeginningBalance(branch, currentRecord.Ledger, prevYear) ?? new FinancialApiData();
+                var januaryBeginningDataPY = localDataService.FetchJanuaryBeginningBalance(selectedBranch, selectedOrganization, selectedLedger, prevYear)
+                                            ?? new FinancialApiData();
 
                 PXTrace.WriteInformation($"Fetching January {currYear} Beginning Balance");
-                var januaryBeginningDataCY = localDataService.FetchJanuaryBeginningBalance(branch, currentRecord.Ledger, currYear) ?? new FinancialApiData();
+                var januaryBeginningDataCY = localDataService.FetchJanuaryBeginningBalance(selectedBranch, selectedOrganization, selectedLedger, currYear)
+                                            ?? new FinancialApiData();
 
+                // 13) Fetch cumulative data from Jan to the selected month for CY, and full year for PY
                 string fromPeriodCY = "01" + currYear;
                 string toPeriodCY = selectedMonth + currYear;
                 PXTrace.WriteInformation($"Fetching CY cumulative data from {fromPeriodCY} to {toPeriodCY}");
-                var cumulativeCYData = localDataService.FetchRangeApiData(branch, currentRecord.Ledger, fromPeriodCY, toPeriodCY);
+                var cumulativeCYData = localDataService.FetchRangeApiData(selectedBranch, selectedOrganization, selectedLedger, fromPeriodCY, toPeriodCY);
 
                 string fromPeriodPY = "01" + prevYear;
                 string toPeriodPY = "12" + prevYear;
                 PXTrace.WriteInformation($"Fetching PY cumulative data from {fromPeriodPY} to {toPeriodPY}");
-                var cumulativePYData = localDataService.FetchRangeApiData(branch, currentRecord.Ledger, fromPeriodPY, toPeriodPY);
+                var cumulativePYData = localDataService.FetchRangeApiData(selectedBranch, selectedOrganization, selectedLedger, fromPeriodPY, toPeriodPY);
 
-                // Create an instance of your placeholder calculation service.
-                var placeholderService = new PlaceholderCalculationService();
-
-                // Call your method (for example, Susutnilai_Loji_dan_Peralatan) to calculate and return the placeholders.
-                Dictionary<string, string> susutNilaiPlaceholders = placeholderService.Susutnilai_Loji_dan_Peralatan(cumulativeCYData, cumulativePYData);
-
-                var placeholderData = GetPlaceholderData(
+                // 14) Aggregate these data sets into a base dictionary of placeholders
+                Dictionary<string, string> basePlaceholders = GetPlaceholderData(
                     currYearData,
                     prevYearData,
                     januaryBeginningDataPY,
@@ -254,64 +300,41 @@ namespace FinancialReport
                     cumulativePYData
                 );
 
-                foreach (var kvp in susutNilaiPlaceholders)
+                // 15) Use a specialized placeholder calculator, based on the tenant
+                PlaceholderCalculationService.IPlaceholderCalculator calculator;
+                if (tenantName.Equals("IYRES", StringComparison.OrdinalIgnoreCase))
                 {
-                    placeholderData[kvp.Key] = kvp.Value;
+                    calculator = new PlaceholderCalculationService.IYRESPlaceholderCalculator();
+                }
+                else if (tenantName.Equals("LPK", StringComparison.OrdinalIgnoreCase))
+                {
+                    calculator = new PlaceholderCalculationService.LPKPlaceholderCalculator();
+                }
+                else if (tenantName.Equals("IKMA", StringComparison.OrdinalIgnoreCase))
+                {
+                    calculator = new PlaceholderCalculationService.IKMAPlaceholderCalculator();
+                }
+                else if (tenantName.Equals("TEST", StringComparison.OrdinalIgnoreCase))
+                {
+                    calculator = new PlaceholderCalculationService.IKMAPlaceholderCalculator();
+                }
+                else
+                {
+                    throw new PXException(Messages.NoCalculation);
                 }
 
+                // 16) Perform final calculations on placeholders
+                Dictionary<string, string> finalPlaceholders =
+                    calculator.CalculatePlaceholders(currYearData, prevYearData, basePlaceholders);
 
-                // Optionally call additional methods to calculate more placeholders
-                #region Placeholder Calculation Methods
-                placeholderData = placeholderService.Lebihan_Kurangan_Sebelum_Cukai(placeholderData);
-                placeholderData = placeholderService.Pelunasan_Aset_Tak_Ketara(placeholderData);
-                placeholderData = placeholderService.Lebihan_Terkumpul(placeholderData);
-                placeholderData = placeholderService.Emolumen(placeholderData);
-                placeholderData = placeholderService.Manfaat_Pekerja(placeholderData);
-                placeholderData = placeholderService.Perkhidmatan_Ikhtisas_DLL(placeholderData);
-                placeholderData = placeholderService.Perbelanjaan_Kajian_Dan_Program(placeholderData);
-                placeholderData = placeholderService.Baki1JanPenyataPerubahanAsetBersih(placeholderData);
-                placeholderData = placeholderService.Perubahan_Bersih_Pelbagai_Penghutang_Deposit(placeholderData);
-                placeholderData = placeholderService.Perubahan_Bersih_Pelbagai_Pemiutang_Akruan(placeholderData);
-                placeholderData = placeholderService.Perubahan_Bersih_Akaun_Khas(placeholderData);
-                placeholderData = placeholderService.Perubahan_Bersih_Geran_Pembangunan(placeholderData);
-                placeholderData = placeholderService.Penambahan_Loji_Peralatan(placeholderData);
-                placeholderData = placeholderService.Penerimaan_Pelupusan_Loji_Peralatan(placeholderData);
-                placeholderData = placeholderService.Penerimaan_Daripada_Pengeluaran_Simpanan_Tetap(placeholderData);
-                placeholderData = placeholderService.Faedah_Atas_Pelaburan_Diterima(placeholderData);
-                placeholderData = placeholderService.Geran_Pembangunan_Dilunaskan(placeholderData);
-                placeholderData = placeholderService.Lebihan_Terkumpul_Aset_Bersih(placeholderData);
-                placeholderData = placeholderService.Cukai(placeholderData);
+                // 17) Merge placeholders into the Word template
+                _wordTemplateService.PopulateTemplate(templatePath, outputPath, finalPlaceholders);
 
-                placeholderData = placeholderService.NegatePlaceholders(placeholderData, new Dictionary<string, string>
-                {
-                    //5. Faedah Atas Pelaburan
-                    { "{{Sum3_H75_CY}}", "{{5_CY}}" },
-                    { "{{Sum3_H75_PY}}", "{{5_PY}}" },
-
-                    //21. Akaun Khas Dilunaskan
-                    { "{{H83303_CY}}", "{{21_CY}}" },
-                    { "{{H83303_PY}}", "{{21_PY}}" },
-
-                    //22. Keuntungan Pelupusan Loji dan Peralatan
-                    { "{{H79101_CY}}", "{{22_CY}}" },
-                    { "{{H79101_PY}}", "{{22_PY}}" },
-
-                    //23. Jumlah Hasil
-                    { "{{Sum1_H_CY}}", "{{23_CY}}" },
-                    { "{{Sum1_H_PY}}", "{{23_PY}}" },
-
-                    //25. Kumpulan Wang Komputer
-                    { "{{E14102_CY}}", "{{25_CY}}" },
-                    { "{{E14102_PY}}", "{{25_PY}}" }
-                });
-
-                #endregion
-
-                _wordTemplateService.PopulateTemplate(templatePath, outputPath, placeholderData);
-
+                // 18) Read the merged file from disk, then attach it to the current record as the generated file
                 byte[] generatedFileContent = File.ReadAllBytes(outputPath);
                 Guid fileID = SaveGeneratedDocument(outputFileName, generatedFileContent, currentRecord);
 
+                // 19) Update the record's status and the reference to the newly generated file
                 PXTrace.WriteInformation("Report generated successfully.");
                 currentRecord.GeneratedFileID = fileID;
                 currentRecord.Status = ReportStatus.Completed;
@@ -320,6 +343,7 @@ namespace FinancialReport
             }
             catch (Exception ex)
             {
+                // If anything fails, mark status as "Failed" and log the error
                 PXTrace.WriteError($"Report generation failed: {ex.Message}");
                 var currentRecord = FinancialReport.Current;
                 if (currentRecord != null)
@@ -332,9 +356,12 @@ namespace FinancialReport
             }
             finally
             {
+                // Regardless of success/failure, attempt to log out of Acumatica
                 authService?.Logout();
             }
         }
+
+
 
         #endregion
 
@@ -655,31 +682,24 @@ namespace FinancialReport
         private string MapCompanyIDToTenantName(int? companyID)
         {
             if (companyID == null)
-                return string.Empty;
-
-            string mappingConfig = ConfigurationManager.AppSettings["TenantMapping"];
-            if (string.IsNullOrEmpty(mappingConfig))
             {
-                PXTrace.WriteError("TenantMapping is missing from Web.config.");
-                throw new PXException(Messages.TenantMissingFromConfig);
+                throw new PXException(Messages.NoCompanyID);
             }
 
-            var tenantMap = mappingConfig
-                .Split(',')
-                .Select(entry => entry.Split(':'))
-                .Where(parts => parts.Length == 2)
-                .ToDictionary(
-                    parts => int.Parse(parts[0]),
-                    parts => parts[1]
-                );
+            // Query the FLRTTenantCredentials table for the matching CompanyNum.
+            FLRTTenantCredentials tenantCreds = PXSelect<FLRTTenantCredentials,
+                Where<FLRTTenantCredentials.companyNum, Equal<Required<FLRTTenantCredentials.companyNum>>>>
+                .Select(this, companyID);
 
-            if (!tenantMap.TryGetValue(companyID.Value, out string tenant))
+            if (tenantCreds == null || string.IsNullOrEmpty(tenantCreds.TenantName))
             {
-                PXTrace.WriteError($"No tenant found for CompanyID: {companyID}");
-                throw new PXException(Messages.TenantMissingFromConfig);
+                PXTrace.WriteError($"No tenant found in FLRTTenantCredentials for CompanyID: {companyID}");
+                throw new PXException(Messages.NoTenantMapping);
             }
-            return tenant;
+
+            return tenantCreds.TenantName;
         }
+
 
         #endregion
     }
