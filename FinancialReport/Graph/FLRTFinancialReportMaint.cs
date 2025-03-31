@@ -221,10 +221,10 @@ namespace FinancialReport
                 string selectedLedger = currentRecord.Ledger;
 
                 // Ensure that at least one dimension is provided
-                if (string.IsNullOrEmpty(selectedBranch) && string.IsNullOrEmpty(selectedOrganization))
-                {
-                    throw new PXException(Messages.FailedToSelectBranchorOrg);
-                }
+                //if (string.IsNullOrEmpty(selectedBranch) && string.IsNullOrEmpty(selectedOrganization))
+                //{
+                //    throw new PXException(Messages.FailedToSelectBranchorOrg);
+                //}
 
                 if (string.IsNullOrEmpty(selectedLedger))
                     throw new PXException(Messages.PleaseSelectALedger);

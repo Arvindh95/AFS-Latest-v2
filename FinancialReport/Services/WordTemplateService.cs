@@ -23,10 +23,10 @@ namespace FinancialReport.Services
                 var mainPart = doc.MainDocumentPart;
                 var paragraphs = mainPart.Document.Descendants<Paragraph>();
 
-                foreach (var kvp in data)
-                {
-                    PXTrace.WriteInformation($"Placeholder: {kvp.Key}, Value: {kvp.Value}");
-                }
+                //foreach (var kvp in data)
+                //{
+                //    PXTrace.WriteInformation($"Placeholder: {kvp.Key}, Value: {kvp.Value}");
+                //}
 
                 foreach (var kvp in data)
                 {

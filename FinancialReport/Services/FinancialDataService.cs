@@ -237,7 +237,7 @@ namespace FinancialReport.Services
             else
             {
                 // Nothing selected => user must pick one
-                throw new PXException(Messages.FailedToSelectBranchorOrg);
+                return $"1 eq 1";
             }
         }
     }
