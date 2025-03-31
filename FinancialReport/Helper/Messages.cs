@@ -43,5 +43,6 @@ namespace FinancialReport
         public const string NoCalculation = "No placeholder logic configured for this tenant.";
         public const string NoCompanyID = "CompanyID is required for tenant mapping.";
         public const string NoTenantMapping = "Tenant mapping not found for the specified company number.";
+        public const string NoValueMapping = "No Month or Year Specified";
     }
 }

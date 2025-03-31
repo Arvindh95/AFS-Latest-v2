@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using PX.Data;
 
 namespace FinancialReport.Services
 {
@@ -11,12 +12,15 @@ namespace FinancialReport.Services
         public interface IPlaceholderCalculator
         {
             Dictionary<string, string> CalculatePlaceholders(FinancialApiData cyData,FinancialApiData pyData,Dictionary<string, string> basePlaceholders);
+            Dictionary<string, string> CalculateCompositePlaceholders(FinancialApiData cyData, FinancialApiData pyData, Dictionary<string, string> basePlaceholders);
         }
 
         public class IYRESPlaceholderCalculator : IPlaceholderCalculator
         {
             public Dictionary<string, string> CalculatePlaceholders(FinancialApiData cyData,FinancialApiData pyData,Dictionary<string, string> basePlaceholders)
             {
+                PXTrace.WriteInformation("IYRES.CalculatePlaceholders() - Handling Account Level logic.");
+
                 // Call your IYRES-specific methods.
                 basePlaceholders = Susutnilai_Loji_dan_Peralatan(basePlaceholders);
                 basePlaceholders = Lebihan_Kurangan_Sebelum_Cukai(basePlaceholders);
@@ -63,7 +67,104 @@ namespace FinancialReport.Services
                 return basePlaceholders;
             }
 
+            public Dictionary<string, string> CalculateCompositePlaceholders(FinancialApiData cyData, FinancialApiData pyData, Dictionary<string, string> basePlaceholders)
+            {
+                PXTrace.WriteInformation("IYRES.CalculateCompositePlaceholders() - Handling composite logic.");
+
+                basePlaceholders = XTest(basePlaceholders, cyData.CompositeKeyData, pyData.CompositeKeyData);
+                return basePlaceholders;
+            }
+
+
             #region Calculation Methods
+
+
+            #region aa. Test
+
+            public Dictionary<string, string> XTest(Dictionary<string, string> placeholders, Dictionary<string, FinancialPeriodData> cyComposite, Dictionary<string, FinancialPeriodData> pyComposite)
+            {
+                string accountId = "A11101".Trim();
+                string subaccountId = "M-H-100-0".Trim();
+                string branchId = "HQ".Trim();
+                string orgId = "HQ".Trim();
+
+                string month = placeholders.ContainsKey("{{MonthNumber}}") ? placeholders["{{MonthNumber}}"] : null;
+                string yearCY = placeholders.ContainsKey("{{CY}}") ? placeholders["{{CY}}"] : null;
+                string yearPY = placeholders.ContainsKey("{{PY}}") ? placeholders["{{PY}}"] : null;
+
+                PXTrace.WriteInformation($"MonthNumber: {month}, CY: {yearCY}, PY: {yearPY}");
+
+                //Later validation or handling if null
+                if (string.IsNullOrWhiteSpace(month) || string.IsNullOrWhiteSpace(yearCY) || string.IsNullOrWhiteSpace(yearPY))
+                    {
+                        throw new PXException(Messages.NoValueMapping);
+                    }
+
+                string periodCY = month + yearCY;
+                string periodPY = month + yearPY;
+
+                string compositeKeyCY = $"{accountId}-{subaccountId}-{branchId}-{orgId}-{periodCY}";
+                string compositeKeyPY = $"{accountId}-{subaccountId}-{branchId}-{orgId}-{periodPY}";
+
+                // 🔍 Trace for debugging key mismatch
+                PXTrace.WriteInformation($"[Debug] Expected CY key: {compositeKeyCY}");
+                PXTrace.WriteInformation($"[Debug] Expected PY key: {compositeKeyPY}");
+
+                PXTrace.WriteInformation($"cyComposite.Keys.Count: {cyComposite?.Count ?? 0}");
+                foreach (var key in cyComposite.Keys)
+                {
+                    PXTrace.WriteInformation($"[Debug] CY Available key: {key}");
+                }
+
+                PXTrace.WriteInformation($"pyComposite.Keys.Count: {pyComposite?.Count ?? 0}");
+                foreach (var key in pyComposite.Keys)
+                {
+                    PXTrace.WriteInformation($"[Debug] PY Available key: {key}");
+                }
+
+                PXTrace.WriteInformation($"Trying to match CY key: {compositeKeyCY}");
+                PXTrace.WriteInformation($"Trying to match PY key: {compositeKeyPY}");
+
+                PXTrace.WriteInformation($"cyComposite.Keys.Count: {cyComposite?.Count ?? 0}");
+                PXTrace.WriteInformation($"pyComposite.Keys.Count: {pyComposite?.Count ?? 0}");
+
+                foreach (var key in cyComposite.Keys)
+                {
+                    PXTrace.WriteInformation($"CY Key in Dictionary: {key}");
+                }
+
+                foreach (var key in pyComposite.Keys)
+                {
+                    PXTrace.WriteInformation($"PY Key in Dictionary: {key}");
+                }
+
+                if (cyComposite.TryGetValue(compositeKeyCY, out var cy))
+                {
+                    placeholders["{{X_A11101_CY}}"] = cy.EndingBalance.ToString("#,##0");
+                    PXTrace.WriteInformation($"[CY] Matched Key: {compositeKeyCY}");
+                    PXTrace.WriteInformation($"[CY] EndingBalance: {cy.EndingBalance}, Debit: {cy.Debit}, Credit: {cy.Credit}, Description: {cy.Description}");
+                }
+                else
+                {
+                    PXTrace.WriteWarning($"[CY] Key not found: {compositeKeyCY}");
+                }
+
+                if (pyComposite.TryGetValue(compositeKeyPY, out var py))
+                {
+                    placeholders["{{X_A11101_PY}}"] = py.EndingBalance.ToString("#,##0");
+                    PXTrace.WriteInformation($"[PY] Matched Key: {compositeKeyPY}");
+                    PXTrace.WriteInformation($"[PY] EndingBalance: {py.EndingBalance}, Debit: {py.Debit}, Credit: {py.Credit}, Description: {py.Description}");
+                }
+                else
+                {
+                    PXTrace.WriteWarning($"[PY] Key not found: {compositeKeyPY}");
+                }
+
+                return placeholders;
+            }
+
+            #endregion
+
 
             #region 1. Susutnilai Loji dan Peralatan
             public Dictionary<string, string> Susutnilai_Loji_dan_Peralatan(Dictionary<string, string> placeholders)
@@ -763,6 +864,12 @@ namespace FinancialReport.Services
                 return basePlaceholders;
             }
 
+            public Dictionary<string, string> CalculateCompositePlaceholders(FinancialApiData cyData, FinancialApiData pyData, Dictionary<string, string> basePlaceholders)
+            {
+                PXTrace.WriteInformation("LPK.CalculateCompositePlaceholders() - Handling composite logic.");
+                return basePlaceholders;
+            }
+
             #region 1. TUNAI DAN BAKI DI BANK 
             public Dictionary<string, string> Tunai_Dan_Baki_Bank(Dictionary<string, string> placeholders)
             {
@@ -1049,7 +1156,17 @@ namespace FinancialReport.Services
         {
             public Dictionary<string, string> CalculatePlaceholders(FinancialApiData cyData, FinancialApiData pyData, Dictionary<string, string> basePlaceholders)
             {
+                PXTrace.WriteInformation("IKMAPlaceholderCalculator.CalculatePlaceholders() called.");
+
                 basePlaceholders = Penghutang(basePlaceholders);
+                return basePlaceholders;
+            }
+
+            public Dictionary<string, string> CalculateCompositePlaceholders(FinancialApiData cyData, FinancialApiData pyData, Dictionary<string, string> basePlaceholders)
+            {
+                PXTrace.WriteInformation("IKMA.CalculateCompositePlaceholders() - Handling composite logic.");
+
+                basePlaceholders = TestExtraction(basePlaceholders, cyData.CompositeKeyData, pyData.CompositeKeyData);
                 return basePlaceholders;
             }
 
@@ -1058,68 +1175,117 @@ namespace FinancialReport.Services
             #region 1. Penghutang
             public Dictionary<string, string> Penghutang(Dictionary<string, string> placeholders)
             {
-
-                // Define all the CY keys you want to sum
                 var cyKeys = new[]
                 {
-                "{{A15101_CY}}",
-                "{{A15102_CY}}",
-                "{{A15103_CY}}",
-                "{{A15104_CY}}",
-                "{{A15105_CY}}",
-                "{{A15106_CY}}",
-                "{{A76102_CY}}"
+                    "{{A15101_CY}}", "{{A15102_CY}}", "{{A15103_CY}}",
+                    "{{A15104_CY}}", "{{A15105_CY}}", "{{A15106_CY}}", "{{A76102_CY}}"
                 };
 
-                decimal totalCY = 0m;
-                foreach (var key in cyKeys)
-                {
-                    if (placeholders.ContainsKey(key) && decimal.TryParse(placeholders[key], out decimal value))
-                    {
-                        totalCY += value;
-                    }
-                }
+                decimal totalCY = cyKeys.Sum(k => placeholders.ContainsKey(k) && decimal.TryParse(placeholders[k], out var v) ? v : 0);
                 placeholders["{{1_CY}}"] = totalCY.ToString("#,##0");
 
-
-                // Define all the PY keys (same pattern as above, just _PY)
                 var pyKeys = new[]
                 {
-                "{{A15101_PY}}",
-                "{{A15102_PY}}",
-                "{{A15103_PY}}",
-                "{{A15104_PY}}",
-                "{{A15105_PY}}",
-                "{{A15106_PY}}",
-                "{{A76102_CY}}"
+                    "{{A15101_PY}}", "{{A15102_PY}}", "{{A15103_PY}}",
+                    "{{A15104_PY}}", "{{A15105_PY}}", "{{A15106_PY}}", "{{A76102_PY}}" // ← double check this line should be CY or PY
                 };
 
-                decimal totalPY = 0m;
-                foreach (var key in pyKeys)
-                {
-                    if (placeholders.ContainsKey(key) && decimal.TryParse(placeholders[key], out decimal value))
-                    {
-                        totalPY += value;
-                    }
-                }
+                decimal totalPY = pyKeys.Sum(k => placeholders.ContainsKey(k) && decimal.TryParse(placeholders[k], out var v) ? v : 0);
                 placeholders["{{1_PY}}"] = totalPY.ToString("#,##0");
 
                 return placeholders;
-
             }
+
             #endregion
+
+            #region 1. Test Extraction
+            public Dictionary<string, string> TestExtraction(
+                Dictionary<string, string> placeholders,
+                Dictionary<string, FinancialPeriodData> cyComposite,
+                Dictionary<string, FinancialPeriodData> pyComposite)
+            {
+                string accountId = "101000".Trim();
+                string subaccountId = "0000000".Trim();
+                string branchId = "SOFT".Trim();
+                string orgId = "SOFT".Trim();
+
+                string month = placeholders.ContainsKey("{{MonthNumber}}") ? placeholders["{{MonthNumber}}"] : null;
+                string yearCY = placeholders.ContainsKey("{{CY}}") ? placeholders["{{CY}}"] : null;
+                string yearPY = placeholders.ContainsKey("{{PY}}") ? placeholders["{{PY}}"] : null;
+
+                // Later validation or handling if null
+                if (string.IsNullOrWhiteSpace(month) || string.IsNullOrWhiteSpace(yearCY) || string.IsNullOrWhiteSpace(yearPY))
+                {
+                    throw new PXException(Messages.NoValueMapping);
+                }
+
+                string periodCY = month + yearCY;
+                string periodPY = month + yearPY;
+
+                string compositeKeyCY = $"{accountId}-{subaccountId}-{branchId}-{orgId}-{periodCY}";
+                string compositeKeyPY = $"{accountId}-{subaccountId}-{branchId}-{orgId}-{periodPY}";
+
+                PXTrace.WriteInformation($"Trying to match CY key: {compositeKeyCY}");
+                PXTrace.WriteInformation($"Trying to match PY key: {compositeKeyPY}");
+
+                PXTrace.WriteInformation($"cyComposite.Keys.Count: {cyComposite?.Count ?? 0}");
+                PXTrace.WriteInformation($"pyComposite.Keys.Count: {pyComposite?.Count ?? 0}");
+
+                foreach (var key in cyComposite.Keys)
+                {
+                    PXTrace.WriteInformation($"CY Key in Dictionary: {key}");
+                }
+
+                foreach (var key in pyComposite.Keys)
+                {
+                    PXTrace.WriteInformation($"PY Key in Dictionary: {key}");
+                }
+
+                if (cyComposite.TryGetValue(compositeKeyCY, out var cy))
+                {
+                    placeholders["{{Composite_A15101_CY}}"] = cy.EndingBalance.ToString("#,##0");
+                    PXTrace.WriteInformation($"[CY] Matched Key: {compositeKeyCY}");
+                    PXTrace.WriteInformation($"[CY] EndingBalance: {cy.EndingBalance}, Debit: {cy.Debit}, Credit: {cy.Credit}, Description: {cy.Description}");
+                }
+                else
+                {
+                    PXTrace.WriteWarning($"[CY] Key not found: {compositeKeyCY}");
+                }
+
+                if (pyComposite.TryGetValue(compositeKeyPY, out var py))
+                {
+                    placeholders["{{Composite_A15101_PY}}"] = py.EndingBalance.ToString("#,##0");
+                    PXTrace.WriteInformation($"[PY] Matched Key: {compositeKeyPY}");
+                    PXTrace.WriteInformation($"[PY] EndingBalance: {py.EndingBalance}, Debit: {py.Debit}, Credit: {py.Credit}, Description: {py.Description}");
+                }
+                else
+                {
+                    PXTrace.WriteWarning($"[PY] Key not found: {compositeKeyPY}");
+                }
+
+                return placeholders;
+            }
+
+
+            #endregion
+
 
 
             #endregion
 
         }
 
-
         public class TESTPlaceholderCalculator : IPlaceholderCalculator
         {
             public Dictionary<string, string> CalculatePlaceholders(FinancialApiData cyData, FinancialApiData pyData, Dictionary<string, string> basePlaceholders)
             {
                 basePlaceholders = Penghutang(basePlaceholders);
+                return basePlaceholders;
+            }
+
+            public Dictionary<string, string> CalculateCompositePlaceholders(FinancialApiData cyData, FinancialApiData pyData, Dictionary<string, string> basePlaceholders)
+            {
+                PXTrace.WriteInformation("TEST.CalculateCompositePlaceholders() - Handling composite logic.");
                 return basePlaceholders;
             }
 

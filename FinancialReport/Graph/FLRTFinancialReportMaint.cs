@@ -314,18 +314,31 @@ namespace FinancialReport
                 {
                     calculator = new PlaceholderCalculationService.IKMAPlaceholderCalculator();
                 }
-                else if (tenantName.Equals("TEST", StringComparison.OrdinalIgnoreCase))
+                else if (tenantName.Equals("Company", StringComparison.OrdinalIgnoreCase))
                 {
-                    calculator = new PlaceholderCalculationService.IKMAPlaceholderCalculator();
+                    calculator = new PlaceholderCalculationService.TESTPlaceholderCalculator();
                 }
                 else
                 {
                     throw new PXException(Messages.NoCalculation);
                 }
 
+                // 16a) Fetch composite key-based data
+                var cyCompositeData = localDataService.FetchCompositeKeyData(selectedBranch, selectedOrganization, selectedLedger, selectedPeriod);
+                var pyCompositeData = localDataService.FetchCompositeKeyData(selectedBranch, selectedOrganization, selectedLedger, prevYearPeriod);
+
+                // 16b) Inject into the main FinancialApiData containers
+                currYearData.CompositeKeyData = cyCompositeData.CompositeKeyData;
+                prevYearData.CompositeKeyData = pyCompositeData.CompositeKeyData;
+
                 // 16) Perform final calculations on placeholders
-                Dictionary<string, string> finalPlaceholders =
+                Dictionary<string, string> 
+                    finalPlaceholders =
                     calculator.CalculatePlaceholders(currYearData, prevYearData, basePlaceholders);
+                    finalPlaceholders =
+                    calculator.CalculateCompositePlaceholders(currYearData, prevYearData, finalPlaceholders);
+
+
 
                 // 17) Merge placeholders into the Word template
                 _wordTemplateService.PopulateTemplate(templatePath, outputPath, finalPlaceholders);
@@ -377,7 +390,7 @@ namespace FinancialReport
         )
         {
             var record = FinancialReport.Current;
-            string selectedMonth = record?.FinancialMonth ?? "12";
+            string selectedMonth = record?.FinancialMonth?.PadLeft(2, '0') ?? "12";
             string currYear = record?.CurrYear ?? DateTime.Now.ToString("yyyy");
 
             if (string.IsNullOrEmpty(currYear))
@@ -413,6 +426,7 @@ namespace FinancialReport
             var placeholders = new Dictionary<string, string>
             {
                 { "{{financialMonth}}", monthName },
+                { "{{MonthNumber}}", selectedMonth },
                 { "{{testValue}}", "Success" },
                 { "{{CY}}", currYear },
                 { "{{currmonth}}", DateTime.Now.ToString("MMMM") },

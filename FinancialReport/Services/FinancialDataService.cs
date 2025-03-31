@@ -40,7 +40,7 @@ namespace FinancialReport.Services
                     $"{_baseUrl}/t/{_tenantName}/api/odata/gi/TrialBalance" +
                     $"?$filter={filter}&$select={selectColumns}";
 
-                PXTrace.WriteInformation($"Fetching period data from OData: {odataUrl}");
+                //PXTrace.WriteInformation($"Fetching period data from OData: {odataUrl}");
 
                 HttpResponseMessage response = client.GetAsync(odataUrl).Result;
                 if (!response.IsSuccessStatusCode)
@@ -64,7 +64,7 @@ namespace FinancialReport.Services
                     decimal debit = item["Debit"]?.ToObject<decimal>() ?? 0;
                     decimal credit = item["Credit"]?.ToObject<decimal>() ?? 0;
 
-                    PXTrace.WriteInformation($"Account {accountId}: Begin={beginningBalance}, End={endingBalance}, Debit={debit}, Credit={credit}, Desc={description}");
+                    //PXTrace.WriteInformation($"Account {accountId}: Begin={beginningBalance}, End={endingBalance}, Debit={debit}, Credit={credit}, Desc={description}");
 
                     accountData[accountId] = new FinancialPeriodData
                     {
@@ -107,7 +107,7 @@ namespace FinancialReport.Services
                     $"{_baseUrl}/t/{_tenantName}/api/odata/gi/TrialBalance" +
                     $"?$filter={filter}&$select={selectColumns}";
 
-                PXTrace.WriteInformation($"Fetching January beginning balances: {odataUrl}");
+                //PXTrace.WriteInformation($"Fetching January beginning balances: {odataUrl}");
 
                 HttpResponseMessage response = client.GetAsync(odataUrl).Result;
                 if (!response.IsSuccessStatusCode)
@@ -160,7 +160,7 @@ namespace FinancialReport.Services
                 $"{_baseUrl}/t/{_tenantName}/api/odata/gi/TrialBalance" +
                 $"?$filter={filter}&$select={selectColumns}";
 
-            PXTrace.WriteInformation($"Fetching cumulative range data from OData: {odataUrl}");
+            //PXTrace.WriteInformation($"Fetching cumulative range data from OData: {odataUrl}");
 
             using (HttpClient client = new HttpClient())
             {
@@ -215,6 +215,74 @@ namespace FinancialReport.Services
             }
         }
 
+
+
+        // --------------------------------------------------------
+        // 4) FetchCompositeKeyData
+        // --------------------------------------------------------
+        public FinancialApiData FetchCompositeKeyData(string branch, string organization, string ledger, string period)
+        {
+            string accessToken = _authService.AuthenticateAndGetToken();
+
+            //string dimensionFilter = $"1 eq 1";
+            string filter = $"FinancialPeriod eq '{period}' and 1 eq 1 and LedgerID eq '{ledger}'";
+            string selectColumns = "Account,Subaccount,BeginningBalance,EndingBalance,Debit,Credit,Description,BranchID,OrganizationID";
+
+            using (HttpClient client = new HttpClient())
+            {
+                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+                string odataUrl = $"{_baseUrl}/t/{_tenantName}/api/odata/gi/TrialBalance?$filter={filter}&$select={selectColumns}";
+
+                HttpResponseMessage response = client.GetAsync(odataUrl).Result;
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    throw new Exception("Failed to fetch financial data from OData endpoint.");
+                }
+
+                string jsonResponse = response.Content.ReadAsStringAsync().Result;
+                JObject parsedResponse = JObject.Parse(jsonResponse);
+
+                var compositeData = new Dictionary<string, FinancialPeriodData>();
+
+                foreach (var item in parsedResponse["value"])
+                {
+                    string accountId = item["Account"]?.ToString()?.Trim();
+                    string subaccountId = item["Subaccount"]?.ToString()?.Trim() ?? "N/A";
+                    string branchId = item["BranchID"]?.ToString()?.Trim() ?? branch;
+                    string orgId = item["OrganizationID"]?.ToString()?.Trim() ?? organization;
+                    string compositeKey = $"{accountId}-{subaccountId}-{branchId}-{orgId}-{period}";
+
+                    PXTrace.WriteInformation($"[Store] Composite key added: {compositeKey}");
+
+                    var data = new FinancialPeriodData
+                    {
+                        Account = accountId,
+                        Subaccount = subaccountId,
+                        BeginningBalance = item["BeginningBalance"]?.ToObject<decimal>() ?? 0,
+                        EndingBalance = item["EndingBalance"]?.ToObject<decimal>() ?? 0,
+                        Debit = item["Debit"]?.ToObject<decimal>() ?? 0,
+                        Credit = item["Credit"]?.ToObject<decimal>() ?? 0,
+                        Description = item["Description"]?.ToString() ?? "No Description"
+                    };
+
+                    compositeData[compositeKey] = data;
+                }
+
+
+                var apiData = new FinancialApiData();
+                foreach (var kvp in compositeData)
+                {
+                    apiData.CompositeKeyData[kvp.Key] = kvp.Value;
+                }
+
+                return apiData;
+
+            }
+        }
+
+
+
         // --------------------------------------------------------
         // HELPER: BuildDimensionFilter
         // --------------------------------------------------------
@@ -245,6 +313,8 @@ namespace FinancialReport.Services
     // Classes for convenience
     public class FinancialPeriodData
     {
+        public string Account { get; set; }
+        public string Subaccount { get; set; }
         public decimal BeginningBalance { get; set; }
         public decimal EndingBalance { get; set; }
         public decimal Debit { get; set; }
@@ -255,5 +325,8 @@ namespace FinancialReport.Services
     public class FinancialApiData
     {
         public Dictionary<string, FinancialPeriodData> AccountData { get; set; } = new Dictionary<string, FinancialPeriodData>();
+
+        // 🔥 New: Optional composite key-level data
+        public Dictionary<string, FinancialPeriodData> CompositeKeyData { get; set; } = new Dictionary<string, FinancialPeriodData>();
     }
 }
