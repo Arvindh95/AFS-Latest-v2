@@ -312,7 +312,7 @@ namespace FinancialReport
                 }
                 else if (tenantName.Equals("IKMA", StringComparison.OrdinalIgnoreCase))
                 {
-                    calculator = new PlaceholderCalculationService.IKMAPlaceholderCalculator();
+                    calculator = new PlaceholderCalculationService.IKMAPlaceholderCalculator(_baseUrl, authService, tenantName);
                 }
                 else if (tenantName.Equals("Company", StringComparison.OrdinalIgnoreCase))
                 {

@@ -215,8 +215,6 @@ namespace FinancialReport.Services
             }
         }
 
-
-
         // --------------------------------------------------------
         // 4) FetchCompositeKeyData
         // --------------------------------------------------------
@@ -251,9 +249,12 @@ namespace FinancialReport.Services
                     string subaccountId = item["Subaccount"]?.ToString()?.Trim() ?? "N/A";
                     string branchId = item["BranchID"]?.ToString()?.Trim() ?? branch;
                     string orgId = item["OrganizationID"]?.ToString()?.Trim() ?? organization;
-                    string compositeKey = $"{accountId}-{subaccountId}-{branchId}-{orgId}-{period}";
+                    string compositeKey = $"{accountId}-{subaccountId}-{branchId}-{orgId}-{period}-{ledger}";
 
-                    PXTrace.WriteInformation($"[Store] Composite key added: {compositeKey}");
+                    if (branchId == "MIP" && accountId == "A73102" || accountId == "A73101")
+                    {
+                        PXTrace.WriteInformation($"[Store] Composite key added: {compositeKey}");
+                    }
 
                     var data = new FinancialPeriodData
                     {
@@ -282,6 +283,63 @@ namespace FinancialReport.Services
         }
 
 
+        public decimal FetchEndingBalance(string period, string branch, string organization, string ledger, string account, string subaccount)
+        {
+            // Acquire token
+            string accessToken = _authService.AuthenticateAndGetToken();
+
+            // Construct a filter that exactly matches your desired row
+            // e.g. ?$filter=FinancialPeriod eq '122022' and BranchID eq 'MIP' and OrganizationID eq 'M' 
+            //      and LedgerID eq 'ACTUAL' and Account eq 'A73102' and Subaccount eq 'XXXXXXX'
+            string filter =
+                $"FinancialPeriod eq '{period}'" +
+                $" and BranchID eq '{branch}'" +
+                $" and OrganizationID eq '{organization}'" +
+                $" and LedgerID eq '{ledger}'" +
+                $" and Account eq '{account}'" +
+                $" and Subaccount eq '{subaccount}'";
+
+            // We only need columns that will let us read EndingBalance (but you can add more)
+            string selectColumns = "Account,Subaccount,BeginningBalance,EndingBalance,Debit,Credit,Description,BranchID,OrganizationID";
+
+            // Build OData URL
+            string odataUrl =
+                $"{_baseUrl}/t/{_tenantName}/api/odata/gi/TrialBalance" +
+                $"?$filter={filter}&$select={selectColumns}";
+
+            using (HttpClient client = new HttpClient())
+            {
+                // Set the bearer token
+                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+                // Make synchronous GET call
+                HttpResponseMessage response = client.GetAsync(odataUrl).Result;
+                if (!response.IsSuccessStatusCode)
+                {
+                    string errorResponse = response.Content.ReadAsStringAsync().Result;
+                    PXTrace.WriteError($"GET request failed. Status: {response.StatusCode}, Response: {errorResponse}");
+                    throw new PXException(Messages.FailedToFetchOData);
+                }
+
+                // Parse JSON
+                string jsonResponse = response.Content.ReadAsStringAsync().Result;
+                JObject parsedResponse = JObject.Parse(jsonResponse);
+
+                // We only expect at most 1 matching row if the filters match exactly 1 record, 
+                // but if more than 1 match is possible, we can just read the first "value"
+                JToken firstRow = parsedResponse["value"]?.First;
+                if (firstRow == null)
+                {
+                    PXTrace.WriteWarning($"No rows found for: {odataUrl}");
+                    return 0m;
+                }
+
+                // Extract the EndingBalance field
+                decimal endingBalance = firstRow["EndingBalance"]?.ToObject<decimal>() ?? 0;
+                return endingBalance;
+            }
+        }
+
 
         // --------------------------------------------------------
         // HELPER: BuildDimensionFilter
@@ -308,7 +366,14 @@ namespace FinancialReport.Services
                 return $"1 eq 1";
             }
         }
+
+        
+
+
+
     }
+
+
 
     // Classes for convenience
     public class FinancialPeriodData
