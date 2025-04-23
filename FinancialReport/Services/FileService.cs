@@ -24,7 +24,7 @@ namespace FinancialReport.Services
         /// <summary>
         /// Retrieves file content from Acumatica using NoteID.
         /// </summary>
-        public (byte[] fileBytes, string fileName) GetFileContentAndName(Guid? noteID)
+        public (byte[] fileBytes, string fileName) GetFileContentAndName(Guid? noteID, FLRTFinancialReport currentRecord)
         {
             if (noteID == null)
                 throw new PXException(Messages.NoteIDIsNull);
@@ -54,6 +54,7 @@ namespace FinancialReport.Services
                 if (fileRevision?.BlobData != null) // ✅ Corrected from 'Data' to 'BlobData'
                 {
                     // Return both the file content and its original name
+                    currentRecord.UploadedFileID = file.FileID; // <-- Add this
                     return (fileRevision.BlobData, file.Name);
                 }
             }
@@ -66,7 +67,11 @@ namespace FinancialReport.Services
         /// </summary>
         public Guid SaveGeneratedDocument(string fileName, byte[] fileContent, FLRTFinancialReport currentRecord)
         {
+            if (fileContent == null || fileContent.Length == 0)
+                throw new PXException(Messages.TemplateFileIsEmpty);
+
             var fileGraph = PXGraph.CreateInstance<UploadFileMaintenance>();
+
             var fileInfo = new PX.SM.FileInfo(fileName, null, fileContent)
             {
                 IsPublic = true
@@ -80,11 +85,33 @@ namespace FinancialReport.Services
 
             if (fileInfo.UID.HasValue)
             {
-                PXNoteAttribute.SetFileNotes(_graph.Caches[typeof(FLRTFinancialReport)], currentRecord, fileInfo.UID.Value);
+                // ✅ Step 1: Attach file to the current record via PXNoteAttribute
+                PXNoteAttribute.SetFileNotes(
+                    _graph.Caches[typeof(FLRTFinancialReport)],
+                    currentRecord,
+                    fileInfo.UID.Value
+                );
+
+                // ✅ Step 2: Prevent NoteDoc duplicate insert (safety check)
+                var existingLink = PXSelect<NoteDoc,
+                    Where<NoteDoc.noteID, Equal<Required<NoteDoc.noteID>>,
+                          And<NoteDoc.fileID, Equal<Required<NoteDoc.fileID>>>>>
+                    .Select(_graph, currentRecord.Noteid, fileInfo.UID.Value)
+                    .FirstOrDefault();
+
+                if (existingLink == null)
+                {
+                    PXDatabase.Insert<NoteDoc>(
+                        new PXDataFieldAssign<NoteDoc.noteID>(currentRecord.Noteid),
+                        new PXDataFieldAssign<NoteDoc.fileID>(fileInfo.UID.Value)
+                    );
+                }
             }
 
             return fileInfo.UID ?? Guid.Empty;
         }
+
+
 
     }
 }
