@@ -143,6 +143,10 @@ namespace FinancialReport
             if (selectedRecord == null)
                 throw new PXException(Messages.PleaseSelectTemplate);
 
+            // 🔒 Defensive: Ensure ReportID is not null
+            if (selectedRecord.ReportID == null)
+                throw new PXException("No report selected or report ID is missing.");
+
             // 3) Prevent generating if currently in progress
             if (selectedRecord.Status == ReportStatus.InProgress)
                 throw new PXException(Messages.FileGenerationInProgress);
@@ -154,6 +158,7 @@ namespace FinancialReport
             // 5) Get the Company ID from the database (mapped to a tenant name later on)
             int? companyID = GetCompanyIDFromDB(selectedRecord.ReportID);
             PXTrace.WriteInformation($"CompanyID retrieved: {companyID}");
+            PXTrace.WriteInformation("New Code is working");
 
             // 6) Map the database's CompanyID to the Acumatica Tenant Name via your custom logic
             string tenantName = MapCompanyIDToTenantName(companyID);
@@ -178,7 +183,7 @@ namespace FinancialReport
             string token = authService.AuthenticateAndGetToken();
             PXTrace.WriteInformation($"Successfully authenticated for {tenantName}. Token: {token}");
 
-            // 🔁 Send credentials to Python backend
+            //🔁 Send credentials to Python backend
             string pythonUrl = "http://localhost:8000/receive-credentials"; // ✅ Replace with actual Python endpoint
             SendCredentialsToPython(
                 pythonUrl,
@@ -671,7 +676,8 @@ namespace FinancialReport
 
         private int? GetCompanyIDFromDB(int? reportID)
         {
-            if (reportID == null) return null;
+            if (reportID == null)
+                throw new PXException("ReportID cannot be null when retrieving CompanyID.");
 
             using (PXTransactionScope ts = new PXTransactionScope())
             {
@@ -685,8 +691,10 @@ namespace FinancialReport
                     return (int?)result.GetInt32(0);
                 }
             }
-            return null;
+
+            throw new PXException($"No CompanyID found for ReportID {reportID}.");
         }
+
 
         private string MapCompanyIDToTenantName(int? companyID)
         {
@@ -709,7 +717,7 @@ namespace FinancialReport
             return tenantCreds.TenantName;
         }
 
-        private void SendCredentialsToPython(string url, AcumaticaCredentials creds, string tenantName, int? reportId, Guid? noteId, string branch, string organization, string ledger, string financialMonth,string currYear)
+        private void SendCredentialsToPython(string url, AcumaticaCredentials creds, string tenantName, int? reportId, Guid? noteId, string branch, string organization, string ledger, string financialMonth, string currYear)
         {
             var payload = new
             {
