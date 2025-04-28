@@ -72,6 +72,7 @@
     <Compile Include="DAC\GLHistoryEnqFilter.cs" />
     <Compile Include="Graph\FLRTTenantCredentialsMaint.cs" />
     <Compile Include="DAC\FLRTTenantCredentials.cs" />
+    <Compile Include="Helper\TraceLogger.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Services\AuthService.cs" />
     <Compile Include="Services\CredentialProvider.cs" />

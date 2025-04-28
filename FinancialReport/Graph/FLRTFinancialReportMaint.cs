@@ -21,6 +21,7 @@ using static FinancialReport.FLRTFinancialReport;
 using PX.Data.Update;
 using System.Collections.Concurrent;
 using System.Threading.Tasks;
+using FinancialReport.Helper;
 
 namespace FinancialReport
 {
@@ -29,19 +30,18 @@ namespace FinancialReport
         #region Services
         private readonly FileService _fileService;
         private readonly WordTemplateService _wordTemplateService;
-        #endregion
-
-        #region Configuration & Utility
-        private string GetConfigValue(string key) =>
-            ConfigurationManager.AppSettings[key] ?? throw new PXException(Messages.MissingConfig);
-
-        private string _baseUrl => GetConfigValue("Acumatica.BaseUrl");
 
         public FLRTFinancialReportMaint()
         {
             _fileService = new FileService(this);
             _wordTemplateService = new WordTemplateService();
         }
+        #endregion
+
+        #region Configuration & Utility
+        private string GetConfigValue(string key) => ConfigurationManager.AppSettings[key] ?? throw new PXException(Messages.MissingConfig);
+
+        private string _baseUrl => GetConfigValue("Acumatica.BaseUrl");
 
         private string FormatNumber(string value)
         {
@@ -80,6 +80,7 @@ namespace FinancialReport
             if (row != null && string.IsNullOrEmpty(row.Ledger))
             {
                 PXTrace.WriteError("Ledger cannot be empty.");
+                TraceLogger.Error("Ledger cannot be empty.");
                 throw new PXException(Messages.PleaseSelectALedger);
             }
         }
@@ -158,17 +159,21 @@ namespace FinancialReport
             // 5) Get the Company ID from the database (mapped to a tenant name later on)
             int? companyID = GetCompanyIDFromDB(selectedRecord.ReportID);
             PXTrace.WriteInformation($"CompanyID retrieved: {companyID}");
-            PXTrace.WriteInformation("New Code is working");
+            PXTrace.WriteInformation("Working from new Project folder");
+            PXTrace.WriteInformation("Added this trace to see the publication works");
+            TraceLogger.Info($"CompanyID retrieved: {companyID}");
+            TraceLogger.Info("Working from new Project folder");
+
 
             // 6) Map the database's CompanyID to the Acumatica Tenant Name via your custom logic
             string tenantName = MapCompanyIDToTenantName(companyID);
             PXTrace.WriteInformation($"Mapped Tenant Name: {tenantName}");
+            TraceLogger.Info($"Mapped Tenant Name: {tenantName}");
 
             // 7) Retrieve the credentials for this tenant from the FLRTTenantCredentials table
             AcumaticaCredentials tenantCredentials = CredentialProvider.GetCredentials(tenantName);
-            PXTrace.WriteInformation(
-                $"API Credentials: ClientId={tenantCredentials.ClientId}, Username={tenantCredentials.Username}"
-            );
+            PXTrace.WriteInformation($"API Credentials: ClientId={tenantCredentials.ClientId}, Username={tenantCredentials.Username}");
+            TraceLogger.Info($"API Credentials: ClientId={tenantCredentials.ClientId}, Username={tenantCredentials.Username}");
 
             // 8) Create a shared AuthService instance for login/logout and token refresh
             var authService = new AuthService(
@@ -182,22 +187,24 @@ namespace FinancialReport
             // 9) Optionally authenticate here to ensure we can get a token
             string token = authService.AuthenticateAndGetToken();
             PXTrace.WriteInformation($"Successfully authenticated for {tenantName}. Token: {token}");
+            TraceLogger.Info($"Successfully authenticated for {tenantName}. Token: {token}");
 
-            //🔁 Send credentials to Python backend
-            string pythonUrl = "http://localhost:8000/receive-credentials"; // ✅ Replace with actual Python endpoint
-            SendCredentialsToPython(
-                pythonUrl,
-                tenantCredentials,
-                tenantName,
-                selectedRecord.ReportID,
-                selectedRecord.Noteid,
-                selectedRecord.Branch,
-                selectedRecord.Organization,
-                selectedRecord.Ledger,
-                selectedRecord.FinancialMonth,
-                selectedRecord.CurrYear
-            );
-
+            #region SendCredentialsToPython
+            ////🔁 Send credentials to Python backend
+            //string pythonUrl = "http://localhost:8000/receive-credentials"; // ✅ Replace with actual Python endpoint
+            //SendCredentialsToPython(
+            //    pythonUrl,
+            //    tenantCredentials,
+            //    tenantName,
+            //    selectedRecord.ReportID,
+            //    selectedRecord.Noteid,
+            //    selectedRecord.Branch,
+            //    selectedRecord.Organization,
+            //    selectedRecord.Ledger,
+            //    selectedRecord.FinancialMonth,
+            //    selectedRecord.CurrYear
+            //);
+            #endregion
 
             // 10) Mark the record as "In Progress" so the user sees status is changing
             selectedRecord.Status = ReportStatus.InProgress;
@@ -236,10 +243,12 @@ namespace FinancialReport
                     // We pass the same AuthService instance (holding token info) for continuity
                     reportGraph.GenerateFinancialReport(authService);
                     PXTrace.WriteInformation("Report has been generated and is ready for download.");
+                    TraceLogger.Info("Report has been generated and is ready for download.");
                 }
                 catch (Exception ex)
                 {
                     PXTrace.WriteError($"Report generation failed: {ex.Message}");
+                    TraceLogger.Error($"Report generation failed: {ex.Message}");
                     dbRecord.Status = ReportStatus.Failed;
                     reportGraph.FinancialReport.Update(dbRecord);
                     reportGraph.Actions.PressSave();
@@ -275,6 +284,7 @@ namespace FinancialReport
                 int? companyID = GetCompanyIDFromDB(currentRecord.ReportID);
                 string tenantName = MapCompanyIDToTenantName(companyID);
                 PXTrace.WriteInformation($"Mapped Tenant Name: {tenantName}");
+                TraceLogger.Info($"Mapped Tenant Name: {tenantName}");
 
                 // 4) Create a FinancialDataService that will use the provided authService
                 var localDataService = new FinancialDataService(_baseUrl, authService, tenantName);
@@ -327,19 +337,23 @@ namespace FinancialReport
 
                 // 11) Fetch single-period data for Current Year (CY) and Previous Year (PY)
                 PXTrace.WriteInformation($"Fetching data for Period: {selectedPeriod}, Branch: {selectedBranch}, Org: {selectedOrganization}, Ledger: {selectedLedger}");
+                TraceLogger.Info($"Fetching data for Period: {selectedPeriod}, Branch: {selectedBranch}, Org: {selectedOrganization}, Ledger: {selectedLedger}");
                 var currYearData = localDataService.FetchAllApiData(selectedBranch, selectedOrganization, selectedLedger, selectedPeriod)
                                     ?? new FinancialApiData();
 
                 PXTrace.WriteInformation($"Fetching data for Prev Year Period: {prevYearPeriod}, Branch: {selectedBranch}, Org: {selectedOrganization}, Ledger: {selectedLedger}");
+                TraceLogger.Info($"Fetching data for Prev Year Period: {prevYearPeriod}, Branch: {selectedBranch}, Org: {selectedOrganization}, Ledger: {selectedLedger}");
                 var prevYearData = localDataService.FetchAllApiData(selectedBranch, selectedOrganization, selectedLedger, prevYearPeriod)
                                     ?? new FinancialApiData();
 
                 // 12) Fetch January beginning balances for both CY and PY
                 PXTrace.WriteInformation($"Fetching January {prevYear} Beginning Balance");
+                TraceLogger.Info($"Fetching January {prevYear} Beginning Balance");
                 var januaryBeginningDataPY = localDataService.FetchJanuaryBeginningBalance(selectedBranch, selectedOrganization, selectedLedger, prevYear)
                                             ?? new FinancialApiData();
 
                 PXTrace.WriteInformation($"Fetching January {currYear} Beginning Balance");
+                TraceLogger.Info($"Fetching January {currYear} Beginning Balance");
                 var januaryBeginningDataCY = localDataService.FetchJanuaryBeginningBalance(selectedBranch, selectedOrganization, selectedLedger, currYear)
                                             ?? new FinancialApiData();
 
@@ -347,11 +361,13 @@ namespace FinancialReport
                 string fromPeriodCY = "01" + currYear;
                 string toPeriodCY = selectedMonth + currYear;
                 PXTrace.WriteInformation($"Fetching CY cumulative data from {fromPeriodCY} to {toPeriodCY}");
+                TraceLogger.Info($"Fetching CY cumulative data from {fromPeriodCY} to {toPeriodCY}");
                 var cumulativeCYData = localDataService.FetchRangeApiData(selectedBranch, selectedOrganization, selectedLedger, fromPeriodCY, toPeriodCY);
 
                 string fromPeriodPY = "01" + prevYear;
                 string toPeriodPY = "12" + prevYear;
                 PXTrace.WriteInformation($"Fetching PY cumulative data from {fromPeriodPY} to {toPeriodPY}");
+                TraceLogger.Info($"Fetching PY cumulative data from {fromPeriodPY} to {toPeriodPY}");
                 var cumulativePYData = localDataService.FetchRangeApiData(selectedBranch, selectedOrganization, selectedLedger, fromPeriodPY, toPeriodPY);
 
                 // 14) Aggregate these data sets into a base dictionary of placeholders
@@ -413,6 +429,7 @@ namespace FinancialReport
 
                 // 19) Update the record's status and the reference to the newly generated file
                 PXTrace.WriteInformation("Report generated successfully.");
+                TraceLogger.Info("Report generated successfully.");
                 currentRecord.GeneratedFileID = fileID;
                 currentRecord.Status = ReportStatus.Completed;
                 FinancialReport.Update(currentRecord);
@@ -422,6 +439,7 @@ namespace FinancialReport
             {
                 // If anything fails, mark status as "Failed" and log the error
                 PXTrace.WriteError($"Report generation failed: {ex.Message}");
+                TraceLogger.Error($"Report generation failed: {ex.Message}");
                 var currentRecord = FinancialReport.Current;
                 if (currentRecord != null)
                 {
@@ -711,12 +729,14 @@ namespace FinancialReport
             if (tenantCreds == null || string.IsNullOrEmpty(tenantCreds.TenantName))
             {
                 PXTrace.WriteError($"No tenant found in FLRTTenantCredentials for CompanyID: {companyID}");
+                TraceLogger.Error($"No tenant found in FLRTTenantCredentials for CompanyID: {companyID}");
                 throw new PXException(Messages.NoTenantMapping);
             }
 
             return tenantCreds.TenantName;
         }
 
+        #region SendCredentialsToPython
         private void SendCredentialsToPython(string url, AcumaticaCredentials creds, string tenantName, int? reportId, Guid? noteId, string branch, string organization, string ledger, string financialMonth, string currYear)
         {
             var payload = new
@@ -741,6 +761,7 @@ namespace FinancialReport
                 var json = JsonConvert.SerializeObject(payload);
                 // ✅ Debug log to see what exactly is being sent
                 PXTrace.WriteInformation("📦 Payload JSON: " + json);
+                TraceLogger.Info("📦 Payload JSON: " + json);
                 var content = new StringContent(json, Encoding.UTF8, "application/json");
 
                 var response = client.PostAsync(url, content).Result;
@@ -748,14 +769,17 @@ namespace FinancialReport
                 if (!response.IsSuccessStatusCode)
                 {
                     PXTrace.WriteError($"❌ Failed to send to Python: {response.StatusCode}");
+                    TraceLogger.Error($"❌ Failed to send to Python: {response.StatusCode}");
 
                 }
                 else
                 {
                     PXTrace.WriteInformation("✅ Sent credentials to Python");
+                    TraceLogger.Info("✅ Sent credentials to Python");
                 }
             }
         }
+        #endregion
 
 
 

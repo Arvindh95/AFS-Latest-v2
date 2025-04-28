@@ -3,9 +3,11 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
+using FinancialReport.Helper;
 using PX.Data;
 
 namespace FinancialReport.Services
@@ -36,7 +38,8 @@ namespace FinancialReport.Services
                     if (!normalizedData.ContainsKey(placeholder))
                     {
                         normalizedData[placeholder] = "0";
-                        PXTrace.WriteInformation($"Placeholder defaulted: {placeholder} = 0");
+                        //PXTrace.WriteInformation($"Placeholder defaulted: {placeholder} = 0");
+                        TraceLogger.Info($"Placeholder defaulted: {placeholder} = 0");  
                     }
                 }
 
@@ -67,6 +70,7 @@ namespace FinancialReport.Services
             catch (Exception ex)
             {
                 PXTrace.WriteError($"Error processing template: {ex.Message}");
+                TraceLogger.Error($"Error processing template: {ex.Message}");
                 throw;
             }
         }
@@ -78,13 +82,25 @@ namespace FinancialReport.Services
         {
             if (part?.RootElement == null) return;
 
-            var paragraphs = part.RootElement.Descendants<Paragraph>();
-            foreach (var paragraph in paragraphs)
+            var paragraphs = part.RootElement.Descendants<Paragraph>().ToList();
+
+            // 🧵 Process each paragraph in parallel
+            Parallel.ForEach(paragraphs, paragraph =>
             {
-                MergeRunsWithSameFormatting(paragraph);
-                ReplacePlaceholdersInRuns(paragraph, data);
-            }
+                try
+                {
+                    MergeRunsWithSameFormatting(paragraph);
+                    ReplacePlaceholdersInRuns(paragraph, data);
+                }
+                catch (Exception ex)
+                {
+                    // Optional: Catch individual paragraph errors to avoid crashing entire operation
+                    PXTrace.WriteError($"Error processing paragraph: {ex.Message}");
+                    TraceLogger.Error($"Error processing paragraph: {ex.Message}");
+                }
+            });
         }
+
 
         /// <summary>
         /// Extracts placeholders from an entire Word document (main, headers, footers).
@@ -115,6 +131,7 @@ namespace FinancialReport.Services
             catch (Exception ex)
             {
                 PXTrace.WriteError($"Error extracting placeholders: {ex.Message}");
+                TraceLogger.Error($"Error extracting placeholders: {ex.Message}");
             }
             return placeholders;
         }

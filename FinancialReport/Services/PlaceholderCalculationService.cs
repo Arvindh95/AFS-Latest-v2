@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using DocumentFormat.OpenXml.Drawing.Charts;
+using FinancialReport.Helper;
 using PX.Common;
 using PX.Data;
 
@@ -133,11 +134,13 @@ namespace FinancialReport.Services
                 foreach (var key in cyComposite.Keys)
                 {
                     PXTrace.WriteInformation($"CY Key in Dictionary: {key}");
+                    TraceLogger.Info($"CY Key in Dictionary: {key}");
                 }
 
                 foreach (var key in pyComposite.Keys)
                 {
-                    PXTrace.WriteInformation($"PY Key in Dictionary: {key}");
+                    //PXTrace.WriteInformation($"PY Key in Dictionary: {key}");
+                    TraceLogger.Info($"PY Key in Dictionary: {key}");
                 }
 
                 if (cyComposite.TryGetValue(compositeKeyCY, out var cy))

@@ -56,7 +56,7 @@ namespace FinancialReport.Services
                     JObject parsed = JObject.Parse(jsonResponse);
                     var results = (parsed["value"] as JArray)?.ToObject<List<JToken>>();
 
-                    PXTrace.WriteInformation($"Fetched {results?.Count ?? 0} records (skip = {skip})");
+                    //PXTrace.WriteInformation($"Fetched {results?.Count ?? 0} records (skip = {skip})");
 
                     if (results == null || results.Count == 0)
                         break;
@@ -119,7 +119,7 @@ namespace FinancialReport.Services
                     JObject parsed = JObject.Parse(jsonResponse);
                     var results = (parsed["value"] as JArray)?.ToObject<List<JToken>>();
 
-                    PXTrace.WriteInformation($"[January Balance] Fetched {results?.Count ?? 0} records (skip = {skip})");
+                    //PXTrace.WriteInformation($"[January Balance] Fetched {results?.Count ?? 0} records (skip = {skip})");
 
                     if (results == null || results.Count == 0)
                         break;
@@ -181,7 +181,7 @@ namespace FinancialReport.Services
                     JObject parsed = JObject.Parse(jsonResponse);
                     var results = (parsed["value"] as JArray)?.ToObject<List<JToken>>();
 
-                    PXTrace.WriteInformation($"[Range] Fetched {results?.Count ?? 0} records (skip = {skip})");
+                    //PXTrace.WriteInformation($"[Range] Fetched {results?.Count ?? 0} records (skip = {skip})");
 
                     if (results == null || results.Count == 0)
                         break;
@@ -255,7 +255,7 @@ namespace FinancialReport.Services
                     JObject parsed = JObject.Parse(jsonResponse);
                     var results = (parsed["value"] as JArray)?.ToObject<List<JToken>>();
 
-                    PXTrace.WriteInformation($"[Composite] Fetched {results?.Count ?? 0} records (skip = {skip})");
+                    //PXTrace.WriteInformation($"[Composite] Fetched {results?.Count ?? 0} records (skip = {skip})");
 
                     if (results == null || results.Count == 0)
                         break;
@@ -267,11 +267,6 @@ namespace FinancialReport.Services
                         string branchId = item["BranchID"]?.ToString()?.Trim() ?? branch;
                         string orgId = item["OrganizationID"]?.ToString()?.Trim() ?? organization;
                         string compositeKey = $"{accountId}-{subaccountId}-{branchId}-{orgId}-{period}-{ledger}";
-
-                        if (branchId == "MIP" && (accountId == "A73102" || accountId == "A73101"))
-                        {
-                            PXTrace.WriteInformation($"[Store] Composite key added: {compositeKey}");
-                        }
 
                         var data = new FinancialPeriodData
                         {
