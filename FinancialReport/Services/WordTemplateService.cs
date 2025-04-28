@@ -1,127 +1,212 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.IO;
+using System.Linq;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
+using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
+using FinancialReport.Helper;
 using PX.Data;
-
-
-
 
 namespace FinancialReport.Services
 {
     public class WordTemplateService
     {
+        // Compile regex once for better performance
+        private static readonly Regex PlaceholderRegex = new Regex(@"\{\{[^{}]+\}\}", RegexOptions.Compiled);
+
+        /// <summary>
+        /// Replaces all placeholders in a Word document and ensures all unused ones are defaulted to "0".
+        /// Note: Supply final data in 'data' before calling, so we only run one pass.
+        /// </summary>
         public void PopulateTemplate(string templatePath, string outputPath, Dictionary<string, string> data)
         {
-            File.Copy(templatePath, outputPath, true);
-            using (WordprocessingDocument doc = WordprocessingDocument.Open(outputPath, true))
+            try
             {
-                var mainPart = doc.MainDocumentPart;
-                var paragraphs = mainPart.Document.Descendants<Paragraph>();
+                // 1) Create a case-insensitive copy of the data dictionary for easier lookups
+                var normalizedData = new Dictionary<string, string>(data, StringComparer.OrdinalIgnoreCase);
 
-                //foreach (var kvp in data)
-                //{
-                //    PXTrace.WriteInformation($"Placeholder: {kvp.Key}, Value: {kvp.Value}");
-                //}
+                // 2) Extract placeholders from the template
+                var placeholdersInDoc = ExtractPlaceholders(templatePath);
 
-                foreach (var kvp in data)
+                // 3) For each placeholder in the document, 
+                //    if it's missing from 'normalizedData', default it to "0"
+                foreach (string placeholder in placeholdersInDoc)
                 {
-                    string placeholder = kvp.Key;
-                    string replacement = kvp.Value;
-
-                    foreach (var paragraph in paragraphs)
+                    if (!normalizedData.ContainsKey(placeholder))
                     {
-                        ReplaceAllPlaceholdersInRuns(paragraph, data);
+                        normalizedData[placeholder] = "0";
+                        //PXTrace.WriteInformation($"Placeholder defaulted: {placeholder} = 0");
+                        TraceLogger.Info($"Placeholder defaulted: {placeholder} = 0");  
                     }
                 }
 
-                // Now ensure the document settings include an UpdateFieldsOnOpen element.
-                DocumentSettingsPart settingsPart = mainPart.DocumentSettingsPart;
-                if (settingsPart == null)
+                // 4) Copy the template to output, then open the copy for editing
+                File.Copy(templatePath, outputPath, true);
+
+                using (WordprocessingDocument doc = WordprocessingDocument.Open(outputPath, true))
                 {
-                    settingsPart = mainPart.AddNewPart<DocumentSettingsPart>();
-                    settingsPart.Settings = new Settings();
+                    var mainPart = doc.MainDocumentPart;
+
+                    // 5) Process the main document
+                    ProcessDocumentPart(mainPart, normalizedData);
+
+                    // Process any header/footer parts
+                    foreach (var headerPart in mainPart.HeaderParts)
+                    {
+                        ProcessDocumentPart(headerPart, normalizedData);
+                    }
+
+                    foreach (var footerPart in mainPart.FooterParts)
+                    {
+                        ProcessDocumentPart(footerPart, normalizedData);
+                    }
+
+                    EnsureUpdateFieldsOnOpen(mainPart);
                 }
-
-                var settings = settingsPart.Settings;
-
-                //// Remove any existing updateFields element.
-                //var existingUpdateFields = settings.Elements<UpdateFieldsOnOpen>().FirstOrDefault();
-                //if (existingUpdateFields != null)
-                //{
-                //    existingUpdateFields.Remove();
-                //}
-
-                //// Append the UpdateFieldsOnOpen element with Val=true.
-                //settings.AppendChild(new UpdateFieldsOnOpen() { Val = true });
-                //settings.Save();
+            }
+            catch (Exception ex)
+            {
+                PXTrace.WriteError($"Error processing template: {ex.Message}");
+                TraceLogger.Error($"Error processing template: {ex.Message}");
+                throw;
             }
         }
 
-        private void ReplaceAllPlaceholdersInRuns(Paragraph paragraph, Dictionary<string, string> data)
+        /// <summary>
+        /// Process each paragraph in a part (main, header, footer), merging runs and replacing placeholders.
+        /// </summary>
+        private void ProcessDocumentPart(OpenXmlPart part, Dictionary<string, string> data)
         {
-            MergeRunsWithSameFormatting(paragraph);
-            var runs = paragraph.Elements<Run>().ToList();
+            if (part?.RootElement == null) return;
 
-            for (int i = 0; i < runs.Count; i++)
+            var paragraphs = part.RootElement.Descendants<Paragraph>().ToList();
+
+            // 🧵 Process each paragraph in parallel
+            Parallel.ForEach(paragraphs, paragraph =>
             {
-                Run run = runs[i];
-                Text textElement = run.GetFirstChild<Text>();
+                try
+                {
+                    MergeRunsWithSameFormatting(paragraph);
+                    ReplacePlaceholdersInRuns(paragraph, data);
+                }
+                catch (Exception ex)
+                {
+                    // Optional: Catch individual paragraph errors to avoid crashing entire operation
+                    PXTrace.WriteError($"Error processing paragraph: {ex.Message}");
+                    TraceLogger.Error($"Error processing paragraph: {ex.Message}");
+                }
+            });
+        }
+
+
+        /// <summary>
+        /// Extracts placeholders from an entire Word document (main, headers, footers).
+        /// </summary>
+        private HashSet<string> ExtractPlaceholders(string templatePath)
+        {
+            var placeholders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                using (WordprocessingDocument doc = WordprocessingDocument.Open(templatePath, false))
+                {
+                    // main
+                    ExtractPlaceholdersFromPart(doc.MainDocumentPart, placeholders);
+
+                    // headers
+                    foreach (var headerPart in doc.MainDocumentPart.HeaderParts)
+                    {
+                        ExtractPlaceholdersFromPart(headerPart, placeholders);
+                    }
+
+                    // footers
+                    foreach (var footerPart in doc.MainDocumentPart.FooterParts)
+                    {
+                        ExtractPlaceholdersFromPart(footerPart, placeholders);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                PXTrace.WriteError($"Error extracting placeholders: {ex.Message}");
+                TraceLogger.Error($"Error extracting placeholders: {ex.Message}");
+            }
+            return placeholders;
+        }
+
+        private void ExtractPlaceholdersFromPart(OpenXmlPart part, HashSet<string> placeholders)
+        {
+            if (part?.RootElement == null) return;
+
+            var textParts = part.RootElement.Descendants<Text>();
+            foreach (var text in textParts)
+            {
+                string runText = text.Text;
+                if (runText.Contains("{{")) // quick check
+                {
+                    var matches = PlaceholderRegex.Matches(runText);
+                    foreach (Match m in matches)
+                    {
+                        placeholders.Add(m.Value);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Replaces placeholders in each run of a paragraph with values from 'data'.
+        /// </summary>
+        private void ReplacePlaceholdersInRuns(Paragraph paragraph, Dictionary<string, string> data)
+        {
+            foreach (var run in paragraph.Elements<Run>().ToList())
+            {
+                var textElement = run.GetFirstChild<Text>();
                 if (textElement == null) continue;
 
                 string runText = textElement.Text;
+                if (string.IsNullOrEmpty(runText)) continue;
 
-                while (true)
+                // Only process if it might contain placeholders
+                if (!runText.Contains("{{")) continue;
+
+                // Attempt replacements for each dictionary entry
+                bool changed = false;
+                foreach (var kvp in data)
                 {
-                    int startIdx = runText.IndexOf("{{");
-                    if (startIdx < 0) break;
-
-                    int endIdx = runText.IndexOf("}}", startIdx + 2);
-                    if (endIdx < 0) break;
-
-                    // Full placeholder with braces
-                    string placeholderWithBraces = runText.Substring(startIdx, endIdx - startIdx + 2);
-
-                    // Check dictionary: if found => use its value, else => "0"
-                    string replacementValue = data.TryGetValue(placeholderWithBraces, out string foundValue)
-                        ? foundValue
-                        : "0";
-
-                    // Rebuild
-                    string before = runText.Substring(0, startIdx);
-                    string after = runText.Substring(endIdx + 2);
-                    runText = before + replacementValue + after;
+                    if (runText.Contains(kvp.Key))
+                    {
+                        runText = runText.Replace(kvp.Key, kvp.Value);
+                        changed = true;
+                    }
                 }
 
-                textElement.Text = runText;
+                if (changed)
+                {
+                    textElement.Text = runText;
+                }
             }
         }
 
-
-        private Run CloneRunWithNewText(Run originalRun, string newText)
-        {
-            var newRun = new Run();
-            if (originalRun.RunProperties != null)
-            {
-                newRun.RunProperties = (RunProperties)originalRun.RunProperties.CloneNode(true);
-            }
-            newRun.AppendChild(new Text(newText));
-            return newRun;
-        }
-
+        /// <summary>
+        /// Merges runs that share or likely share the same placeholder, so placeholders aren't split.
+        /// </summary>
         private void MergeRunsWithSameFormatting(Paragraph paragraph)
         {
             var runs = paragraph.Elements<Run>().ToList();
-            for (int i = 0; i < runs.Count - 1;)
+            if (runs.Count <= 1) return;
+
+            int i = 0;
+            while (i < runs.Count - 1)
             {
-                if (HaveSameFormatting(runs[i], runs[i + 1]))
+                var run1 = runs[i];
+                var run2 = runs[i + 1];
+
+                if (HaveSameFormatting(run1, run2) || IsLikelyPartOfPlaceholder(run1, run2))
                 {
-                    var text1 = runs[i].GetFirstChild<Text>();
-                    var text2 = runs[i + 1].GetFirstChild<Text>();
+                    var text1 = run1.GetFirstChild<Text>();
+                    var text2 = run2.GetFirstChild<Text>();
 
                     if (text1 == null || text2 == null)
                     {
@@ -129,8 +214,17 @@ namespace FinancialReport.Services
                         continue;
                     }
 
+                    bool preserveSpace = text1.Space?.Value == SpaceProcessingModeValues.Preserve
+                                        || text2.Space?.Value == SpaceProcessingModeValues.Preserve;
+
                     text1.Text += text2.Text;
-                    runs[i + 1].Remove();
+
+                    if (preserveSpace)
+                    {
+                        text1.Space = SpaceProcessingModeValues.Preserve;
+                    }
+
+                    run2.Remove();
                     runs.RemoveAt(i + 1);
                 }
                 else
@@ -140,11 +234,47 @@ namespace FinancialReport.Services
             }
         }
 
+        /// <summary>
+        /// Detects whether two runs likely form part of a placeholder ({{...}}).
+        /// </summary>
+        private bool IsLikelyPartOfPlaceholder(Run r1, Run r2)
+        {
+            var t1 = r1.GetFirstChild<Text>();
+            var t2 = r2.GetFirstChild<Text>();
+            if (t1 == null || t2 == null) return false;
+
+            string combined = t1.Text + t2.Text;
+            return combined.Contains("{{") || combined.Contains("}}") || combined.Contains("_CY") || combined.Contains("_PY");
+        }
+
+        /// <summary>
+        /// Checks whether two runs have the same RunProperties.
+        /// </summary>
         private bool HaveSameFormatting(Run r1, Run r2)
         {
-            string rp1 = r1.RunProperties?.OuterXml ?? string.Empty;
-            string rp2 = r2.RunProperties?.OuterXml ?? string.Empty;
+            // Both null => treat as same
+            if (r1.RunProperties == null && r2.RunProperties == null) return true;
+            if (r1.RunProperties == null || r2.RunProperties == null) return false;
+
+            string rp1 = r1.RunProperties.OuterXml;
+            string rp2 = r2.RunProperties.OuterXml;
             return rp1 == rp2;
+        }
+
+        /// <summary>
+        /// Ensures Word fields are updated on open, so pagination/TOC are correct.
+        /// </summary>
+        private void EnsureUpdateFieldsOnOpen(MainDocumentPart mainPart)
+        {
+            DocumentSettingsPart settingsPart = mainPart.DocumentSettingsPart
+                                            ?? mainPart.AddNewPart<DocumentSettingsPart>();
+            if (settingsPart.Settings == null)
+            {
+                settingsPart.Settings = new Settings();
+            }
+            settingsPart.Settings.RemoveAllChildren<UpdateFieldsOnOpen>();
+            settingsPart.Settings.AppendChild(new UpdateFieldsOnOpen { Val = true });
+            settingsPart.Settings.Save();
         }
     }
 }
