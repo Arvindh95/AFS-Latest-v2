@@ -2,67 +2,60 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using FinancialReport.Helper;
+using Newtonsoft.Json.Linq;
+using Newtonsoft.Json;
 using PX.Data;
+using System.Configuration;
+
 
 namespace FinancialReport.Services
 {
     public class WordTemplateService
     {
-        // Compile regex once for better performance
         private static readonly Regex PlaceholderRegex = new Regex(@"\{\{[^{}]+\}\}", RegexOptions.Compiled);
 
-        /// <summary>
-        /// Replaces all placeholders in a Word document and ensures all unused ones are defaulted to "0".
-        /// Note: Supply final data in 'data' before calling, so we only run one pass.
-        /// </summary>
         public void PopulateTemplate(string templatePath, string outputPath, Dictionary<string, string> data)
         {
+
+
             try
             {
-                // 1) Create a case-insensitive copy of the data dictionary for easier lookups
                 var normalizedData = new Dictionary<string, string>(data, StringComparer.OrdinalIgnoreCase);
 
-                // 2) Extract placeholders from the template
                 var placeholdersInDoc = ExtractPlaceholders(templatePath);
+                ExtractPlaceholderKeys(templatePath);
 
-                // 3) For each placeholder in the document, 
-                //    if it's missing from 'normalizedData', default it to "0"
-                foreach (string placeholder in placeholdersInDoc)
+                foreach (string placeholderWithBraces in placeholdersInDoc)
                 {
-                    if (!normalizedData.ContainsKey(placeholder))
+                    string key = placeholderWithBraces.Trim('{', '}');
+
+                    if (!normalizedData.ContainsKey(key))
                     {
-                        normalizedData[placeholder] = "0";
-                        //PXTrace.WriteInformation($"Placeholder defaulted: {placeholder} = 0");
-                        TraceLogger.Info($"Placeholder defaulted: {placeholder} = 0");  
+                        normalizedData[key] = "0";
+                        //TraceLogger.Info($"Placeholder defaulted: {key} = 0");
                     }
                 }
 
-                // 4) Copy the template to output, then open the copy for editing
                 File.Copy(templatePath, outputPath, true);
 
                 using (WordprocessingDocument doc = WordprocessingDocument.Open(outputPath, true))
                 {
                     var mainPart = doc.MainDocumentPart;
-
-                    // 5) Process the main document
                     ProcessDocumentPart(mainPart, normalizedData);
 
-                    // Process any header/footer parts
                     foreach (var headerPart in mainPart.HeaderParts)
-                    {
                         ProcessDocumentPart(headerPart, normalizedData);
-                    }
 
                     foreach (var footerPart in mainPart.FooterParts)
-                    {
                         ProcessDocumentPart(footerPart, normalizedData);
-                    }
 
                     EnsureUpdateFieldsOnOpen(mainPart);
                 }
@@ -75,16 +68,12 @@ namespace FinancialReport.Services
             }
         }
 
-        /// <summary>
-        /// Process each paragraph in a part (main, header, footer), merging runs and replacing placeholders.
-        /// </summary>
         private void ProcessDocumentPart(OpenXmlPart part, Dictionary<string, string> data)
         {
             if (part?.RootElement == null) return;
 
             var paragraphs = part.RootElement.Descendants<Paragraph>().ToList();
 
-            // 🧵 Process each paragraph in parallel
             Parallel.ForEach(paragraphs, paragraph =>
             {
                 try
@@ -94,17 +83,28 @@ namespace FinancialReport.Services
                 }
                 catch (Exception ex)
                 {
-                    // Optional: Catch individual paragraph errors to avoid crashing entire operation
                     PXTrace.WriteError($"Error processing paragraph: {ex.Message}");
                     TraceLogger.Error($"Error processing paragraph: {ex.Message}");
                 }
             });
         }
 
+        public List<string> ExtractPlaceholderKeys(string templatePath)
+        {
+            var rawPlaceholders = ExtractPlaceholders(templatePath);
+            var keys = rawPlaceholders
+                .Select(p => p.Trim('{', '}'))
+                .Where(p => !string.IsNullOrWhiteSpace(p))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
 
-        /// <summary>
-        /// Extracts placeholders from an entire Word document (main, headers, footers).
-        /// </summary>
+            TraceLogger.Info($"Extracted {keys.Count} placeholder keys from template:");
+            //foreach (var key in keys)
+            //    TraceLogger.Info($" - {key}");
+
+            return keys;
+        }
+
         private HashSet<string> ExtractPlaceholders(string templatePath)
         {
             var placeholders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -112,20 +112,13 @@ namespace FinancialReport.Services
             {
                 using (WordprocessingDocument doc = WordprocessingDocument.Open(templatePath, false))
                 {
-                    // main
                     ExtractPlaceholdersFromPart(doc.MainDocumentPart, placeholders);
 
-                    // headers
                     foreach (var headerPart in doc.MainDocumentPart.HeaderParts)
-                    {
                         ExtractPlaceholdersFromPart(headerPart, placeholders);
-                    }
 
-                    // footers
                     foreach (var footerPart in doc.MainDocumentPart.FooterParts)
-                    {
                         ExtractPlaceholdersFromPart(footerPart, placeholders);
-                    }
                 }
             }
             catch (Exception ex)
@@ -139,25 +132,49 @@ namespace FinancialReport.Services
         private void ExtractPlaceholdersFromPart(OpenXmlPart part, HashSet<string> placeholders)
         {
             if (part?.RootElement == null) return;
+            ExtractPlaceholdersFromElement(part.RootElement, placeholders);
+        }
 
-            var textParts = part.RootElement.Descendants<Text>();
-            foreach (var text in textParts)
+        private void ExtractPlaceholdersFromElement(OpenXmlElement rootElement, HashSet<string> placeholders)
+        {
+            var sb = new StringBuilder();
+            ExtractTextRecursive(rootElement, sb);
+            var matches = PlaceholderRegex.Matches(sb.ToString());
+            foreach (Match m in matches)
+                placeholders.Add(m.Value);
+        }
+
+        private void ExtractTextRecursive(OpenXmlElement element, StringBuilder sb)
+        {
+            if (element is Text text)
+                sb.Append(text.Text);
+            else if (element is Break)
+                sb.AppendLine();
+
+            foreach (var child in element.Elements())
+                ExtractTextRecursive(child, sb);
+        }
+
+        public void SaveExtractedPlaceholdersToTxt(string templatePath, string outputTxtPath)
+        {
+            try
             {
-                string runText = text.Text;
-                if (runText.Contains("{{")) // quick check
-                {
-                    var matches = PlaceholderRegex.Matches(runText);
-                    foreach (Match m in matches)
-                    {
-                        placeholders.Add(m.Value);
-                    }
-                }
+                var placeholders = ExtractPlaceholders(templatePath)
+                    .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                File.WriteAllLines(outputTxtPath, placeholders);
+
+                TraceLogger.Info($"✅ Placeholders saved to: {outputTxtPath} ({placeholders.Count} entries)");
+            }
+            catch (Exception ex)
+            {
+                PXTrace.WriteError($"❌ Failed to save placeholders: {ex.Message}");
+                TraceLogger.Error($"❌ Failed to save placeholders: {ex.Message}");
+                throw;
             }
         }
 
-        /// <summary>
-        /// Replaces placeholders in each run of a paragraph with values from 'data'.
-        /// </summary>
         private void ReplacePlaceholdersInRuns(Paragraph paragraph, Dictionary<string, string> data)
         {
             foreach (var run in paragraph.Elements<Run>().ToList())
@@ -166,32 +183,25 @@ namespace FinancialReport.Services
                 if (textElement == null) continue;
 
                 string runText = textElement.Text;
-                if (string.IsNullOrEmpty(runText)) continue;
+                if (string.IsNullOrEmpty(runText) || !runText.Contains("{{")) continue;
 
-                // Only process if it might contain placeholders
-                if (!runText.Contains("{{")) continue;
-
-                // Attempt replacements for each dictionary entry
                 bool changed = false;
-                foreach (var kvp in data)
+                var matches = PlaceholderRegex.Matches(runText);
+                foreach (Match match in matches)
                 {
-                    if (runText.Contains(kvp.Key))
+                    string placeholderWithBraces = match.Value;
+                    if (data.TryGetValue(placeholderWithBraces, out string replacement))
                     {
-                        runText = runText.Replace(kvp.Key, kvp.Value);
+                        runText = runText.Replace(placeholderWithBraces, replacement);
                         changed = true;
                     }
                 }
 
                 if (changed)
-                {
                     textElement.Text = runText;
-                }
             }
         }
 
-        /// <summary>
-        /// Merges runs that share or likely share the same placeholder, so placeholders aren't split.
-        /// </summary>
         private void MergeRunsWithSameFormatting(Paragraph paragraph)
         {
             var runs = paragraph.Elements<Run>().ToList();
@@ -207,22 +217,18 @@ namespace FinancialReport.Services
                 {
                     var text1 = run1.GetFirstChild<Text>();
                     var text2 = run2.GetFirstChild<Text>();
-
                     if (text1 == null || text2 == null)
                     {
                         i++;
                         continue;
                     }
 
-                    bool preserveSpace = text1.Space?.Value == SpaceProcessingModeValues.Preserve
-                                        || text2.Space?.Value == SpaceProcessingModeValues.Preserve;
+                    bool preserveSpace = text1.Space?.Value == SpaceProcessingModeValues.Preserve ||
+                                         text2.Space?.Value == SpaceProcessingModeValues.Preserve;
 
                     text1.Text += text2.Text;
-
                     if (preserveSpace)
-                    {
                         text1.Space = SpaceProcessingModeValues.Preserve;
-                    }
 
                     run2.Remove();
                     runs.RemoveAt(i + 1);
@@ -234,9 +240,6 @@ namespace FinancialReport.Services
             }
         }
 
-        /// <summary>
-        /// Detects whether two runs likely form part of a placeholder ({{...}}).
-        /// </summary>
         private bool IsLikelyPartOfPlaceholder(Run r1, Run r2)
         {
             var t1 = r1.GetFirstChild<Text>();
@@ -247,34 +250,37 @@ namespace FinancialReport.Services
             return combined.Contains("{{") || combined.Contains("}}") || combined.Contains("_CY") || combined.Contains("_PY");
         }
 
-        /// <summary>
-        /// Checks whether two runs have the same RunProperties.
-        /// </summary>
         private bool HaveSameFormatting(Run r1, Run r2)
         {
-            // Both null => treat as same
             if (r1.RunProperties == null && r2.RunProperties == null) return true;
             if (r1.RunProperties == null || r2.RunProperties == null) return false;
 
-            string rp1 = r1.RunProperties.OuterXml;
-            string rp2 = r2.RunProperties.OuterXml;
-            return rp1 == rp2;
+            return r1.RunProperties.OuterXml == r2.RunProperties.OuterXml;
         }
 
-        /// <summary>
-        /// Ensures Word fields are updated on open, so pagination/TOC are correct.
-        /// </summary>
         private void EnsureUpdateFieldsOnOpen(MainDocumentPart mainPart)
         {
-            DocumentSettingsPart settingsPart = mainPart.DocumentSettingsPart
-                                            ?? mainPart.AddNewPart<DocumentSettingsPart>();
+            DocumentSettingsPart settingsPart = mainPart.DocumentSettingsPart ?? mainPart.AddNewPart<DocumentSettingsPart>();
             if (settingsPart.Settings == null)
-            {
                 settingsPart.Settings = new Settings();
-            }
+
             settingsPart.Settings.RemoveAllChildren<UpdateFieldsOnOpen>();
             settingsPart.Settings.AppendChild(new UpdateFieldsOnOpen { Val = true });
             settingsPart.Settings.Save();
         }
+
+        private string GetConfigValue(string key)
+        {
+            return ConfigurationManager.AppSettings[key]
+                ?? throw new PXException(Messages.MissingConfig);
+        }
+
+
+
+
+
+
+
+
     }
 }

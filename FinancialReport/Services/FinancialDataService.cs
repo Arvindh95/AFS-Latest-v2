@@ -1,8 +1,12 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Text;
+using System.Text.RegularExpressions;
+using FinancialReport.Helper;
 using Newtonsoft.Json.Linq;
 using PX.Data;
 
@@ -370,6 +374,200 @@ namespace FinancialReport.Services
                 // Nothing selected => user must pick one
                 return $"1 eq 1";
             }
+        }
+
+
+        public Dictionary<string, string> BuildPlaceholderMapFromKeys(List<string> placeholderKeys,Dictionary<string, FinancialPeriodData> cyData,Dictionary<string, FinancialPeriodData> pyData)
+        {
+            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            TraceLogger.Info($"🔍 Building placeholder map from {placeholderKeys.Count} keys...");
+
+            foreach (var key in placeholderKeys)
+            {
+                if (string.IsNullOrWhiteSpace(key) || !key.Contains("_"))
+                {
+                    TraceLogger.Error($"⚠️ Skipped invalid placeholder key: '{key}'");
+                    continue;
+                }
+
+                var parts = key.Split('_');
+                if (parts.Length != 2)
+                {
+                    TraceLogger.Error($"⚠️ Malformed placeholder (should be 'CODE_CY' or 'CODE_PY'): '{key}'");
+                    continue;
+                }
+
+                string accountCode = parts[0];
+                string period = parts[1].ToUpper();
+
+                var source = period == "CY" ? cyData : period == "PY" ? pyData : null;
+
+                if (source != null && source.TryGetValue(accountCode, out var data))
+                {
+                    string value = data.EndingBalance.ToString("N2");
+                    result[key] = value;
+                    //TraceLogger.Info($"✅ Matched placeholder: {key} → {value}");
+                }
+                else
+                {
+                    result[key] = "0";
+                    //TraceLogger.Error($"🚫 No match for placeholder: {key}. Defaulted to 0.");
+                }
+            }
+
+            TraceLogger.Info($"✅ Finished building placeholder map. Total mapped: {result.Count}");
+            return result;
+        }
+
+        public Dictionary<string, string> BuildSmartPlaceholderMapFromKeys(
+            List<string> keys,
+            FinancialApiData cyData,
+            FinancialApiData pyData,
+            FinancialApiData janCY,
+            FinancialApiData janPY,
+            FinancialApiData rangeCY,
+            FinancialApiData rangePY)
+        {
+            var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var key in keys)
+            {
+                string cleanKey = key.Trim('{', '}');
+
+                // Match: CreditSum3_B1234_CY
+                var sumMatch = Regex.Match(cleanKey, @"^(CreditSum|DebitSum|BegSum|Sum)(\d)_(.+)_(CY|PY)$", RegexOptions.IgnoreCase);
+                if (sumMatch.Success)
+                {
+                    var type = sumMatch.Groups[1].Value.ToLower();
+                    int level = int.Parse(sumMatch.Groups[2].Value);
+                    string prefix = sumMatch.Groups[3].Value;
+                    string yearType = sumMatch.Groups[4].Value.ToUpper();
+
+                    var source = yearType == "CY" ? (type == "begsum" ? janCY : (type == "debitsum" || type == "creditsum" ? rangeCY : cyData)) :
+                                                    (type == "begsum" ? janPY : (type == "debitsum" || type == "creditsum" ? rangePY : pyData));
+
+                    decimal sum = 0;
+                    foreach (var kvp in source.AccountData)
+                    {
+                        if (kvp.Key.Length >= level && kvp.Key.Substring(0, level) == prefix)
+                        {
+                            var data = kvp.Value;
+                            switch (type)
+                            {
+                                case "debitsum":
+                                    sum += data.Debit;
+                                    break;
+                                case "creditsum":
+                                    sum += data.Credit;
+                                    break;
+                                case "begsum":
+                                    sum += data.BeginningBalance;
+                                    break;
+                                default:
+                                    sum += data.EndingBalance;
+                                    break;
+                            }
+
+                        }
+                    }
+                    dict[key] = sum.ToString("#,##0");
+                    continue;
+                }
+
+                // Match: A81101_Jan1_PY
+                var janMatch = Regex.Match(cleanKey, @"^(.+)_Jan1_(CY|PY)$", RegexOptions.IgnoreCase);
+                if (janMatch.Success)
+                {
+                    var acct = janMatch.Groups[1].Value;
+                    var yearType = janMatch.Groups[2].Value.ToUpper();
+                    var source = yearType == "CY" ? janCY : janPY;
+
+                    if (source.AccountData.TryGetValue(acct, out var data))
+                    {
+                        dict[key] = data.BeginningBalance.ToString("#,##0");
+                    }
+                    continue;
+                }
+
+                // Match: B1234_credit_CY
+                var partMatch = Regex.Match(cleanKey, @"^(.+?)_(credit|debit|ending)_(CY|PY)$", RegexOptions.IgnoreCase);
+                if (partMatch.Success)
+                {
+                    var acct = partMatch.Groups[1].Value;
+                    var part = partMatch.Groups[2].Value.ToLower();
+                    var yearType = partMatch.Groups[3].Value.ToUpper();
+                    var source = yearType == "CY" ? rangeCY : rangePY;
+
+                    if (source.AccountData.TryGetValue(acct, out var data))
+                    {
+                        switch (part)
+                        {
+                            case "credit":
+                                dict[key] = data.Credit.ToString("#,##0");
+                                break;
+                            case "debit":
+                                dict[key] = data.Debit.ToString("#,##0");
+                                break;
+                            default:
+                                dict[key] = data.EndingBalance.ToString("#,##0");
+                                break;
+                        }
+
+                    }
+                    continue;
+                }
+
+                // Match: A123456_CY / A123456_PY
+                var basicMatch = Regex.Match(cleanKey, @"^(.+)_(CY|PY)$", RegexOptions.IgnoreCase);
+                if (basicMatch.Success)
+                {
+                    var acct = basicMatch.Groups[1].Value;
+                    var yearType = basicMatch.Groups[2].Value.ToUpper();
+                    var source = yearType == "CY" ? cyData : pyData;
+
+                    if (source.AccountData.TryGetValue(acct, out var data))
+                    {
+                        dict[key] = data.EndingBalance.ToString("#,##0");
+                    }
+                }
+            }
+
+            return dict;
+        }
+
+
+        public Dictionary<string, string> BuildAllFinancialDataMap(
+        FinancialApiData currYearData,
+        FinancialApiData prevYearData,
+        FinancialApiData januaryBeginningDataCY,
+        FinancialApiData januaryBeginningDataPY,
+        FinancialApiData cumulativeCYData,
+        FinancialApiData cumulativePYData)
+        {
+            var placeholders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            void AddAccountData(FinancialApiData data, string suffix)
+            {
+                foreach (var kvp in data.AccountData)
+                {
+                    string key = kvp.Key;
+                    var val = kvp.Value;
+                    placeholders[$"{key}_Ending_{suffix}"] = val.EndingBalance.ToString("#,##0.##");
+                    placeholders[$"{key}_Debit_{suffix}"] = val.Debit.ToString("#,##0.##");
+                    placeholders[$"{key}_Credit_{suffix}"] = val.Credit.ToString("#,##0.##");
+                    placeholders[$"{key}_Desc_{suffix}"] = val.Description ?? "";
+                    placeholders[$"{key}_Beg_{suffix}"] = val.BeginningBalance.ToString("#,##0.##");
+                }
+            }
+
+            AddAccountData(currYearData, "CY");
+            AddAccountData(prevYearData, "PY");
+            AddAccountData(januaryBeginningDataCY, "JanBegCY");
+            AddAccountData(januaryBeginningDataPY, "JanBegPY");
+            AddAccountData(cumulativeCYData, "RangeCY");
+            AddAccountData(cumulativePYData, "RangePY");
+
+            return placeholders;
         }
 
 

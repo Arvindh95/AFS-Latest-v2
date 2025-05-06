@@ -27,7 +27,12 @@ namespace FinancialReport.Services
         public (byte[] fileBytes, string fileName) GetFileContentAndName(Guid? noteID, FLRTFinancialReport currentRecord)
         {
             if (noteID == null)
+            {
+                PXTrace.WriteError("❌ NoteID is null.");
                 throw new PXException(Messages.NoteIDIsNull);
+            }
+
+            PXTrace.WriteInformation($"🔍 Fetching files for NoteID = {noteID}");
 
             var uploadedFiles = new PXSelectJoin<UploadFile,
                 InnerJoin<NoteDoc, On<UploadFile.fileID, Equal<NoteDoc.fileID>>>,
@@ -37,30 +42,49 @@ namespace FinancialReport.Services
                 OrderBy<Desc<UploadFile.createdDateTime>>>(_graph)
                 .Select(noteID, "%FRTemplate%");
 
+            PXTrace.WriteInformation($"📄 Files found for NoteID = {noteID}: {uploadedFiles?.Count ?? 0}");
+
             if (uploadedFiles == null || uploadedFiles.Count == 0)
+            {
+                PXTrace.WriteError("❌ No files associated with this NoteID.");
                 throw new PXException(Messages.NoFilesAssociated);
+            }
 
             foreach (PXResult<UploadFile, NoteDoc> result in uploadedFiles)
             {
                 var file = (UploadFile)result;
-                // ✅ Retrieve UploadFileRevision separately with proper casting
+                PXTrace.WriteInformation($"📄 Checking file: {file.Name}, FileID: {file.FileID}");
+
+                // Fetch revision
                 UploadFileRevision fileRevision = PXSelect<UploadFileRevision,
                     Where<UploadFileRevision.fileID, Equal<Required<UploadFileRevision.fileID>>>,
-                     OrderBy<Desc<UploadFileRevision.createdDateTime>>>
+                    OrderBy<Desc<UploadFileRevision.createdDateTime>>>
                     .Select(_graph, file.FileID)
-                    .RowCast<UploadFileRevision>() // ✅ Ensure proper casting
+                    .RowCast<UploadFileRevision>()
                     .FirstOrDefault();
 
-                if (fileRevision?.BlobData != null) // ✅ Corrected from 'Data' to 'BlobData'
+                if (fileRevision == null)
                 {
-                    // Return both the file content and its original name
-                    currentRecord.UploadedFileID = file.FileID; // <-- Add this
+                    PXTrace.WriteError($"⚠️ No revision found for FileID: {file.FileID}");
+                    continue;
+                }
+
+                if (fileRevision.BlobData != null && fileRevision.BlobData.Length > 0)
+                {
+                    PXTrace.WriteInformation($"✅ Found valid file revision. Size: {fileRevision.BlobData.Length} bytes");
+                    currentRecord.UploadedFileID = file.FileID;
                     return (fileRevision.BlobData, file.Name);
+                }
+                else
+                {
+                    PXTrace.WriteError($"❌ File revision has no BlobData for FileID: {file.FileID}");
                 }
             }
 
+            PXTrace.WriteError("❌ Failed to retrieve any usable file revision.");
             throw new PXException(Messages.FailedToRetrieveFile);
         }
+
 
         /// <summary>
         /// Saves a generated document into Acumatica and returns the FileID.

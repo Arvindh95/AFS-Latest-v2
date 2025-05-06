@@ -322,6 +322,15 @@ namespace FinancialReport
                 );
                 File.WriteAllBytes(templatePath, templateFileContent);
 
+                
+
+
+                // 📄 Optional Debug: Save extracted placeholders to .txt
+                string placeholderTxtPath = Path.Combine("C:\\Program Files\\Acumatica ERP\\saga\\App_Data\\Logs\\FinancialReports\\Extracted Placeholder Logs\\", $"{currentRecord.ReportCD}_{DateTime.Now:yyyyMMdd_HHmmssfff}_ExtractedPlaceholders.txt");
+                _wordTemplateService.SaveExtractedPlaceholdersToTxt(templatePath, placeholderTxtPath);
+                PXTrace.WriteInformation($"🔍 Extracted placeholders saved to: {placeholderTxtPath}");
+                TraceLogger.Info($"🔍 Extracted placeholders saved to: {placeholderTxtPath}");
+
                 // 9) Prepare the output file name and path
                 string outputFileName = $"{currentRecord.ReportCD}_Generated_{DateTime.Now:yyyyMMdd_HHmmssfff}{extension}";
                 string outputPath = Path.Combine(Path.GetTempPath(), outputFileName);
@@ -345,6 +354,11 @@ namespace FinancialReport
                 TraceLogger.Info($"Fetching data for Prev Year Period: {prevYearPeriod}, Branch: {selectedBranch}, Org: {selectedOrganization}, Ledger: {selectedLedger}");
                 var prevYearData = localDataService.FetchAllApiData(selectedBranch, selectedOrganization, selectedLedger, prevYearPeriod)
                                     ?? new FinancialApiData();
+
+                // NEW STEP: Extract placeholders from template
+                List<string> extractedKeys = _wordTemplateService.ExtractPlaceholderKeys(templatePath);
+                TraceLogger.Info($"🔍 Extracted {extractedKeys.Count} placeholder keys from template");             
+                TraceLogger.Info("✅ Placeholder dictionary built using direct CY/PY account values only.");
 
                 // 12) Fetch January beginning balances for both CY and PY
                 PXTrace.WriteInformation($"Fetching January {prevYear} Beginning Balance");
@@ -370,57 +384,147 @@ namespace FinancialReport
                 TraceLogger.Info($"Fetching PY cumulative data from {fromPeriodPY} to {toPeriodPY}");
                 var cumulativePYData = localDataService.FetchRangeApiData(selectedBranch, selectedOrganization, selectedLedger, fromPeriodPY, toPeriodPY);
 
-                // 14) Aggregate these data sets into a base dictionary of placeholders
-                Dictionary<string, string> basePlaceholders = GetPlaceholderData(
-                    currYearData,
-                    prevYearData,
-                    januaryBeginningDataPY,
-                    januaryBeginningDataCY,
-                    cumulativeCYData,
-                    cumulativePYData
-                );
 
-                // 15) Use a specialized placeholder calculator, based on the tenant
-                PlaceholderCalculationService.IPlaceholderCalculator calculator;
-                if (tenantName.Equals("IYRES", StringComparison.OrdinalIgnoreCase))
+                // 💡 Now it's safe to call this:
+                //Dictionary<string, string> finalPlaceholders =
+                //    localDataService.BuildSmartPlaceholderMapFromKeys(
+                //        extractedKeys,
+                //        currYearData,
+                //        prevYearData,
+                //        januaryBeginningDataCY,
+                //        januaryBeginningDataPY,
+                //        cumulativeCYData,
+                //        cumulativePYData
+                //    );
+
+                // 13) Build raw computed dictionary first
+                Dictionary<string, string> computedValues =
+                    localDataService.BuildSmartPlaceholderMapFromKeys(
+                        extractedKeys,
+                        currYearData,
+                        prevYearData,
+                        januaryBeginningDataCY,
+                        januaryBeginningDataPY,
+                        cumulativeCYData,
+                        cumulativePYData
+                    );
+
+                // 14) Use Gemini to remap placeholders using AI
+                string geminiApiKey = ConfigurationManager.AppSettings["GeminiApiKey"];
+                if (string.IsNullOrWhiteSpace(geminiApiKey))
+                    throw new PXException("Gemini API key not found in config.");
+
+                TraceLogger.Info("🤖 Sending extracted placeholders and computed values to Gemini...");
+                Dictionary<string, string> finalPlaceholders = GeminiPlaceholderMatcher
+                    .MatchPlaceholdersWithGeminiAsync(extractedKeys, computedValues, geminiApiKey)
+                    .GetAwaiter().GetResult();
+
+                TraceLogger.Info($"✅ Final placeholders re-mapped using Gemini AI. Count: {finalPlaceholders.Count}");
+
+
+
+                // Log matched and unmatched placeholders
+                foreach (var key in extractedKeys)
                 {
-                    calculator = new PlaceholderCalculationService.IYRESPlaceholderCalculator();
-                }
-                else if (tenantName.Equals("LPK", StringComparison.OrdinalIgnoreCase))
-                {
-                    calculator = new PlaceholderCalculationService.LPKPlaceholderCalculator();
-                }
-                else if (tenantName.Equals("IKMA", StringComparison.OrdinalIgnoreCase))
-                {
-                    calculator = new PlaceholderCalculationService.IKMAPlaceholderCalculator(_baseUrl, authService, tenantName);
-                }
-                else if (tenantName.Equals("Company", StringComparison.OrdinalIgnoreCase))
-                {
-                    calculator = new PlaceholderCalculationService.TESTPlaceholderCalculator();
-                }
-                else
-                {
-                    throw new PXException(Messages.NoCalculation);
+                    if (!finalPlaceholders.ContainsKey(key))
+                    {
+                        //TraceLogger.Error($"⚠️ Placeholder {key} was extracted but has no mapped value!");
+                    }
+                    else
+                    {
+                        //TraceLogger.Info($"✅ Mapped: {key} = {finalPlaceholders[key]}");
+                    }
                 }
 
                 // 16a) Fetch composite key-based data
                 var cyCompositeData = localDataService.FetchCompositeKeyData(selectedBranch, selectedOrganization, selectedLedger, selectedPeriod);
                 var pyCompositeData = localDataService.FetchCompositeKeyData(selectedBranch, selectedOrganization, selectedLedger, prevYearPeriod);
+                
+                
+
+
+
+                // 14) Aggregate these data sets into a base dictionary of placeholders
+                //Dictionary<string, string> basePlaceholders = GetPlaceholderData(
+                //    currYearData,
+                //    prevYearData,
+                //    januaryBeginningDataPY,
+                //    januaryBeginningDataCY,
+                //    cumulativeCYData,
+                //    cumulativePYData
+                //);
+
+                // 15) Use a specialized placeholder calculator, based on the tenant
+                //PlaceholderCalculationService.IPlaceholderCalculator calculator;
+                //if (tenantName.Equals("IYRES", StringComparison.OrdinalIgnoreCase))
+                //{
+                //    calculator = new PlaceholderCalculationService.IYRESPlaceholderCalculator();
+                //}
+                //else if (tenantName.Equals("LPK", StringComparison.OrdinalIgnoreCase))
+                //{
+                //    calculator = new PlaceholderCalculationService.LPKPlaceholderCalculator();
+                //}
+                //else if (tenantName.Equals("IKMA", StringComparison.OrdinalIgnoreCase))
+                //{
+                //    calculator = new PlaceholderCalculationService.IKMAPlaceholderCalculator(_baseUrl, authService, tenantName);
+                //}
+                //else if (tenantName.Equals("Company", StringComparison.OrdinalIgnoreCase))
+                //{
+                //    calculator = new PlaceholderCalculationService.TESTPlaceholderCalculator();
+                //}
+                //else
+                //{
+                //    throw new PXException(Messages.NoCalculation);
+                //}
+
+                
 
                 // 16b) Inject into the main FinancialApiData containers
                 currYearData.CompositeKeyData = cyCompositeData.CompositeKeyData;
                 prevYearData.CompositeKeyData = pyCompositeData.CompositeKeyData;
 
                 // 16) Perform final calculations on placeholders
-                Dictionary<string, string> 
-                    finalPlaceholders =
-                    calculator.CalculatePlaceholders(currYearData, prevYearData, basePlaceholders);
-                    finalPlaceholders =
-                    calculator.CalculateCompositePlaceholders(currYearData, prevYearData, finalPlaceholders);
+                //var finalPlaceholders = mappedPlaceholderValues;
+
+
+
+                // 🔥 NEW: Save full financial data for Gemini
+                string financialDataTxtPath = Path.Combine("C:\\Program Files\\Acumatica ERP\\saga\\App_Data\\Logs\\FinancialReports\\Financial Data Logs\\", $"{currentRecord.ReportCD}_{DateTime.Now:yyyyMMdd_HHmmssfff}_FinancialData.txt");
+                SaveFinancialDataToTxt(
+                    currYearData,
+                    prevYearData,
+                    januaryBeginningDataCY,
+                    januaryBeginningDataPY,
+                    cumulativeCYData,
+                    cumulativePYData,
+                    cyCompositeData,
+                    pyCompositeData,
+                    finalPlaceholders, // 🔥 Final placeholder dictionary (computed!)
+                    financialDataTxtPath
+                );
+
+                PXTrace.WriteInformation($"Financial data dictionary saved at {financialDataTxtPath}");
+                TraceLogger.Info($"Financial data dictionary saved at {financialDataTxtPath}");
 
 
 
                 // 17) Merge placeholders into the Word template
+                finalPlaceholders["CY"] = currYear;
+                finalPlaceholders["PY"] = prevYear;
+                TraceLogger.Info($"📌 Injected CY={currYear}, PY={prevYear} for direct template replacement.");
+
+                // Log all placeholders
+                string traceLogPath = Path.Combine("C:\\Program Files\\Acumatica ERP\\saga\\App_Data\\Logs\\FinancialReports\\Final Placeholder Logs\\", $"{currentRecord.ReportCD}_{DateTime.Now:yyyyMMdd_HHmmssfff}_FinalPlaceholders.log");
+                using (var writer = new StreamWriter(traceLogPath, false, Encoding.UTF8))
+                {
+                    writer.WriteLine("=== Final Placeholder Values ===");
+                    foreach (var kvp in finalPlaceholders.OrderBy(k => k.Key))
+                        writer.WriteLine($"{kvp.Key}: {kvp.Value}");
+                }
+                TraceLogger.Info($"📝 Final placeholder values saved to: {traceLogPath}");
+
+
+
                 _wordTemplateService.PopulateTemplate(templatePath, outputPath, finalPlaceholders);
 
                 // 18) Read the merged file from disk, then attach it to the current record as the generated file
@@ -668,6 +772,31 @@ namespace FinancialReport
         {
             return _fileService.SaveGeneratedDocument(fileName, fileContent, currentRecord);
         }
+
+        private void SaveFinancialDataToTxt(
+        FinancialApiData currYearData,
+        FinancialApiData prevYearData,
+        FinancialApiData januaryCYData,
+        FinancialApiData januaryPYData,
+        FinancialApiData cumulativeCYData,
+        FinancialApiData cumulativePYData,
+        FinancialApiData cyCompositeData,
+        FinancialApiData pyCompositeData,
+        Dictionary<string, string> finalPlaceholders, // 🔥 Computed placeholder dictionary!
+        string outputFilePath)
+        {
+            using (var writer = new StreamWriter(outputFilePath, false, Encoding.UTF8))
+            {
+                writer.WriteLine("\n=== FinalPlaceholders (Computed) ===");
+                foreach (var kvp in finalPlaceholders.OrderBy(k => k.Key))
+                {
+                    writer.WriteLine($"{kvp.Key}: {kvp.Value}");
+                }
+            }
+        }
+
+
+
 
         #endregion
 

@@ -78,6 +78,7 @@
     <Compile Include="Services\CredentialProvider.cs" />
     <Compile Include="Services\FileService.cs" />
     <Compile Include="Services\FinancialDataService.cs" />
+    <Compile Include="Services\GeminiPlaceholderMatcher.cs" />
     <Compile Include="Services\PlaceholderCalculationService.cs" />
     <Compile Include="Services\WordTemplateService.cs" />
   </ItemGroup>
