@@ -190,7 +190,9 @@ namespace FinancialReport.Services
                 foreach (Match match in matches)
                 {
                     string placeholderWithBraces = match.Value;
-                    if (data.TryGetValue(placeholderWithBraces, out string replacement))
+                    string key = placeholderWithBraces.Trim('{', '}').Trim();
+
+                    if (data.TryGetValue(key, out string replacement))
                     {
                         runText = runText.Replace(placeholderWithBraces, replacement);
                         changed = true;
@@ -201,6 +203,7 @@ namespace FinancialReport.Services
                     textElement.Text = runText;
             }
         }
+
 
         private void MergeRunsWithSameFormatting(Paragraph paragraph)
         {

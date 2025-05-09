@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -6,6 +7,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using FinancialReport.Helper;
 using Newtonsoft.Json.Linq;
 using PX.Data;
@@ -420,119 +422,134 @@ namespace FinancialReport.Services
         }
 
         public Dictionary<string, string> BuildSmartPlaceholderMapFromKeys(
-            List<string> keys,
-            FinancialApiData cyData,
-            FinancialApiData pyData,
-            FinancialApiData janCY,
-            FinancialApiData janPY,
-            FinancialApiData rangeCY,
-            FinancialApiData rangePY)
+        List<string> keys,
+        FinancialApiData cyData,
+        FinancialApiData pyData,
+        FinancialApiData janCY,
+        FinancialApiData janPY,
+        FinancialApiData rangeCY,
+        FinancialApiData rangePY)
         {
-            var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var dict = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (var key in keys)
+            Parallel.ForEach(keys, key =>
             {
-                string cleanKey = key.Trim('{', '}');
-
-                // Match: CreditSum3_B1234_CY
-                var sumMatch = Regex.Match(cleanKey, @"^(CreditSum|DebitSum|BegSum|Sum)(\d)_(.+)_(CY|PY)$", RegexOptions.IgnoreCase);
-                if (sumMatch.Success)
+                try
                 {
-                    var type = sumMatch.Groups[1].Value.ToLower();
-                    int level = int.Parse(sumMatch.Groups[2].Value);
-                    string prefix = sumMatch.Groups[3].Value;
-                    string yearType = sumMatch.Groups[4].Value.ToUpper();
+                    string cleanKey = key.Trim('{', '}');
 
-                    var source = yearType == "CY" ? (type == "begsum" ? janCY : (type == "debitsum" || type == "creditsum" ? rangeCY : cyData)) :
-                                                    (type == "begsum" ? janPY : (type == "debitsum" || type == "creditsum" ? rangePY : pyData));
-
-                    decimal sum = 0;
-                    foreach (var kvp in source.AccountData)
+                    // Match: CreditSum3_B1234_CY
+                    var sumMatch = Regex.Match(cleanKey, @"^(CreditSum|DebitSum|BegSum|Sum)(\d)_(.+)_(CY|PY)$", RegexOptions.IgnoreCase);
+                    if (sumMatch.Success)
                     {
-                        if (kvp.Key.Length >= level && kvp.Key.Substring(0, level) == prefix)
+                        var type = sumMatch.Groups[1].Value.ToLower();
+                        int level = int.Parse(sumMatch.Groups[2].Value);
+                        string prefix = sumMatch.Groups[3].Value;
+                        string yearType = sumMatch.Groups[4].Value.ToUpper();
+
+                        var source = yearType == "CY"
+                            ? (type == "begsum" ? janCY : (type == "debitsum" || type == "creditsum" ? rangeCY : cyData))
+                            : (type == "begsum" ? janPY : (type == "debitsum" || type == "creditsum" ? rangePY : pyData));
+
+                        decimal sum = 0;
+                        foreach (var kvp in source.AccountData)
                         {
-                            var data = kvp.Value;
-                            switch (type)
+                            if (kvp.Key.Length >= level && kvp.Key.Substring(0, level) == prefix)
                             {
-                                case "debitsum":
-                                    sum += data.Debit;
+                                var data = kvp.Value;
+                                switch (type)
+                                {
+                                    case "debitsum":
+                                        sum += data.Debit;
+                                        break;
+                                    case "creditsum":
+                                        sum += data.Credit;
+                                        break;
+                                    case "begsum":
+                                        sum += data.BeginningBalance;
+                                        break;
+                                    default:
+                                        sum += data.EndingBalance;
+                                        break;
+                                }
+                            }
+                        }
+
+                        dict[key] = sum.ToString("#,##0");
+                        return;
+                    }
+
+                    // Match: A81101_Jan1_PY
+                    var janMatch = Regex.Match(cleanKey, @"^(.+)_Jan1_(CY|PY)$", RegexOptions.IgnoreCase);
+                    if (janMatch.Success)
+                    {
+                        var acct = janMatch.Groups[1].Value;
+                        var yearType = janMatch.Groups[2].Value.ToUpper();
+                        var source = yearType == "CY" ? janCY : janPY;
+
+                        if (source.AccountData.TryGetValue(acct, out var data))
+                        {
+                            dict[key] = data.BeginningBalance.ToString("#,##0");
+                        }
+
+                        return;
+                    }
+
+                    // Match: B1234_credit_CY
+                    var partMatch = Regex.Match(cleanKey, @"^(.+?)_(credit|debit|ending)_(CY|PY)$", RegexOptions.IgnoreCase);
+                    if (partMatch.Success)
+                    {
+                        var acct = partMatch.Groups[1].Value;
+                        var part = partMatch.Groups[2].Value.ToLower();
+                        var yearType = partMatch.Groups[3].Value.ToUpper();
+                        var source = yearType == "CY" ? rangeCY : rangePY;
+
+                        if (source.AccountData.TryGetValue(acct, out var data))
+                        {
+                            switch (part)
+                            {
+                                case "credit":
+                                    dict[key] = data.Credit.ToString("#,##0");
                                     break;
-                                case "creditsum":
-                                    sum += data.Credit;
-                                    break;
-                                case "begsum":
-                                    sum += data.BeginningBalance;
+                                case "debit":
+                                    dict[key] = data.Debit.ToString("#,##0");
                                     break;
                                 default:
-                                    sum += data.EndingBalance;
+                                    dict[key] = data.EndingBalance.ToString("#,##0");
                                     break;
                             }
-
                         }
+
+                        return;
                     }
-                    dict[key] = sum.ToString("#,##0");
-                    continue;
-                }
 
-                // Match: A81101_Jan1_PY
-                var janMatch = Regex.Match(cleanKey, @"^(.+)_Jan1_(CY|PY)$", RegexOptions.IgnoreCase);
-                if (janMatch.Success)
-                {
-                    var acct = janMatch.Groups[1].Value;
-                    var yearType = janMatch.Groups[2].Value.ToUpper();
-                    var source = yearType == "CY" ? janCY : janPY;
-
-                    if (source.AccountData.TryGetValue(acct, out var data))
+                    // Match: A123456_CY / A123456_PY
+                    var basicMatch = Regex.Match(cleanKey, @"^(.+)_(CY|PY)$", RegexOptions.IgnoreCase);
+                    if (basicMatch.Success)
                     {
-                        dict[key] = data.BeginningBalance.ToString("#,##0");
-                    }
-                    continue;
-                }
+                        var acct = basicMatch.Groups[1].Value;
+                        var yearType = basicMatch.Groups[2].Value.ToUpper();
+                        var source = yearType == "CY" ? cyData : pyData;
 
-                // Match: B1234_credit_CY
-                var partMatch = Regex.Match(cleanKey, @"^(.+?)_(credit|debit|ending)_(CY|PY)$", RegexOptions.IgnoreCase);
-                if (partMatch.Success)
-                {
-                    var acct = partMatch.Groups[1].Value;
-                    var part = partMatch.Groups[2].Value.ToLower();
-                    var yearType = partMatch.Groups[3].Value.ToUpper();
-                    var source = yearType == "CY" ? rangeCY : rangePY;
-
-                    if (source.AccountData.TryGetValue(acct, out var data))
-                    {
-                        switch (part)
+                        if (source.AccountData.TryGetValue(acct, out var data))
                         {
-                            case "credit":
-                                dict[key] = data.Credit.ToString("#,##0");
-                                break;
-                            case "debit":
-                                dict[key] = data.Debit.ToString("#,##0");
-                                break;
-                            default:
-                                dict[key] = data.EndingBalance.ToString("#,##0");
-                                break;
+                            dict[key] = data.EndingBalance.ToString("#,##0");
                         }
 
+                        return;
                     }
-                    continue;
-                }
 
-                // Match: A123456_CY / A123456_PY
-                var basicMatch = Regex.Match(cleanKey, @"^(.+)_(CY|PY)$", RegexOptions.IgnoreCase);
-                if (basicMatch.Success)
+                    // Fallback
+                    dict[key] = "0";
+                }
+                catch (Exception ex)
                 {
-                    var acct = basicMatch.Groups[1].Value;
-                    var yearType = basicMatch.Groups[2].Value.ToUpper();
-                    var source = yearType == "CY" ? cyData : pyData;
-
-                    if (source.AccountData.TryGetValue(acct, out var data))
-                    {
-                        dict[key] = data.EndingBalance.ToString("#,##0");
-                    }
+                    PXTrace.WriteWarning($"[Parallel Placeholder] Failed to process key '{key}': {ex.Message}");
+                    dict[key] = "0";
                 }
-            }
+            });
 
-            return dict;
+            return new Dictionary<string, string>(dict, StringComparer.OrdinalIgnoreCase);
         }
 
 

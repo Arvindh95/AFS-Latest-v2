@@ -20,7 +20,6 @@ namespace FinancialReport
     public abstract class companyNum : PX.Data.BQL.BqlInt.Field<companyNum> { }
     #endregion
 
-
     #region ReportID
     [PXDBIdentity(IsKey = true)]
     [PXUIField(DisplayName = "Report ID", Visible = false)]
@@ -30,7 +29,6 @@ namespace FinancialReport
 
     #region ReportCD
     [PXDBString(50, IsUnicode = true)]      
-    [PXDefault]
     [PXUIField(DisplayName = "Template Name")]
     public virtual string ReportCD { get; set; }
     public abstract class reportCD : PX.Data.BQL.BqlString.Field<reportCD> { }       
@@ -157,19 +155,17 @@ namespace FinancialReport
 
     #region UploadedFileID
     [PXDBGuid]
-    [PXUIField(DisplayName = "Uploaded File ID", Enabled = false)]
+    [PXUIField(DisplayName = "Uploaded File ID", Enabled = false, Visible = false)]
     public virtual Guid? UploadedFileID { get; set; }
     public abstract class uploadedFileID : PX.Data.BQL.BqlGuid.Field<uploadedFileID> { }
     #endregion
 
-
     #region UploadedFileIDDisplay
     [PXDBString(225, IsUnicode = true)]
-    [PXUIField(DisplayName = "Uploaded File ID (Display Only)", Enabled = false)]
+    [PXUIField(DisplayName = "Uploaded File ID (Display Only)", Enabled = false, Visible = false)]
     public virtual string UploadedFileIDDisplay { get; set; }
     public abstract class uploadedFileIDDisplay : PX.Data.BQL.BqlString.Field<uploadedFileIDDisplay> { }
     #endregion
-
 
     #region Status
         [PXDBString(20, IsUnicode = true)]

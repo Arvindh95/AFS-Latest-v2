@@ -22,6 +22,7 @@ using PX.Data.Update;
 using System.Collections.Concurrent;
 using System.Threading.Tasks;
 using FinancialReport.Helper;
+using System.Text.RegularExpressions;
 
 namespace FinancialReport
 {
@@ -35,6 +36,7 @@ namespace FinancialReport
         {
             _fileService = new FileService(this);
             _wordTemplateService = new WordTemplateService();
+            FinancialReport.Current = null;
         }
         #endregion
 
@@ -52,6 +54,7 @@ namespace FinancialReport
         #endregion
 
         public SelectFrom<FLRTFinancialReport>.View FinancialReport;
+      
 
         #region Events / Actions
 
@@ -85,42 +88,105 @@ namespace FinancialReport
             }
         }
 
+        //protected void FLRTFinancialReport_RowSelected(PXCache cache, PXRowSelectedEventArgs e)
+        //{
+        //    var row = (FLRTFinancialReport)e.Row;
+        //    if (row == null || row.Noteid == null) return;
+
+        //    var file = PXSelectJoin<UploadFile,
+        //        InnerJoin<NoteDoc, On<UploadFile.fileID, Equal<NoteDoc.fileID>>>,
+        //        Where<NoteDoc.noteID, Equal<Required<NoteDoc.noteID>>>>
+        //        .Select(this, row.Noteid)
+        //        .RowCast<UploadFile>()
+        //        .OrderByDescending(f => f.CreatedDateTime)
+        //        .FirstOrDefault(f => f.Name != null && f.Name.Contains("FRTemplate")); // ✅ Add this filter
+
+        //    //if (file != null && row.UploadedFileIDDisplay != file.FileID.ToString())
+        //    //{
+        //    //    cache.SetValue<FLRTFinancialReport.uploadedFileIDDisplay>(row, file.FileID.ToString());
+        //    //    cache.MarkUpdated(row);
+        //    //    cache.IsDirty = true;
+        //    //}
+        //}
+
         protected void FLRTFinancialReport_RowSelected(PXCache cache, PXRowSelectedEventArgs e)
         {
             var row = (FLRTFinancialReport)e.Row;
-            if (row == null || row.Noteid == null) return;
+            if (row == null) return;
 
-            var file = PXSelectJoin<UploadFile,
-                InnerJoin<NoteDoc, On<UploadFile.fileID, Equal<NoteDoc.fileID>>>,
-                Where<NoteDoc.noteID, Equal<Required<NoteDoc.noteID>>>>
-                .Select(this, row.Noteid)
-                .RowCast<UploadFile>()
-                .OrderByDescending(f => f.CreatedDateTime)
-                .FirstOrDefault(f => f.Name != null && f.Name.Contains("FRTemplate")); // ✅ Add this filter
+            // ✅ Determine if any report is in progress
+            bool anyInProgress = FinancialReport.Cache.Cached
+                .Cast<FLRTFinancialReport>()
+                .Any(r => r.Status == ReportStatus.InProgress);
 
-            if (file != null && row.UploadedFileIDDisplay != file.FileID.ToString())
+            // ✅ Disable this row's fields if any report is in progress
+            PXUIFieldAttribute.SetEnabled(cache, row, !anyInProgress);
+
+            // ✅ Optional: keep NoteID/file logic here
+            if (row.Noteid != null)
             {
-                cache.SetValue<FLRTFinancialReport.uploadedFileIDDisplay>(row, file.FileID.ToString());
-                cache.MarkUpdated(row);
+                var file = PXSelectJoin<UploadFile,
+                    InnerJoin<NoteDoc, On<UploadFile.fileID, Equal<NoteDoc.fileID>>>,
+                    Where<NoteDoc.noteID, Equal<Required<NoteDoc.noteID>>>>
+                    .Select(this, row.Noteid)
+                    .RowCast<UploadFile>()
+                    .OrderByDescending(f => f.CreatedDateTime)
+                    .FirstOrDefault(f => f.Name != null && f.Name.Contains("FRTemplate"));
             }
+
+            // ✅ Disable actions if any report is running
+            GenerateReport.SetEnabled(!anyInProgress);
+            DownloadReport.SetEnabled(!anyInProgress);
         }
 
 
 
-        protected void FLRTFinancialReport_RowUpdated(PXCache cache, PXRowUpdatedEventArgs e)
+
+        //protected void FLRTFinancialReport_RowUpdated(PXCache cache, PXRowUpdatedEventArgs e)
+        //{
+        //    var row = (FLRTFinancialReport)e.Row;
+
+        //    // If display field is set and valid, sync it into the DB field
+        //    if (!string.IsNullOrEmpty(row?.UploadedFileIDDisplay)
+        //        && Guid.TryParse(row.UploadedFileIDDisplay, out var parsedGuid)
+        //        && row.UploadedFileID != parsedGuid)
+        //    {
+        //        cache.SetValue<FLRTFinancialReport.uploadedFileID>(row, parsedGuid);
+        //        cache.MarkUpdated(row); // Optional: flag it as dirty so it's saved
+        //    }
+        //}
+
+        protected virtual void FLRTFinancialReport_RowInserted(PXCache sender, PXRowInsertedEventArgs e)
         {
-            var row = (FLRTFinancialReport)e.Row;
+            // Save the inserted row to DB
+            this.Actions.PressSave();
 
-            // If display field is set and valid, sync it into the DB field
-            if (!string.IsNullOrEmpty(row?.UploadedFileIDDisplay)
-                && Guid.TryParse(row.UploadedFileIDDisplay, out var parsedGuid)
-                && row.UploadedFileID != parsedGuid)
-            {
-                cache.SetValue<FLRTFinancialReport.uploadedFileID>(row, parsedGuid);
-                cache.MarkUpdated(row); // Optional: flag it as dirty so it's saved
-            }
+            // Deselect and clear form
+            FinancialReport.Current = null;                  // Unbind from the form
+            FinancialReport.Cache.Clear();                   // Clear cached view
+            FinancialReport.Cache.ClearQueryCache();         // Clear query results
+            FinancialReport.View.Clear();                    // Ensure no selection reappears
         }
 
+
+
+        //public PXSelect<NoteDoc> NoteDocs;
+
+        //protected virtual void NoteDoc_RowInserted(PXCache cache, PXRowInsertedEventArgs e)
+        //{
+        //    var link = (NoteDoc)e.Row;
+        //    var cur = FinancialReport.Current;
+
+        //    if (cur == null || link?.NoteID != cur.Noteid)
+        //        return;
+
+        //    // Update only the display field so the Save button lights up
+        //    cur.UploadedFileIDDisplay = link.FileID.ToString();
+
+        //    // Set the status to updated and mark dirty
+        //    FinancialReport.Update(cur);         // this sets PXEntryStatus.Updated
+        //    FinancialReport.Cache.IsDirty = true; // this enables the Save button
+        //
 
         public PXSave<FLRTFinancialReport> Save;
         public PXCancel<FLRTFinancialReport> Cancel;
@@ -357,6 +423,76 @@ namespace FinancialReport
 
                 // NEW STEP: Extract placeholders from template
                 List<string> extractedKeys = _wordTemplateService.ExtractPlaceholderKeys(templatePath);
+
+                var requiredAccounts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var requiredPrefixes = new Dictionary<int, HashSet<string>>();
+
+                foreach (var key in extractedKeys)
+                {
+                    string clean = key.Trim('{', '}');
+
+                    // Match Sum placeholders: DebitSum3_A12_CY
+                    var sumMatch = Regex.Match(clean, @"^(CreditSum|DebitSum|BegSum|Sum)(\d)_(.+)_(CY|PY)$", RegexOptions.IgnoreCase);
+                    if (sumMatch.Success)
+                    {
+                        int level = int.Parse(sumMatch.Groups[2].Value);
+                        string prefix = sumMatch.Groups[3].Value;
+
+                        if (!requiredPrefixes.ContainsKey(level))
+                            requiredPrefixes[level] = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                        requiredPrefixes[level].Add(prefix);
+                        continue;
+                    }
+
+                    // Match direct accounts: A11101_credit_CY, A81101_CY, etc.
+                    var match = Regex.Match(clean, @"^([A-Z0-9]+)", RegexOptions.IgnoreCase);
+                    if (match.Success)
+                        requiredAccounts.Add(match.Groups[1].Value);
+                }
+
+                // 🔍 Log extracted filters
+                TraceLogger.Info("📌 Required exact accounts:");
+                foreach (var acct in requiredAccounts)
+                    TraceLogger.Info("  - " + acct);
+
+                TraceLogger.Info("📌 Required prefixes:");
+                foreach (var kv in requiredPrefixes)
+                    foreach (var prefix in kv.Value)
+                        TraceLogger.Info($"  - Level {kv.Key}: {prefix}");
+                void FilterAccounts(FinancialApiData data)
+                {
+                    var filtered = new Dictionary<string, FinancialPeriodData>(StringComparer.OrdinalIgnoreCase);
+
+                    foreach (var kvp in data.AccountData)
+                    {
+                        string account = kvp.Key;
+
+                        if (requiredAccounts.Contains(account))
+                        {
+                            filtered[account] = kvp.Value;
+                            continue;
+                        }
+
+                        foreach (var kv in requiredPrefixes)
+                        {
+                            int level = kv.Key;
+                            foreach (var prefix in kv.Value)
+                            {
+                                if (account.Length >= level &&
+                                    account.Substring(0, level).Equals(prefix, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    filtered[account] = kvp.Value;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    data.AccountData = filtered;
+                }
+
+
                 TraceLogger.Info($"🔍 Extracted {extractedKeys.Count} placeholder keys from template");             
                 TraceLogger.Info("✅ Placeholder dictionary built using direct CY/PY account values only.");
 
@@ -384,9 +520,36 @@ namespace FinancialReport
                 TraceLogger.Info($"Fetching PY cumulative data from {fromPeriodPY} to {toPeriodPY}");
                 var cumulativePYData = localDataService.FetchRangeApiData(selectedBranch, selectedOrganization, selectedLedger, fromPeriodPY, toPeriodPY);
 
+                FilterAccounts(currYearData);
+                FilterAccounts(prevYearData);
+                FilterAccounts(januaryBeginningDataCY);
+                FilterAccounts(januaryBeginningDataPY);
+                FilterAccounts(cumulativeCYData);
+                FilterAccounts(cumulativePYData);
 
+
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                ///Uncomment to Use Normal process///
                 // 💡 Now it's safe to call this:
-                //Dictionary<string, string> finalPlaceholders =
+                Dictionary<string, string> finalPlaceholders =
+                    localDataService.BuildSmartPlaceholderMapFromKeys(
+                        extractedKeys,
+                        currYearData,
+                        prevYearData,
+                        januaryBeginningDataCY,
+                        januaryBeginningDataPY,
+                        cumulativeCYData,
+                        cumulativePYData
+                    );
+                ///Till Here///
+
+                sw.Stop();
+                PXTrace.WriteInformation($"⏱️ Placeholder mapping completed in {sw.ElapsedMilliseconds} ms");
+                TraceLogger.Info($"⏱️ Placeholder mapping completed in {sw.ElapsedMilliseconds} ms");
+
+                ///Uncomment to Use AI process///
+                //// 13) Build raw computed dictionary first
+                //Dictionary<string, string> computedValues =
                 //    localDataService.BuildSmartPlaceholderMapFromKeys(
                 //        extractedKeys,
                 //        currYearData,
@@ -397,30 +560,18 @@ namespace FinancialReport
                 //        cumulativePYData
                 //    );
 
-                // 13) Build raw computed dictionary first
-                Dictionary<string, string> computedValues =
-                    localDataService.BuildSmartPlaceholderMapFromKeys(
-                        extractedKeys,
-                        currYearData,
-                        prevYearData,
-                        januaryBeginningDataCY,
-                        januaryBeginningDataPY,
-                        cumulativeCYData,
-                        cumulativePYData
-                    );
+                //// 14) Use Gemini to remap placeholders using AI
+                //string geminiApiKey = ConfigurationManager.AppSettings["GeminiApiKey"];
+                //if (string.IsNullOrWhiteSpace(geminiApiKey))
+                //    throw new PXException("Gemini API key not found in config.");
 
-                // 14) Use Gemini to remap placeholders using AI
-                string geminiApiKey = ConfigurationManager.AppSettings["GeminiApiKey"];
-                if (string.IsNullOrWhiteSpace(geminiApiKey))
-                    throw new PXException("Gemini API key not found in config.");
+                //TraceLogger.Info("🤖 Sending extracted placeholders and computed values to Gemini...");
+                //Dictionary<string, string> finalPlaceholders = GeminiPlaceholderMatcher
+                //    .MatchPlaceholdersWithGeminiAsync(extractedKeys, computedValues, geminiApiKey)
+                //    .GetAwaiter().GetResult();
 
-                TraceLogger.Info("🤖 Sending extracted placeholders and computed values to Gemini...");
-                Dictionary<string, string> finalPlaceholders = GeminiPlaceholderMatcher
-                    .MatchPlaceholdersWithGeminiAsync(extractedKeys, computedValues, geminiApiKey)
-                    .GetAwaiter().GetResult();
-
-                TraceLogger.Info($"✅ Final placeholders re-mapped using Gemini AI. Count: {finalPlaceholders.Count}");
-
+                //TraceLogger.Info($"✅ Final placeholders re-mapped using Gemini AI. Count: {finalPlaceholders.Count}");
+                ///Till Here///
 
 
                 // Log matched and unmatched placeholders
@@ -523,7 +674,8 @@ namespace FinancialReport
                 }
                 TraceLogger.Info($"📝 Final placeholder values saved to: {traceLogPath}");
 
-
+                finalPlaceholders["{{CY}}"] = currYear;
+                finalPlaceholders["{{PY}}"] = prevYear;
 
                 _wordTemplateService.PopulateTemplate(templatePath, outputPath, finalPlaceholders);
 
@@ -538,6 +690,7 @@ namespace FinancialReport
                 currentRecord.Status = ReportStatus.Completed;
                 FinancialReport.Update(currentRecord);
                 Actions.PressSave();
+                FinancialReport.View.RequestRefresh();
             }
             catch (Exception ex)
             {
@@ -550,6 +703,7 @@ namespace FinancialReport
                     currentRecord.Status = ReportStatus.Failed;
                     FinancialReport.Update(currentRecord);
                     Actions.PressSave();
+                    FinancialReport.View.RequestRefresh();
                 }
                 throw new PXException(Messages.FailedToRetrieveFile);
             }
@@ -807,16 +961,23 @@ namespace FinancialReport
         [PXUIField(DisplayName = "Download Report", MapEnableRights = PXCacheRights.Select, Visible = true)]
         protected virtual IEnumerable downloadReport(PXAdapter adapter)
         {
-            var currentRecord = FinancialReport.Current;
-            if (currentRecord == null)
+            var selectedRecord = FinancialReport.Cache.Cached
+                .Cast<FLRTFinancialReport>()
+                .FirstOrDefault(x => x.Selected == true);
+
+            if (selectedRecord == null)
                 throw new PXException(Messages.NoRecordIsSelected);
 
-            if (currentRecord.GeneratedFileID == null)
+            if (selectedRecord.GeneratedFileID == null)
                 throw new PXException(Messages.NoGeneratedFile);
 
-            throw new PXRedirectToFileException(currentRecord.GeneratedFileID.Value, 1, false);
+            //throw new PXRedirectToFileException(selectedRecord.GeneratedFileID.Value, true, false);
+            throw new PXRedirectToFileException(selectedRecord.GeneratedFileID.Value, 1, false);
         }
 
+
+
+        
         #endregion
 
         #region Company / Tenant Mapping
