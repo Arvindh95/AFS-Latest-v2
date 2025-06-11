@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using DocumentFormat.OpenXml.Drawing.Charts;
-using FinancialReport.Helper;
+//using FinancialReport.Helper;
 using PX.Common;
 using PX.Data;
 
@@ -134,20 +134,20 @@ namespace FinancialReport.Services
                 foreach (var key in cyComposite.Keys)
                 {
                     PXTrace.WriteInformation($"CY Key in Dictionary: {key}");
-                    TraceLogger.Info($"CY Key in Dictionary: {key}");
+                    //TraceLogger.Info($"CY Key in Dictionary: {key}");
                 }
 
                 foreach (var key in pyComposite.Keys)
                 {
                     //PXTrace.WriteInformation($"PY Key in Dictionary: {key}");
-                    TraceLogger.Info($"PY Key in Dictionary: {key}");
+                    //TraceLogger.Info($"PY Key in Dictionary: {key}");
                 }
 
                 if (cyComposite.TryGetValue(compositeKeyCY, out var cy))
                 {
                     placeholders["{{X_A11101_CY}}"] = cy.EndingBalance.ToString("#,##0");
                     PXTrace.WriteInformation($"[CY] Matched Key: {compositeKeyCY}");
-                    PXTrace.WriteInformation($"[CY] EndingBalance: {cy.EndingBalance}, Debit: {cy.Debit}, Credit: {cy.Credit}, Description: {cy.Description}");
+                    PXTrace.WriteInformation($"[CY] EndingBalance: {cy.EndingBalance}, Debit: {cy.Debit}, Credit: {cy.Credit}");
                 }
                 else
                 {
@@ -158,7 +158,7 @@ namespace FinancialReport.Services
                 {
                     placeholders["{{X_A11101_PY}}"] = py.EndingBalance.ToString("#,##0");
                     PXTrace.WriteInformation($"[PY] Matched Key: {compositeKeyPY}");
-                    PXTrace.WriteInformation($"[PY] EndingBalance: {py.EndingBalance}, Debit: {py.Debit}, Credit: {py.Credit}, Description: {py.Description}");
+                    PXTrace.WriteInformation($"[PY] EndingBalance: {py.EndingBalance}, Debit: {py.Debit}, Credit: {py.Credit}");
                 }
                 else
                 {

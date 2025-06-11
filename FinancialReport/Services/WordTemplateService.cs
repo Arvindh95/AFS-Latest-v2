@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
-using FinancialReport.Helper;
+//using FinancialReport.Helper;
 using Newtonsoft.Json.Linq;
 using Newtonsoft.Json;
 using PX.Data;
@@ -63,7 +63,7 @@ namespace FinancialReport.Services
             catch (Exception ex)
             {
                 PXTrace.WriteError($"Error processing template: {ex.Message}");
-                TraceLogger.Error($"Error processing template: {ex.Message}");
+                //TraceLogger.Error($"Error processing template: {ex.Message}");
                 throw;
             }
         }
@@ -84,7 +84,7 @@ namespace FinancialReport.Services
                 catch (Exception ex)
                 {
                     PXTrace.WriteError($"Error processing paragraph: {ex.Message}");
-                    TraceLogger.Error($"Error processing paragraph: {ex.Message}");
+                    //TraceLogger.Error($"Error processing paragraph: {ex.Message}");
                 }
             });
         }
@@ -98,7 +98,7 @@ namespace FinancialReport.Services
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            TraceLogger.Info($"Extracted {keys.Count} placeholder keys from template:");
+            //TraceLogger.Info($"Extracted {keys.Count} placeholder keys from template:");
             //foreach (var key in keys)
             //    TraceLogger.Info($" - {key}");
 
@@ -124,7 +124,7 @@ namespace FinancialReport.Services
             catch (Exception ex)
             {
                 PXTrace.WriteError($"Error extracting placeholders: {ex.Message}");
-                TraceLogger.Error($"Error extracting placeholders: {ex.Message}");
+                //TraceLogger.Error($"Error extracting placeholders: {ex.Message}");
             }
             return placeholders;
         }
@@ -157,22 +157,24 @@ namespace FinancialReport.Services
 
         public void SaveExtractedPlaceholdersToTxt(string templatePath, string outputTxtPath)
         {
-            try
-            {
-                var placeholders = ExtractPlaceholders(templatePath)
-                    .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
-                    .ToList();
 
-                File.WriteAllLines(outputTxtPath, placeholders);
+            // Disabled: placeholder logging to .txt is not required
+            //try
+            //{
+            //    var placeholders = ExtractPlaceholders(templatePath)
+            //        .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
+            //        .ToList();
 
-                TraceLogger.Info($"✅ Placeholders saved to: {outputTxtPath} ({placeholders.Count} entries)");
-            }
-            catch (Exception ex)
-            {
-                PXTrace.WriteError($"❌ Failed to save placeholders: {ex.Message}");
-                TraceLogger.Error($"❌ Failed to save placeholders: {ex.Message}");
-                throw;
-            }
+            //    File.WriteAllLines(outputTxtPath, placeholders);
+
+            //    //TraceLogger.Info($"✅ Placeholders saved to: {outputTxtPath} ({placeholders.Count} entries)");
+            //}
+            //catch (Exception ex)
+            //{
+            //    PXTrace.WriteError($"❌ Failed to save placeholders: {ex.Message}");
+            //    //TraceLogger.Error($"❌ Failed to save placeholders: {ex.Message}");
+            //    throw;
+            //}
         }
 
         private void ReplacePlaceholdersInRuns(Paragraph paragraph, Dictionary<string, string> data)

@@ -6,7 +6,7 @@ using Newtonsoft.Json.Linq;
 using System.Configuration;
 using Newtonsoft.Json;
 using System.Collections.Generic;
-using FinancialReport.Helper;
+//using FinancialReport.Helper; 
 using PX.Data;
 
 
@@ -93,8 +93,8 @@ namespace FinancialReport.Services
                 if (string.IsNullOrWhiteSpace(rawText))
                     throw new Exception("Gemini returned empty or null text.");
 
-                TraceLogger.Info("🔍 Gemini returned raw text:");
-                TraceLogger.Info(rawText);
+                //TraceLogger.Info("🔍 Gemini returned raw text:");
+                //TraceLogger.Info(rawText);
 
                 // Remove Markdown-style ```json ... ``` wrapper if present
                 if (rawText.StartsWith("```json"))
@@ -107,8 +107,8 @@ namespace FinancialReport.Services
             }
             catch (Exception ex)
             {
-                TraceLogger.Error($"Gemini JSON parsing failed: {ex.Message}");
-                TraceLogger.Error($"Raw Gemini response: {rawResponseJson}");
+                //TraceLogger.Error($"Gemini JSON parsing failed: {ex.Message}");
+                //TraceLogger.Error($"Raw Gemini response: {rawResponseJson}");
                 throw new PXException("Gemini API returned unexpected output.");
             }
         }

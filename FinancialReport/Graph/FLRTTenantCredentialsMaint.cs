@@ -215,20 +215,20 @@ namespace FinancialReport
             }
         }
 
-        public PXAction<FLRTTenantCredentials> forceInsertTest;
-        [PXButton]
-        [PXUIField(DisplayName = "Force Insert Test")]
-        protected void ForceInsertTest()
-        {
-            PXDatabase.Insert<FLRTTenantCredentials>(
-                new PXDataFieldAssign<FLRTTenantCredentials.companyNum>(7),
-                new PXDataFieldAssign<FLRTTenantCredentials.tenantName>("Tenant2"),
-                new PXDataFieldAssign<FLRTTenantCredentials.clientID>(Encoding.UTF8.GetBytes("Client7")),
-                new PXDataFieldAssign<FLRTTenantCredentials.secretID>(Encoding.UTF8.GetBytes("Secret7")),
-                new PXDataFieldAssign<FLRTTenantCredentials.username>(Encoding.UTF8.GetBytes("User7")),
-                new PXDataFieldAssign<FLRTTenantCredentials.password>(Encoding.UTF8.GetBytes("Pass7"))
-            );
-        }
+        //public PXAction<FLRTTenantCredentials> forceInsertTest;
+        //[PXButton]
+        //[PXUIField(DisplayName = "Force Insert Test")]
+        //protected void ForceInsertTest()
+        //{
+        //    PXDatabase.Insert<FLRTTenantCredentials>(
+        //        new PXDataFieldAssign<FLRTTenantCredentials.companyNum>(7),
+        //        new PXDataFieldAssign<FLRTTenantCredentials.tenantName>("Tenant2"),
+        //        new PXDataFieldAssign<FLRTTenantCredentials.clientID>(Encoding.UTF8.GetBytes("Client7")),
+        //        new PXDataFieldAssign<FLRTTenantCredentials.secretID>(Encoding.UTF8.GetBytes("Secret7")),
+        //        new PXDataFieldAssign<FLRTTenantCredentials.username>(Encoding.UTF8.GetBytes("User7")),
+        //        new PXDataFieldAssign<FLRTTenantCredentials.password>(Encoding.UTF8.GetBytes("Pass7"))
+        //    );
+        //}
         #endregion
     }
 }

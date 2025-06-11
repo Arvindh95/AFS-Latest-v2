@@ -8,7 +8,7 @@ namespace FinancialReport.Helper
     public static class TraceLogger
     {
         private static readonly string BaseDirectory = "C:\\Program Files\\Acumatica ERP\\saga\\App_Data\\Logs\\FinancialReports\\Overview Trace\\";
-        private static readonly string LogFileName = $"FinancialReportTrace_{DateTime.Now:yyyyMMdd_HHmmssfff}.log";
+        private static readonly string LogFileName = $"FinancialReportTrace_{DateTime.Now:yyyyMMdd}.log";
         private static readonly string LogPath;
 
         static TraceLogger()

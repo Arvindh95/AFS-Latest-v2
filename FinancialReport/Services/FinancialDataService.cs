@@ -8,7 +8,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
-using FinancialReport.Helper;
+//using FinancialReport.Helper;
 using Newtonsoft.Json.Linq;
 using PX.Data;
 
@@ -34,8 +34,12 @@ namespace FinancialReport.Services
         {
             string accessToken = _authService.AuthenticateAndGetToken();
             string dimensionFilter = BuildDimensionFilter(branch, organization);
-            string filter = $"FinancialPeriod eq '{period}' and {dimensionFilter} and LedgerID eq '{ledger}'";
-            string selectColumns = "Account,BeginningBalance,EndingBalance,Debit,Credit,Description";
+            //string filter = $"FinancialPeriod eq '{period}' and {dimensionFilter} and LedgerID eq '{ledger
+            string baseFilter = $"FinancialPeriod eq '{period}' and {dimensionFilter}";
+            string filter = AppendLedgerFilter(baseFilter, ledger);
+
+
+            string selectColumns = "Account,BeginningBalance,EndingBalance,Debit,Credit";
             int pageSize = 1000;
             int skip = 0;
 
@@ -44,11 +48,15 @@ namespace FinancialReport.Services
             using (HttpClient client = new HttpClient())
             {
                 client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+                client.DefaultRequestHeaders.Accept.Clear();
+                client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
                 while (true)
                 {
-                    string pagedUrl = $"{_baseUrl}/t/{_tenantName}/api/odata/gi/TrialBalance" +
-                                      $"?$filter={filter}&$select={selectColumns}&$top={pageSize}&$skip={skip}";
+                    //string pagedUrl = $"{_baseUrl}/t/{_tenantName}/api/odata/gi/TrialBalance" +
+                    //                  $"?$filter={filter}&$select={selectColumns}&$top={pageSize}&$skip={skip}";
+                    string pagedUrl = $"{_baseUrl}/odata/{_tenantName}/TrialBalance" + $"?$filter={filter}&$select={selectColumns}&$top={pageSize}&$skip={skip}";
+                    PXTrace.WriteInformation("Paged URL (FetchAllApiData): " + pagedUrl);
 
                     HttpResponseMessage response = client.GetAsync(pagedUrl).Result;
                     if (!response.IsSuccessStatusCode)
@@ -59,6 +67,15 @@ namespace FinancialReport.Services
                     }
 
                     string jsonResponse = response.Content.ReadAsStringAsync().Result;
+
+                    // ✅ Safety check before parsing JSON
+                    if (string.IsNullOrWhiteSpace(jsonResponse) || !jsonResponse.TrimStart().StartsWith("{"))
+                    {
+                        PXTrace.WriteError("API returned non-JSON response:");
+                        PXTrace.WriteError(jsonResponse); // Will show XML/HTML error
+                        throw new PXException("OData response was not in JSON format. Check GI name, tenant, or permissions.");
+                    }
+
                     JObject parsed = JObject.Parse(jsonResponse);
                     var results = (parsed["value"] as JArray)?.ToObject<List<JToken>>();
 
@@ -70,17 +87,30 @@ namespace FinancialReport.Services
                     foreach (var item in results)
                     {
                         string accountId = item["Account"]?.ToString();
+
+                        //if (!accountData.ContainsKey(accountId))
+                        //{
+                        //    accountData[accountId] = new FinancialPeriodData
+                        //    {
+                        //        BeginningBalance = item["BeginningBalance"]?.ToObject<decimal>() ?? 0,
+                        //        EndingBalance = item["EndingBalance"]?.ToObject<decimal>() ?? 0,
+                        //        Debit = item["Debit"]?.ToObject<decimal>() ?? 0,
+                        //        Credit = item["Credit"]?.ToObject<decimal>() ?? 0,
+                        //        Description = item["Description"]?.ToString() ?? "No Description"
+                        //    };
+                        //}
+
                         if (!accountData.ContainsKey(accountId))
                         {
-                            accountData[accountId] = new FinancialPeriodData
-                            {
-                                BeginningBalance = item["BeginningBalance"]?.ToObject<decimal>() ?? 0,
-                                EndingBalance = item["EndingBalance"]?.ToObject<decimal>() ?? 0,
-                                Debit = item["Debit"]?.ToObject<decimal>() ?? 0,
-                                Credit = item["Credit"]?.ToObject<decimal>() ?? 0,
-                                Description = item["Description"]?.ToString() ?? "No Description"
-                            };
+                            accountData[accountId] = new FinancialPeriodData();
                         }
+
+                        accountData[accountId].BeginningBalance += item["BeginningBalance"]?.ToObject<decimal>() ?? 0;
+                        accountData[accountId].EndingBalance += item["EndingBalance"]?.ToObject<decimal>() ?? 0;
+                        accountData[accountId].Debit += item["Debit"]?.ToObject<decimal>() ?? 0;
+                        accountData[accountId].Credit += item["Credit"]?.ToObject<decimal>() ?? 0;
+
+
                     }
 
                     skip += pageSize;
@@ -97,8 +127,11 @@ namespace FinancialReport.Services
             string januaryPeriod = "01" + prevYear; // e.g. "012023"
             string accessToken = _authService.AuthenticateAndGetToken();
             string dimensionFilter = BuildDimensionFilter(branch, organization);
-            string filter = $"FinancialPeriod eq '{januaryPeriod}' and {dimensionFilter} and LedgerID eq '{ledger}'";
-            string selectColumns = "Account,BeginningBalance,Description";
+            //string filter = $"FinancialPeriod eq '{januaryPeriod}' and {dimensionFilter} and LedgerID eq '{ledger}'";
+            string baseFilter = $"FinancialPeriod eq '{januaryPeriod}' and {dimensionFilter}";
+            string filter = AppendLedgerFilter(baseFilter, ledger);
+
+            string selectColumns = "Account,BeginningBalance";
             int pageSize = 1000;
             int skip = 0;
 
@@ -107,12 +140,15 @@ namespace FinancialReport.Services
             using (HttpClient client = new HttpClient())
             {
                 client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+                client.DefaultRequestHeaders.Accept.Clear();
+                client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
                 while (true)
                 {
-                    string pagedUrl = $"{_baseUrl}/t/{_tenantName}/api/odata/gi/TrialBalance" +
-                                      $"?$filter={filter}&$select={selectColumns}&$top={pageSize}&$skip={skip}";
-
+                    //string pagedUrl = $"{_baseUrl}/t/{_tenantName}/api/odata/gi/TrialBalance" +
+                    //                  $"?$filter={filter}&$select={selectColumns}&$top={pageSize}&$skip={skip}";
+                    string pagedUrl = $"{_baseUrl}/odata/{_tenantName}/TrialBalance" + $"?$filter={filter}&$select={selectColumns}&$top={pageSize}&$skip={skip}";
+                    PXTrace.WriteInformation("Paged URL (FetchJanuaryBeginningBalance): " + pagedUrl);
                     HttpResponseMessage response = client.GetAsync(pagedUrl).Result;
                     if (!response.IsSuccessStatusCode)
                     {
@@ -122,6 +158,15 @@ namespace FinancialReport.Services
                     }
 
                     string jsonResponse = response.Content.ReadAsStringAsync().Result;
+
+                    // ✅ Safety check before parsing JSON
+                    if (string.IsNullOrWhiteSpace(jsonResponse) || !jsonResponse.TrimStart().StartsWith("{"))
+                    {
+                        PXTrace.WriteError("API returned non-JSON response:");
+                        PXTrace.WriteError(jsonResponse); // Will show XML/HTML error
+                        throw new PXException("OData response was not in JSON format. Check GI name, tenant, or permissions.");
+                    }
+
                     JObject parsed = JObject.Parse(jsonResponse);
                     var results = (parsed["value"] as JArray)?.ToObject<List<JToken>>();
 
@@ -133,15 +178,27 @@ namespace FinancialReport.Services
                     foreach (var item in results)
                     {
                         string accountId = item["Account"]?.ToString();
-                        decimal beginningBalance = item["BeginningBalance"]?.ToObject<decimal>() ?? 0;
-                        string description = item["Description"]?.ToString() ?? "No Description";
 
-                        apiData.AccountData[accountId] = new FinancialPeriodData
+                        decimal beginningBalance = item["BeginningBalance"]?.ToObject<decimal>() ?? 0;
+
+                        if (!apiData.AccountData.ContainsKey(accountId))
                         {
-                            BeginningBalance = beginningBalance,
-                            EndingBalance = beginningBalance,
-                            Description = description
-                        };
+                            apiData.AccountData[accountId] = new FinancialPeriodData();
+                        }
+
+                        apiData.AccountData[accountId].BeginningBalance += beginningBalance;
+                        apiData.AccountData[accountId].EndingBalance += beginningBalance;
+
+
+                        //decimal beginningBalance = item["BeginningBalance"]?.ToObject<decimal>() ?? 0;
+                        //string description = item["Description"]?.ToString() ?? "No Description";
+
+                        //apiData.AccountData[accountId] = new FinancialPeriodData
+                        //{
+                        //    BeginningBalance = beginningBalance,
+                        //    EndingBalance = beginningBalance,
+                        //    Description = description
+                        //};
                     }
 
                     skip += pageSize;
@@ -159,8 +216,10 @@ namespace FinancialReport.Services
             string accessToken = _authService.AuthenticateAndGetToken();
             string dimensionFilter = BuildDimensionFilter(branch, organization);
 
-            string filter = $"FinancialPeriod ge '{fromPeriod}' and FinancialPeriod le '{toPeriod}' and {dimensionFilter} and LedgerID eq '{ledger}'";
-            string selectColumns = "Account,Debit,Credit,Description,FinancialPeriod,EndingBalance,BranchID,OrganizationID";
+            //string filter = $"FinancialPeriod ge '{fromPeriod}' and FinancialPeriod le '{toPeriod}' and {dimensionFilter} and LedgerID eq '{ledger}'";
+            string baseFilter = $"FinancialPeriod ge '{fromPeriod}' and FinancialPeriod le '{toPeriod}' and {dimensionFilter}";
+            string filter = AppendLedgerFilter(baseFilter, ledger);
+            string selectColumns = "Account,Debit,Credit,FinancialPeriod,EndingBalance,BranchID,OrganizationID";
             int pageSize = 1000;
             int skip = 0;
 
@@ -169,12 +228,15 @@ namespace FinancialReport.Services
             using (HttpClient client = new HttpClient())
             {
                 client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+                client.DefaultRequestHeaders.Accept.Clear();
+                client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
                 while (true)
                 {
-                    string pagedUrl = $"{_baseUrl}/t/{_tenantName}/api/odata/gi/TrialBalance" +
-                                      $"?$filter={filter}&$select={selectColumns}&$top={pageSize}&$skip={skip}";
-
+                    //string pagedUrl = $"{_baseUrl}/t/{_tenantName}/api/odata/gi/TrialBalance" +
+                    //                  $"?$filter={filter}&$select={selectColumns}&$top={pageSize}&$skip={skip}";
+                    string pagedUrl = $"{_baseUrl}/odata/{_tenantName}/TrialBalance" + $"?$filter={filter}&$select={selectColumns}&$top={pageSize}&$skip={skip}";
+                    PXTrace.WriteInformation("Paged URL (FetchRangeAPIData): " + pagedUrl);
                     HttpResponseMessage response = client.GetAsync(pagedUrl).Result;
                     if (!response.IsSuccessStatusCode)
                     {
@@ -184,6 +246,15 @@ namespace FinancialReport.Services
                     }
 
                     string jsonResponse = response.Content.ReadAsStringAsync().Result;
+
+                    // ✅ Safety check before parsing JSON
+                    if (string.IsNullOrWhiteSpace(jsonResponse) || !jsonResponse.TrimStart().StartsWith("{"))
+                    {
+                        PXTrace.WriteError("API returned non-JSON response:");
+                        PXTrace.WriteError(jsonResponse); // Will show XML/HTML error
+                        throw new PXException("OData response was not in JSON format. Check GI name, tenant, or permissions.");
+                    }
+
                     JObject parsed = JObject.Parse(jsonResponse);
                     var results = (parsed["value"] as JArray)?.ToObject<List<JToken>>();
 
@@ -197,20 +268,33 @@ namespace FinancialReport.Services
                         string accountId = item["Account"]?.ToString();
                         decimal debit = item["Debit"]?.ToObject<decimal>() ?? 0;
                         decimal credit = item["Credit"]?.ToObject<decimal>() ?? 0;
-                        string description = item["Description"]?.ToString() ?? "No Description";
                         decimal endingBalance = item["EndingBalance"]?.ToObject<decimal>() ?? 0;
 
                         if (!cumulativeDict.ContainsKey(accountId))
                         {
-                            cumulativeDict[accountId] = new FinancialPeriodData
-                            {
-                                Description = description
-                            };
+                            cumulativeDict[accountId] = new FinancialPeriodData();
                         }
 
                         cumulativeDict[accountId].Debit += debit;
                         cumulativeDict[accountId].Credit += credit;
-                        cumulativeDict[accountId].EndingBalance = endingBalance;
+                        cumulativeDict[accountId].EndingBalance += endingBalance;
+
+
+
+                        //string description = item["Description"]?.ToString() ?? "No Description";
+                        //decimal endingBalance = item["EndingBalance"]?.ToObject<decimal>() ?? 0;
+
+                        //if (!cumulativeDict.ContainsKey(accountId))
+                        //{
+                        //    cumulativeDict[accountId] = new FinancialPeriodData
+                        //    {
+                        //        Description = description
+                        //    };
+                        //}
+
+                        //cumulativeDict[accountId].Debit += debit;
+                        //cumulativeDict[accountId].Credit += credit;
+                        //cumulativeDict[accountId].EndingBalance = endingBalance;
                     }
 
                     skip += pageSize;
@@ -233,8 +317,10 @@ namespace FinancialReport.Services
         {
             string accessToken = _authService.AuthenticateAndGetToken();
 
-            string filter = $"FinancialPeriod eq '{period}' and 1 eq 1 and LedgerID eq '{ledger}'";
-            string selectColumns = "Account,Subaccount,BeginningBalance,EndingBalance,Debit,Credit,Description,BranchID,OrganizationID";
+            //string filter = $"FinancialPeriod eq '{period}' and 1 eq 1 and LedgerID eq '{ledger}'";
+            string baseFilter = $"FinancialPeriod eq '{period}' and 1 eq 1";
+            string filter = AppendLedgerFilter(baseFilter, ledger);
+            string selectColumns = "Account,Subaccount,BeginningBalance,EndingBalance,Debit,Credit,BranchID,OrganizationID";
             int pageSize = 1000;
             int skip = 0;
 
@@ -243,12 +329,15 @@ namespace FinancialReport.Services
             using (HttpClient client = new HttpClient())
             {
                 client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+                client.DefaultRequestHeaders.Accept.Clear();
+                client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
                 while (true)
                 {
-                    string pagedUrl = $"{_baseUrl}/t/{_tenantName}/api/odata/gi/TrialBalance" +
-                                      $"?$filter={filter}&$select={selectColumns}&$top={pageSize}&$skip={skip}";
-
+                    //string pagedUrl = $"{_baseUrl}/t/{_tenantName}/api/odata/gi/TrialBalance" +
+                    //                  $"?$filter={filter}&$select={selectColumns}&$top={pageSize}&$skip={skip}";
+                    string pagedUrl = $"{_baseUrl}/odata/{_tenantName}/TrialBalance" + $"?$filter={filter}&$select={selectColumns}&$top={pageSize}&$skip={skip}";
+                    PXTrace.WriteInformation("Paged URL (FetchCompositeKeyData): " + pagedUrl);
                     HttpResponseMessage response = client.GetAsync(pagedUrl).Result;
                     if (!response.IsSuccessStatusCode)
                     {
@@ -258,6 +347,15 @@ namespace FinancialReport.Services
                     }
 
                     string jsonResponse = response.Content.ReadAsStringAsync().Result;
+
+                    // ✅ Safety check before parsing JSON
+                    if (string.IsNullOrWhiteSpace(jsonResponse) || !jsonResponse.TrimStart().StartsWith("{"))
+                    {
+                        PXTrace.WriteError("API returned non-JSON response:");
+                        PXTrace.WriteError(jsonResponse); // Will show XML/HTML error
+                        throw new PXException("OData response was not in JSON format. Check GI name, tenant, or permissions.");
+                    }
+
                     JObject parsed = JObject.Parse(jsonResponse);
                     var results = (parsed["value"] as JArray)?.ToObject<List<JToken>>();
 
@@ -282,7 +380,7 @@ namespace FinancialReport.Services
                             EndingBalance = item["EndingBalance"]?.ToObject<decimal>() ?? 0,
                             Debit = item["Debit"]?.ToObject<decimal>() ?? 0,
                             Credit = item["Credit"]?.ToObject<decimal>() ?? 0,
-                            Description = item["Description"]?.ToString() ?? "No Description"
+                            //Description = item["Description"]?.ToString() ?? "No Description"
                         };
 
                         compositeData[compositeKey] = data;
@@ -307,7 +405,7 @@ namespace FinancialReport.Services
         public decimal FetchEndingBalance(string period, string branch, string organization, string ledger, string account, string subaccount)
         {
             if (string.IsNullOrEmpty(period) || string.IsNullOrEmpty(branch) ||
-                string.IsNullOrEmpty(organization) || string.IsNullOrEmpty(ledger) ||
+                string.IsNullOrEmpty(organization) ||
                 string.IsNullOrEmpty(account) || string.IsNullOrEmpty(subaccount))
             {
                 PXTrace.WriteWarning("FetchEndingBalance called with missing filter parameters.");
@@ -316,9 +414,12 @@ namespace FinancialReport.Services
 
             string accessToken = _authService.AuthenticateAndGetToken();
 
-            string filter =
-                $"FinancialPeriod eq '{period}' and BranchID eq '{branch}' and OrganizationID eq '{organization}' and " +
-                $"LedgerID eq '{ledger}' and Account eq '{account}' and Subaccount eq '{subaccount}'";
+            //string filter =
+            //    $"FinancialPeriod eq '{period}' and BranchID eq '{branch}' and OrganizationID eq '{organization}' and " +
+            //    $"LedgerID eq '{ledger}' and Account eq '{account}' and Subaccount eq '{subaccount}'";
+            string baseFilter =$"FinancialPeriod eq '{period}' and BranchID eq '{branch}' and OrganizationID eq '{organization}' and " +$"Account eq '{account}' and Subaccount eq '{subaccount}'";
+            string filter = AppendLedgerFilter(baseFilter, ledger);
+
 
             string selectColumns = "EndingBalance"; // keep it minimal for performance
 
@@ -329,6 +430,8 @@ namespace FinancialReport.Services
             using (HttpClient client = new HttpClient())
             {
                 client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+                client.DefaultRequestHeaders.Accept.Clear();
+                client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
                 HttpResponseMessage response = client.GetAsync(odataUrl).Result;
                 if (!response.IsSuccessStatusCode)
@@ -339,6 +442,15 @@ namespace FinancialReport.Services
                 }
 
                 string jsonResponse = response.Content.ReadAsStringAsync().Result;
+
+                // ✅ Safety check before parsing JSON
+                if (string.IsNullOrWhiteSpace(jsonResponse) || !jsonResponse.TrimStart().StartsWith("{"))
+                {
+                    PXTrace.WriteError("API returned non-JSON response:");
+                    PXTrace.WriteError(jsonResponse); // Will show XML/HTML error
+                    throw new PXException("OData response was not in JSON format. Check GI name, tenant, or permissions.");
+                }
+
                 JObject parsed = JObject.Parse(jsonResponse);
                 var firstRow = (parsed["value"] as JArray)?.FirstOrDefault();
 
@@ -378,24 +490,31 @@ namespace FinancialReport.Services
             }
         }
 
+        private string AppendLedgerFilter(string baseFilter, string ledger)
+        {
+            return !string.IsNullOrEmpty(ledger)
+                ? $"{baseFilter} and LedgerID eq '{ledger}'"
+                : baseFilter;
+        }
+
 
         public Dictionary<string, string> BuildPlaceholderMapFromKeys(List<string> placeholderKeys,Dictionary<string, FinancialPeriodData> cyData,Dictionary<string, FinancialPeriodData> pyData)
         {
             var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            TraceLogger.Info($"🔍 Building placeholder map from {placeholderKeys.Count} keys...");
+            //TraceLogger.Info($"🔍 Building placeholder map from {placeholderKeys.Count} keys...");
 
             foreach (var key in placeholderKeys)
             {
                 if (string.IsNullOrWhiteSpace(key) || !key.Contains("_"))
                 {
-                    TraceLogger.Error($"⚠️ Skipped invalid placeholder key: '{key}'");
+                    //TraceLogger.Error($"⚠️ Skipped invalid placeholder key: '{key}'");
                     continue;
                 }
 
                 var parts = key.Split('_');
                 if (parts.Length != 2)
                 {
-                    TraceLogger.Error($"⚠️ Malformed placeholder (should be 'CODE_CY' or 'CODE_PY'): '{key}'");
+                    //TraceLogger.Error($"⚠️ Malformed placeholder (should be 'CODE_CY' or 'CODE_PY'): '{key}'");
                     continue;
                 }
 
@@ -417,7 +536,7 @@ namespace FinancialReport.Services
                 }
             }
 
-            TraceLogger.Info($"✅ Finished building placeholder map. Total mapped: {result.Count}");
+            //TraceLogger.Info($"✅ Finished building placeholder map. Total mapped: {result.Count}");
             return result;
         }
 
@@ -572,7 +691,7 @@ namespace FinancialReport.Services
                     placeholders[$"{key}_Ending_{suffix}"] = val.EndingBalance.ToString("#,##0.##");
                     placeholders[$"{key}_Debit_{suffix}"] = val.Debit.ToString("#,##0.##");
                     placeholders[$"{key}_Credit_{suffix}"] = val.Credit.ToString("#,##0.##");
-                    placeholders[$"{key}_Desc_{suffix}"] = val.Description ?? "";
+                    //placeholders[$"{key}_Desc_{suffix}"] = val.Description ?? "";
                     placeholders[$"{key}_Beg_{suffix}"] = val.BeginningBalance.ToString("#,##0.##");
                 }
             }
@@ -604,7 +723,7 @@ namespace FinancialReport.Services
         public decimal EndingBalance { get; set; }
         public decimal Debit { get; set; }
         public decimal Credit { get; set; }
-        public string Description { get; set; }
+        //public string Description { get; set; }
     }
 
     public class FinancialApiData
