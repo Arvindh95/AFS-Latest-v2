@@ -51,28 +51,28 @@ namespace FinancialReport
 
         #region PasswordNew
         [PXRSACryptString]
-        [PXUIField(DisplayName = "New Password (Encrypted)")]
+        [PXUIField(DisplayName = "Password")]
         public virtual string PasswordNew { get; set; }
         public abstract class passwordNew : PX.Data.BQL.BqlString.Field<passwordNew> { }
         #endregion
 
         #region UsernameNew
         [PXRSACryptString]
-        [PXUIField(DisplayName = "New Username (Encrypted)")]
+        [PXUIField(DisplayName = "Username")]
         public virtual string UsernameNew { get; set; }
         public abstract class usernameNew : PX.Data.BQL.BqlString.Field<usernameNew> { }
         #endregion
 
         #region ClientSecretNew
         [PXRSACryptString]
-        [PXUIField(DisplayName = "New Client Secret (Encrypted)")]
+        [PXUIField(DisplayName = "Client Secret")]
         public virtual string ClientSecretNew { get; set; }
         public abstract class clientSecretNew : PX.Data.BQL.BqlString.Field<clientSecretNew> { }
         #endregion
 
         #region ClientIDNew
         [PXRSACryptString]
-        [PXUIField(DisplayName = "New Client ID (Encrypted)")]
+        [PXUIField(DisplayName = "Client ID")]
         public virtual string ClientIDNew { get; set; }
         public abstract class clientIDNew : PX.Data.BQL.BqlString.Field<clientIDNew> { }
         #endregion
