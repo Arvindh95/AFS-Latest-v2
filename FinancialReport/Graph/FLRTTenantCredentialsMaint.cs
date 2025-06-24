@@ -122,26 +122,26 @@ namespace FinancialReport
                 cache.RaiseExceptionHandling<FLRTTenantCredentials.tenantName>(row, null, new PXSetPropertyException("Tenant Name is required.", PXErrorLevel.Error));
                 throw new PXException("Tenant Name is required.");
             }
-            if (row.ClientID == null || row.ClientID.Length == 0)
-            {
-                cache.RaiseExceptionHandling<FLRTTenantCredentials.clientID>(row, null, new PXSetPropertyException("Client ID is required.", PXErrorLevel.Error));
-                throw new PXException("Client ID is required.");
-            }
-            if (row.SecretID == null || row.SecretID.Length == 0)
-            {
-                cache.RaiseExceptionHandling<FLRTTenantCredentials.secretID>(row, null, new PXSetPropertyException("Client Secret is required.", PXErrorLevel.Error));
-                throw new PXException("Client Secret is required.");
-            }
-            if (row.Username == null || row.Username.Length == 0)
-            {
-                cache.RaiseExceptionHandling<FLRTTenantCredentials.username>(row, null, new PXSetPropertyException("Username is required.", PXErrorLevel.Error));
-                throw new PXException("Username is required.");
-            }
-            if (row.Password == null || row.Password.Length == 0)
-            {
-                cache.RaiseExceptionHandling<FLRTTenantCredentials.password>(row, null, new PXSetPropertyException("Password is required.", PXErrorLevel.Error));
-                throw new PXException("Password is required.");
-            }
+            //if (row.ClientID == null || row.ClientID.Length == 0)
+            //{
+            //    cache.RaiseExceptionHandling<FLRTTenantCredentials.clientID>(row, null, new PXSetPropertyException("Client ID is required.", PXErrorLevel.Error));
+            //    throw new PXException("Client ID is required.");
+            //}
+            //if (row.SecretID == null || row.SecretID.Length == 0)
+            //{
+            //    cache.RaiseExceptionHandling<FLRTTenantCredentials.secretID>(row, null, new PXSetPropertyException("Client Secret is required.", PXErrorLevel.Error));
+            //    throw new PXException("Client Secret is required.");
+            //}
+            //if (row.Username == null || row.Username.Length == 0)
+            //{
+            //    cache.RaiseExceptionHandling<FLRTTenantCredentials.username>(row, null, new PXSetPropertyException("Username is required.", PXErrorLevel.Error));
+            //    throw new PXException("Username is required.");
+            //}
+            //if (row.Password == null || row.Password.Length == 0)
+            //{
+            //    cache.RaiseExceptionHandling<FLRTTenantCredentials.password>(row, null, new PXSetPropertyException("Password is required.", PXErrorLevel.Error));
+            //    throw new PXException("Password is required.");
+            //}
 
             // Check for duplicate TenantName (excluding the current row)
             FLRTTenantCredentials existing = PXSelect<FLRTTenantCredentials,

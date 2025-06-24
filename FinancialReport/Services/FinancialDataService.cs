@@ -20,11 +20,18 @@ namespace FinancialReport.Services
         private readonly string _tenantName;
         private readonly AuthService _authService;
 
-        public FinancialDataService(string baseUrl, AuthService authService, string tenantName)
+        public FinancialDataService(AuthService authService, string tenantName)
         {
-            _baseUrl = baseUrl ?? throw new ArgumentNullException(nameof(baseUrl));
+
+            // The service now gets the credentials itself
+            AcumaticaCredentials credentials = CredentialProvider.GetCredentials(tenantName);
+
+            //_baseUrl = baseUrl ?? throw new ArgumentNullException(nameof(baseUrl));
             _authService = authService ?? throw new ArgumentNullException(nameof(authService));
-            _tenantName = tenantName ?? throw new ArgumentNullException(nameof(tenantName));
+            _tenantName = tenantName ?? throw new ArgumentNullException(nameof(tenantName)); 
+            _baseUrl = credentials.BaseURL ?? throw new ArgumentNullException(nameof(credentials.BaseURL));
+            //_authService = authService ?? throw new ArgumentNullException(nameof(authService));
+            //_tenantName = tenantName ?? throw new ArgumentNullException(nameof(tenantName));
         }
 
         // --------------------------------------------------------

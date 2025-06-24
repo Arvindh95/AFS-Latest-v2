@@ -1619,7 +1619,7 @@ namespace FinancialReport.Services
                     ("A73102", "XXXXXXX", "MS1")
                 };
 
-                var dataService = new FinancialDataService(_baseUrl, _authService, _tenantName);
+                var dataService = new FinancialDataService(_authService, _tenantName);
 
                 decimal totalCY = 0m;
                 decimal totalPY = 0m;

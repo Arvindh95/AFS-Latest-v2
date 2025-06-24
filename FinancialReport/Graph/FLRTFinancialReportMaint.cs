@@ -259,7 +259,8 @@ namespace FinancialReport
 
             // 8) Create a shared AuthService instance for login/logout and token refresh
             var authService = new AuthService(
-                _baseUrl,
+                //_baseUrl,
+                tenantCredentials.BaseURL,
                 tenantCredentials.ClientId,
                 tenantCredentials.ClientSecret,
                 tenantCredentials.Username,
@@ -374,7 +375,9 @@ namespace FinancialReport
                 //TraceLogger.Info($"Mapped Tenant Name: {tenantName}");
 
                 // 4) Create a FinancialDataService that will use the provided authService
-                var localDataService = new FinancialDataService(_baseUrl, authService, tenantName);
+                //var localDataService = new FinancialDataService(_baseUrl, authService, tenantName);
+                // You no longer need to pass the BaseURL in
+                var localDataService = new FinancialDataService(authService, tenantName);
 
                 // 5) Capture Branch & Organization separately
                 string selectedBranch = currentRecord.Branch;
