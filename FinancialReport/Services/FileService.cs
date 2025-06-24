@@ -1,19 +1,13 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using System.IO;
+using FinancialReport.Helper;
 using PX.Data;
 using PX.SM;
-using PX.Objects.GL;
-
 
 namespace FinancialReport.Services
 {
     public class FileService
     {
-
         private readonly PXGraph _graph;
 
         public FileService(PXGraph graph)
@@ -28,34 +22,34 @@ namespace FinancialReport.Services
         {
             if (noteID == null)
             {
-                PXTrace.WriteError("❌ NoteID is null.");
+                PXTrace.WriteError("NoteID is null.");
                 throw new PXException(Messages.NoteIDIsNull);
             }
 
-            PXTrace.WriteInformation($"🔍 Fetching files for NoteID = {noteID}");
+            PXTrace.WriteInformation($"Fetching files for NoteID = {noteID}");
 
+            // Uses the constant for the template filter string
             var uploadedFiles = new PXSelectJoin<UploadFile,
                 InnerJoin<NoteDoc, On<UploadFile.fileID, Equal<NoteDoc.fileID>>>,
                 Where<
                     NoteDoc.noteID, Equal<Required<NoteDoc.noteID>>,
                     And<UploadFile.name, Like<Required<UploadFile.name>>>>,
                 OrderBy<Desc<UploadFile.createdDateTime>>>(_graph)
-                .Select(noteID, "%FRTemplate%");
+                .Select(noteID, $"%{Constants.TemplateFileFilter}%");
 
-            PXTrace.WriteInformation($"📄 Files found for NoteID = {noteID}: {uploadedFiles?.Count ?? 0}");
+            PXTrace.WriteInformation($"Files found for NoteID = {noteID}: {uploadedFiles?.Count ?? 0}");
 
             if (uploadedFiles == null || uploadedFiles.Count == 0)
             {
-                PXTrace.WriteError("❌ No files associated with this NoteID.");
+                PXTrace.WriteError("No files associated with this NoteID.");
                 throw new PXException(Messages.NoFilesAssociated);
             }
 
             foreach (PXResult<UploadFile, NoteDoc> result in uploadedFiles)
             {
                 var file = (UploadFile)result;
-                PXTrace.WriteInformation($"📄 Checking file: {file.Name}, FileID: {file.FileID}");
+                PXTrace.WriteInformation($"Checking file: {file.Name}, FileID: {file.FileID}");
 
-                // Fetch revision
                 UploadFileRevision fileRevision = PXSelect<UploadFileRevision,
                     Where<UploadFileRevision.fileID, Equal<Required<UploadFileRevision.fileID>>>,
                     OrderBy<Desc<UploadFileRevision.createdDateTime>>>
@@ -65,26 +59,25 @@ namespace FinancialReport.Services
 
                 if (fileRevision == null)
                 {
-                    PXTrace.WriteError($"⚠️ No revision found for FileID: {file.FileID}");
+                    PXTrace.WriteWarning($"No revision found for FileID: {file.FileID}");
                     continue;
                 }
 
                 if (fileRevision.BlobData != null && fileRevision.BlobData.Length > 0)
                 {
-                    PXTrace.WriteInformation($"✅ Found valid file revision. Size: {fileRevision.BlobData.Length} bytes");
+                    PXTrace.WriteInformation($"Found valid file revision. Size: {fileRevision.BlobData.Length} bytes");
                     currentRecord.UploadedFileID = file.FileID;
                     return (fileRevision.BlobData, file.Name);
                 }
                 else
                 {
-                    PXTrace.WriteError($"❌ File revision has no BlobData for FileID: {file.FileID}");
+                    PXTrace.WriteError($"File revision has no BlobData for FileID: {file.FileID}");
                 }
             }
 
-            PXTrace.WriteError("❌ Failed to retrieve any usable file revision.");
+            PXTrace.WriteError("Failed to retrieve any usable file revision.");
             throw new PXException(Messages.FailedToRetrieveFile);
         }
-
 
         /// <summary>
         /// Saves a generated document into Acumatica and returns the FileID.
@@ -109,14 +102,12 @@ namespace FinancialReport.Services
 
             if (fileInfo.UID.HasValue)
             {
-                // ✅ Step 1: Attach file to the current record via PXNoteAttribute
                 PXNoteAttribute.SetFileNotes(
                     _graph.Caches[typeof(FLRTFinancialReport)],
                     currentRecord,
                     fileInfo.UID.Value
                 );
 
-                // ✅ Step 2: Prevent NoteDoc duplicate insert (safety check)
                 var existingLink = PXSelect<NoteDoc,
                     Where<NoteDoc.noteID, Equal<Required<NoteDoc.noteID>>,
                           And<NoteDoc.fileID, Equal<Required<NoteDoc.fileID>>>>>
@@ -134,8 +125,5 @@ namespace FinancialReport.Services
 
             return fileInfo.UID ?? Guid.Empty;
         }
-
-
-
     }
 }

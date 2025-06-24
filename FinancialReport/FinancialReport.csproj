@@ -67,8 +67,8 @@
   <ItemGroup>
     <Compile Include="Graph\FLRTFinancialReportMaint.cs" />
     <Compile Include="DAC\FLRTFinancialReport.cs" />
+    <Compile Include="Helper\Constants.cs" />
     <Compile Include="Helper\Messages.cs" />
-    <Compile Include="Graph\AccountHistoryBySubEnq.cs" />
     <Compile Include="DAC\GLHistoryEnqFilter.cs" />
     <Compile Include="Graph\FLRTTenantCredentialsMaint.cs" />
     <Compile Include="DAC\FLRTTenantCredentials.cs" />
@@ -77,6 +77,7 @@
     <Compile Include="Services\CredentialProvider.cs" />
     <Compile Include="Services\FileService.cs" />
     <Compile Include="Services\FinancialDataService.cs" />
+    <Compile Include="Services\ReportGenerationService.cs" />
     <Compile Include="Services\WordTemplateService.cs" />
   </ItemGroup>
   <ItemGroup>

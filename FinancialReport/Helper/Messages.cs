@@ -1,9 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using PX.Common;
+﻿using PX.Common;
 
 namespace FinancialReport
 {
@@ -41,10 +36,8 @@ namespace FinancialReport
         public const string TenantMissingFromConfig = "Tenant mapping is missing in Web.config.";
         public const string TenantMissingFromDatabase = "Tenant mapping is missing in Database";
         public const string NoCalculation = "No placeholder logic configured for this tenant.";
-        public const string NoCompanyID = "CompanyID is required for tenant mapping.";
+        public const string NoCompanyNum = "Company Number is required for tenant mapping.";
         public const string NoTenantMapping = "Tenant mapping not found for the specified company number.";
         public const string NoValueMapping = "No Month or Year Specified";
-
     }
-
 }
