@@ -49,9 +49,43 @@ namespace FinancialReport
         public abstract class password : PX.Data.BQL.BqlByteArray.Field<password> { }
         #endregion
 
+        #region PasswordNew
+        [PXRSACryptString]
+        [PXUIField(DisplayName = "New Password (Encrypted)")]
+        public virtual string PasswordNew { get; set; }
+        public abstract class passwordNew : PX.Data.BQL.BqlString.Field<passwordNew> { }
+        #endregion
+
+        #region UsernameNew
+        [PXRSACryptString]
+        [PXUIField(DisplayName = "New Username (Encrypted)")]
+        public virtual string UsernameNew { get; set; }
+        public abstract class usernameNew : PX.Data.BQL.BqlString.Field<usernameNew> { }
+        #endregion
+
+        #region ClientSecretNew
+        [PXRSACryptString]
+        [PXUIField(DisplayName = "New Client Secret (Encrypted)")]
+        public virtual string ClientSecretNew { get; set; }
+        public abstract class clientSecretNew : PX.Data.BQL.BqlString.Field<clientSecretNew> { }
+        #endregion
+
+        #region ClientIDNew
+        [PXRSACryptString]
+        [PXUIField(DisplayName = "New Client ID (Encrypted)")]
+        public virtual string ClientIDNew { get; set; }
+        public abstract class clientIDNew : PX.Data.BQL.BqlString.Field<clientIDNew> { }
+        #endregion
+
+        #region BaseURL
+        [PXDBString(255, IsUnicode = true)]
+        [PXUIField(DisplayName = "Base URL")]
+        public virtual string BaseURL { get; set; }
+        public abstract class baseURL : PX.Data.BQL.BqlString.Field<baseURL> { }
+        #endregion
+
         #region CreatedDateTime
         [PXDBDateAndTime]
-        [PXDefault(typeof(AccessInfo.businessDate))]
         [PXUIField(DisplayName = "Created Date Time", Enabled = false)]
         public virtual DateTime? CreatedDateTime { get; set; }
         public abstract class createdDateTime : PX.Data.BQL.BqlDateTime.Field<createdDateTime> { }
