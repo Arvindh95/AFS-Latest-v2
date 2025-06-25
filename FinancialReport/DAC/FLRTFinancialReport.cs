@@ -28,7 +28,7 @@ namespace FinancialReport
     #endregion
 
     #region ReportCD
-    [PXDBString(50, IsUnicode = true)]      
+    [PXDBString(225, IsUnicode = true)]      
     [PXUIField(DisplayName = "Template Name")]
     public virtual string ReportCD { get; set; }
     public abstract class reportCD : PX.Data.BQL.BqlString.Field<reportCD> { }       

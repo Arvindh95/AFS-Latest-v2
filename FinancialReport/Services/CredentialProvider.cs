@@ -33,22 +33,28 @@ namespace FinancialReport.Services
                 // Convert byte[] fields to strings and return
                 AcumaticaCredentials credentials = new AcumaticaCredentials
                 {
-                    ClientId = !string.IsNullOrWhiteSpace(record.ClientIDNew)
-                        ? record.ClientIDNew
-                        : Encoding.UTF8.GetString(record.ClientID),
+                    //ClientId = !string.IsNullOrWhiteSpace(record.ClientIDNew)
+                    //    ? record.ClientIDNew
+                    //    : Encoding.UTF8.GetString(record.ClientID),
 
-                    ClientSecret = !string.IsNullOrWhiteSpace(record.ClientSecretNew)
-                        ? record.ClientSecretNew
-                        : Encoding.UTF8.GetString(record.SecretID),
+                    //ClientSecret = !string.IsNullOrWhiteSpace(record.ClientSecretNew)
+                    //    ? record.ClientSecretNew
+                    //    : Encoding.UTF8.GetString(record.SecretID),
 
-                    Username = !string.IsNullOrWhiteSpace(record.UsernameNew)
-                        ? record.UsernameNew
-                        : Encoding.UTF8.GetString(record.Username),
+                    //Username = !string.IsNullOrWhiteSpace(record.UsernameNew)
+                    //    ? record.UsernameNew
+                    //    : Encoding.UTF8.GetString(record.Username),
 
-                    Password = !string.IsNullOrWhiteSpace(record.PasswordNew)
-                        ? record.PasswordNew
-                        : Encoding.UTF8.GetString(record.Password),
+                    //Password = !string.IsNullOrWhiteSpace(record.PasswordNew)
+                    //    ? record.PasswordNew
+                    //    : Encoding.UTF8.GetString(record.Password),
 
+                    //BaseURL = record.BaseURL
+
+                    ClientId = record.ClientIDNew,
+                    ClientSecret = record.ClientSecretNew,
+                    Username = record.UsernameNew,
+                    Password = record.PasswordNew,
                     BaseURL = record.BaseURL
                 };
 

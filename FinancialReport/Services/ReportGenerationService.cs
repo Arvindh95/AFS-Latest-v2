@@ -2,6 +2,8 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
+using System.Text.RegularExpressions;
 using FinancialReport.Helper;
 using PX.Data;
 
@@ -31,63 +33,126 @@ namespace FinancialReport.Services
         }
 
         /// <summary>
-        /// Executes the end-to-end report generation process.
+        /// Executes the end-to-end report generation process with performance optimizations.
         /// </summary>
         /// <returns>The GUID of the newly generated and saved file.</returns>
         public Guid Execute()
         {
-            // 1. Get Tenant Name for the data service
-            int? companyID = _graph.GetCompanyIDFromDB(_currentRecord.ReportID);
-            string tenantName = _graph.MapCompanyIDToTenantName(companyID);
-            var localDataService = new FinancialDataService(_authService, tenantName);
+            var totalStopwatch = System.Diagnostics.Stopwatch.StartNew();
 
-            // 2. Get Template File
-            var (templateFileContent, originalFileName) = _fileService.GetFileContentAndName(_currentRecord.Noteid, _currentRecord);
-            if (templateFileContent == null || templateFileContent.Length == 0)
-                throw new PXException(Messages.TemplateFileIsEmpty);
+            string templatePath = null;
+            string outputPath = null;
 
-            string extension = Path.GetExtension(originalFileName) ?? ".docx";
-            string templatePath = Path.Combine(Path.GetTempPath(), $"{_currentRecord.ReportCD}_Template{extension}");
-            File.WriteAllBytes(templatePath, templateFileContent);
+            try
+            {
+                // 1. Get Tenant Name for the data service
+                int? companyID = _graph.GetCompanyIDFromDB(_currentRecord.ReportID);
+                string tenantName = _graph.MapCompanyIDToTenantName(companyID);
+                var localDataService = new FinancialDataService(_authService, tenantName);
 
-            // 3. Extract Placeholders
-            List<string> extractedKeys = _wordTemplateService.ExtractPlaceholderKeys(templatePath);
+                // 2. Get Template File
+                var (templateFileContent, originalFileName) = _fileService.GetFileContentAndName(_currentRecord.Noteid, _currentRecord);
+                if (templateFileContent == null || templateFileContent.Length == 0)
+                    throw new PXException(Messages.TemplateFileIsEmpty);
 
-            // 4. Set up Parameters
-            string currYear = _currentRecord.CurrYear ?? DateTime.Now.ToString("yyyy");
-            string selectedMonth = _currentRecord.FinancialMonth ?? "12";
-            int currYearInt = int.TryParse(currYear, out int parsedYear) ? parsedYear : DateTime.Now.Year;
-            string prevYear = (currYearInt - 1).ToString();
-            string selectedPeriod = $"{selectedMonth}{currYear}";
-            string prevYearPeriod = $"{selectedMonth}{prevYear}";
+                string extension = Path.GetExtension(originalFileName) ?? ".docx";
+                templatePath = Path.Combine(Path.GetTempPath(), $"{_currentRecord.ReportCD}_Template{extension}");
+                File.WriteAllBytes(templatePath, templateFileContent);
 
-            // 5. Fetch all required data from the API
-            var currYearData = localDataService.FetchAllApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, selectedPeriod);
-            var prevYearData = localDataService.FetchAllApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, prevYearPeriod);
-            var januaryBeginningDataPY = localDataService.FetchJanuaryBeginningBalance(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, prevYear);
-            var januaryBeginningDataCY = localDataService.FetchJanuaryBeginningBalance(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, currYear);
-            var cumulativeCYData = localDataService.FetchRangeApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, $"01{currYear}", selectedPeriod);
-            var cumulativePYData = localDataService.FetchRangeApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, $"01{prevYear}", $"12{prevYear}");
+                // 3. Extract Placeholders
+                List<string> extractedKeys = _wordTemplateService.ExtractPlaceholderKeys(templatePath);
 
-            // 6. Map Data to Placeholders
-            var sw = System.Diagnostics.Stopwatch.StartNew();
-            Dictionary<string, string> finalPlaceholders = localDataService.BuildSmartPlaceholderMapFromKeys(
-                extractedKeys, currYearData, prevYearData, januaryBeginningDataCY, januaryBeginningDataPY, cumulativeCYData, cumulativePYData
-            );
-            sw.Stop();
-            PXTrace.WriteInformation($"Placeholder mapping completed in {sw.ElapsedMilliseconds} ms");
+                // 4. Set up Parameters
+                string currYear = _currentRecord.CurrYear ?? DateTime.Now.ToString("yyyy");
+                string selectedMonth = _currentRecord.FinancialMonth ?? "12";
+                int currYearInt = int.TryParse(currYear, out int parsedYear) ? parsedYear : DateTime.Now.Year;
+                string prevYear = (currYearInt - 1).ToString();
+                string selectedPeriod = $"{selectedMonth}{currYear}";
+                string prevYearPeriod = $"{selectedMonth}{prevYear}";
 
-            finalPlaceholders[Constants.CurrentYearSuffix] = currYear;
-            finalPlaceholders[Constants.PreviousYearSuffix] = prevYear;
+                // 5. Fetch all required data from the API in parallel
+                var dataFetchTasks = new[]
+                {
+                    Task.Run(() => localDataService.FetchAllApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, selectedPeriod)),
+                    Task.Run(() => localDataService.FetchAllApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, prevYearPeriod)),
+                    Task.Run(() => localDataService.FetchJanuaryBeginningBalance(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, prevYear)),
+                    Task.Run(() => localDataService.FetchJanuaryBeginningBalance(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, currYear)),
+                    Task.Run(() => localDataService.FetchRangeApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, $"01{currYear}", selectedPeriod)),
+                    Task.Run(() => localDataService.FetchRangeApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, $"01{prevYear}", $"12{prevYear}"))
+                };
 
-            // 7. Populate Word Template
-            string outputFileName = $"{_currentRecord.ReportCD}_Generated_{DateTime.Now:yyyyMMdd_HHmmssfff}{extension}";
-            string outputPath = Path.Combine(Path.GetTempPath(), outputFileName);
-            _wordTemplateService.PopulateTemplate(templatePath, outputPath, finalPlaceholders);
+                // Wait for all tasks to complete
+                var results = Task.WhenAll(dataFetchTasks).Result;
 
-            // 8. Save Generated File and return its ID
-            byte[] generatedFileContent = File.ReadAllBytes(outputPath);
-            return _fileService.SaveGeneratedDocument(outputFileName, generatedFileContent, _currentRecord);
+                // Assign results
+                var currYearData = results[0];
+                var prevYearData = results[1];
+                var januaryBeginningDataPY = results[2];
+                var januaryBeginningDataCY = results[3];
+                var cumulativeCYData = results[4];
+                var cumulativePYData = results[5];
+
+                // 6. Map Data to Placeholders
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                Dictionary<string, string> finalPlaceholders = localDataService.BuildSmartPlaceholderMapFromKeys(
+                    extractedKeys, currYearData, prevYearData, januaryBeginningDataCY, januaryBeginningDataPY, cumulativeCYData, cumulativePYData
+                );
+                sw.Stop();
+                PXTrace.WriteInformation($"Placeholder mapping completed in {sw.ElapsedMilliseconds} ms");
+
+                finalPlaceholders[Constants.CurrentYearSuffix] = currYear;
+                finalPlaceholders[Constants.PreviousYearSuffix] = prevYear;
+
+                // 7. Populate Word Template
+                string outputFileName = $"{_currentRecord.ReportCD}_Generated_{DateTime.Now:yyyyMMdd_HHmmssfff}{extension}";
+                outputPath = Path.Combine(Path.GetTempPath(), outputFileName);
+                _wordTemplateService.PopulateTemplate(templatePath, outputPath, finalPlaceholders);
+
+                // 8. Save Generated File and return its ID
+                byte[] generatedFileContent = File.ReadAllBytes(outputPath);
+                var fileId = _fileService.SaveGeneratedDocument(outputFileName, generatedFileContent, _currentRecord);
+
+                totalStopwatch.Stop();
+                PXTrace.WriteInformation($"Total report generation completed in {totalStopwatch.ElapsedMilliseconds} ms");
+
+                return fileId;
+            }
+            catch (Exception ex)
+            {
+                totalStopwatch.Stop();
+                PXTrace.WriteError($"Report generation failed after {totalStopwatch.ElapsedMilliseconds} ms: {ex.Message}");
+                throw;
+            }
+            finally
+            {
+                // Cleanup temporary files
+                if (!string.IsNullOrEmpty(templatePath) && File.Exists(templatePath))
+                {
+                    try
+                    {
+                        File.Delete(templatePath);
+                        PXTrace.WriteInformation($"Cleaned up template file: {Path.GetFileName(templatePath)}");
+                    }
+                    catch (Exception ex)
+                    {
+                        PXTrace.WriteWarning($"Failed to cleanup template file: {ex.Message}");
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(outputPath) && File.Exists(outputPath))
+                {
+                    try
+                    {
+                        File.Delete(outputPath);
+                        PXTrace.WriteInformation($"Cleaned up output file: {Path.GetFileName(outputPath)}");
+                    }
+                    catch (Exception ex)
+                    {
+                        PXTrace.WriteWarning($"Failed to cleanup output file: {ex.Message}");
+                    }
+                }
+            }
         }
+
     }
 }

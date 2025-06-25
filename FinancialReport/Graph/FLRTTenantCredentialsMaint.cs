@@ -59,49 +59,49 @@ namespace FinancialReport
         }
 
         // FieldSelecting to display byte[] as string in UI
-        protected void FLRTTenantCredentials_ClientID_FieldSelecting(PXCache cache, PXFieldSelectingEventArgs e)
-        {
-            var row = (FLRTTenantCredentials)e.Row;
-            if (row?.ClientID != null)
-            {
-                string value = Encoding.UTF8.GetString(row.ClientID);
-                PXTrace.WriteInformation($"Displaying ClientID: {value}");
-                e.ReturnValue = value;
-            }
-        }
+        //protected void FLRTTenantCredentials_ClientID_FieldSelecting(PXCache cache, PXFieldSelectingEventArgs e)
+        //{
+        //    var row = (FLRTTenantCredentials)e.Row;
+        //    if (row?.ClientID != null)
+        //    {
+        //        string value = Encoding.UTF8.GetString(row.ClientID);
+        //        PXTrace.WriteInformation($"Displaying ClientID: {value}");
+        //        e.ReturnValue = value;
+        //    }
+        //}
 
-        protected void FLRTTenantCredentials_SecretID_FieldSelecting(PXCache cache, PXFieldSelectingEventArgs e)
-        {
-            var row = (FLRTTenantCredentials)e.Row;
-            if (row?.SecretID != null)
-            {
-                string value = Encoding.UTF8.GetString(row.SecretID);
-                PXTrace.WriteInformation($"Displaying SecretID: {value}");
-                e.ReturnValue = value;
-            }
-        }
+        //protected void FLRTTenantCredentials_SecretID_FieldSelecting(PXCache cache, PXFieldSelectingEventArgs e)
+        //{
+        //    var row = (FLRTTenantCredentials)e.Row;
+        //    if (row?.SecretID != null)
+        //    {
+        //        string value = Encoding.UTF8.GetString(row.SecretID);
+        //        PXTrace.WriteInformation($"Displaying SecretID: {value}");
+        //        e.ReturnValue = value;
+        //    }
+        //}
 
-        protected void FLRTTenantCredentials_Username_FieldSelecting(PXCache cache, PXFieldSelectingEventArgs e)
-        {
-            var row = (FLRTTenantCredentials)e.Row;
-            if (row?.Username != null)
-            {
-                string value = Encoding.UTF8.GetString(row.Username);
-                PXTrace.WriteInformation($"Displaying Username: {value}");
-                e.ReturnValue = value;
-            }
-        }
+        //protected void FLRTTenantCredentials_Username_FieldSelecting(PXCache cache, PXFieldSelectingEventArgs e)
+        //{
+        //    var row = (FLRTTenantCredentials)e.Row;
+        //    if (row?.Username != null)
+        //    {
+        //        string value = Encoding.UTF8.GetString(row.Username);
+        //        PXTrace.WriteInformation($"Displaying Username: {value}");
+        //        e.ReturnValue = value;
+        //    }
+        //}
 
-        protected void FLRTTenantCredentials_Password_FieldSelecting(PXCache cache, PXFieldSelectingEventArgs e)
-        {
-            var row = (FLRTTenantCredentials)e.Row;
-            if (row?.Password != null)
-            {
-                string value = Encoding.UTF8.GetString(row.Password);
-                PXTrace.WriteInformation($"Displaying Password: {value}");
-                e.ReturnValue = value;
-            }
-        }
+        //protected void FLRTTenantCredentials_Password_FieldSelecting(PXCache cache, PXFieldSelectingEventArgs e)
+        //{
+        //    var row = (FLRTTenantCredentials)e.Row;
+        //    if (row?.Password != null)
+        //    {
+        //        string value = Encoding.UTF8.GetString(row.Password);
+        //        PXTrace.WriteInformation($"Displaying Password: {value}");
+        //        e.ReturnValue = value;
+        //    }
+        //}
 
         // RowPersisting for validation and logging
         protected void FLRTTenantCredentials_RowPersisting(PXCache cache, PXRowPersistingEventArgs e)
@@ -109,7 +109,7 @@ namespace FinancialReport
             var row = (FLRTTenantCredentials)e.Row;
             if (row == null) return;
 
-            PXTrace.WriteInformation($"Persisting row: CompanyNum={row.CompanyNum}, TenantName={row.TenantName}, ClientID={ByteArrayToString(row.ClientID)}, SecretID={ByteArrayToString(row.SecretID)}, Username={ByteArrayToString(row.Username)}, Password={ByteArrayToString(row.Password)}");
+            //PXTrace.WriteInformation($"Persisting row: CompanyNum={row.CompanyNum}, TenantName={row.TenantName}, ClientID={ByteArrayToString(row.ClientID)}, SecretID={ByteArrayToString(row.SecretID)}, Username={ByteArrayToString(row.Username)}, Password={ByteArrayToString(row.Password)}");
 
             // Validate required fields
             if (row.CompanyNum == null)
@@ -193,10 +193,10 @@ namespace FinancialReport
                 PXTrace.WriteInformation("Save action triggered.");
 
                 // Log the state of the cache before saving
-                foreach (FLRTTenantCredentials row in TenantCredentials.Cache.Cached)
-                {
-                    PXTrace.WriteInformation($"Cache state before save: CompanyNum={row.CompanyNum}, TenantName={row.TenantName}, ClientID={ByteArrayToString(row.ClientID)}, SecretID={ByteArrayToString(row.SecretID)}, Username={ByteArrayToString(row.Username)}, Password={ByteArrayToString(row.Password)}");
-                }
+                //foreach (FLRTTenantCredentials row in TenantCredentials.Cache.Cached)
+                //{
+                //    PXTrace.WriteInformation($"Cache state before save: CompanyNum={row.CompanyNum}, TenantName={row.TenantName}, ClientID={ByteArrayToString(row.ClientID)}, SecretID={ByteArrayToString(row.SecretID)}, Username={ByteArrayToString(row.Username)}, Password={ByteArrayToString(row.Password)}");
+                //}
 
                 // Persist the cache
                 TenantCredentials.Cache.Persist(PXDBOperation.Insert | PXDBOperation.Update);

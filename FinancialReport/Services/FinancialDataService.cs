@@ -123,7 +123,7 @@ namespace FinancialReport.Services
         private List<JToken> PaginatedFetch(HttpClient client, string baseUrl, string filter, string selectColumns)
         {
             var allResults = new List<JToken>();
-            int pageSize = 1000;
+            int pageSize = 5000;
             int skip = 0;
 
             while (true)

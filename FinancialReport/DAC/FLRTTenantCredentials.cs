@@ -21,34 +21,6 @@ namespace FinancialReport
         public abstract class tenantName : PX.Data.BQL.BqlString.Field<tenantName> { }
         #endregion
 
-        #region ClientID
-        [PXDBBinary]
-        [PXUIField(DisplayName = "Client ID")]
-        public virtual byte[] ClientID { get; set; }
-        public abstract class clientID : PX.Data.BQL.BqlByteArray.Field<clientID> { }
-        #endregion
-
-        #region SecretID
-        [PXDBBinary]
-        [PXUIField(DisplayName = "Client Secret")]
-        public virtual byte[] SecretID { get; set; }
-        public abstract class secretID : PX.Data.BQL.BqlByteArray.Field<secretID> { }
-        #endregion
-
-        #region Username
-        [PXDBBinary]
-        [PXUIField(DisplayName = "Username")]
-        public virtual byte[] Username { get; set; }
-        public abstract class username : PX.Data.BQL.BqlByteArray.Field<username> { }
-        #endregion
-
-        #region Password
-        [PXDBBinary]
-        [PXUIField(DisplayName = "Password")]
-        public virtual byte[] Password { get; set; }
-        public abstract class password : PX.Data.BQL.BqlByteArray.Field<password> { }
-        #endregion
-
         #region PasswordNew
         [PXRSACryptString]
         [PXUIField(DisplayName = "Password")]
@@ -134,5 +106,12 @@ namespace FinancialReport
         public virtual Guid? NoteID { get; set; }
         public abstract class noteID : PX.Data.BQL.BqlGuid.Field<noteID> { }
         #endregion
+
+        //#region Password
+        //[PXDBBinary]
+        //[PXUIField(DisplayName = "Password (Legacy)", Visible = false, Enabled = false)]
+        //public virtual byte[] Password { get; set; }
+        //public abstract class password : PX.Data.BQL.BqlByteArray.Field<password> { }
+        //#endregion
     }
 }
