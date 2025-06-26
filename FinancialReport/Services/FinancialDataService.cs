@@ -1,4 +1,7 @@
-﻿using System;
+﻿//using FinancialReport.Helper;
+using Newtonsoft.Json.Linq;
+using PX.Data;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
@@ -7,10 +10,8 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
-//using FinancialReport.Helper;
-using Newtonsoft.Json.Linq;
-using PX.Data;
 
 namespace FinancialReport.Services
 {
@@ -20,18 +21,31 @@ namespace FinancialReport.Services
         private readonly string _tenantName;
         private readonly AuthService _authService;
 
+        // ✅ Static HttpClient shared across all instances and methods
+        private static readonly HttpClient _httpClient = new HttpClient(new HttpClientHandler
+        {
+            UseProxy = false,
+            MaxConnectionsPerServer = 10
+        })
+        {
+            Timeout = TimeSpan.FromMinutes(5)
+        };
+
+        // ✅ Thread-safe semaphore for auth header updates
+        private static readonly SemaphoreSlim _authSemaphore = new SemaphoreSlim(1, 1);
+
+        static FinancialDataService()
+        {
+            _httpClient.DefaultRequestHeaders.Accept.Clear();
+            _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        }
+
         public FinancialDataService(AuthService authService, string tenantName)
         {
-
-            // The service now gets the credentials itself
             AcumaticaCredentials credentials = CredentialProvider.GetCredentials(tenantName);
-
-            //_baseUrl = baseUrl ?? throw new ArgumentNullException(nameof(baseUrl));
             _authService = authService ?? throw new ArgumentNullException(nameof(authService));
             _tenantName = tenantName ?? throw new ArgumentNullException(nameof(tenantName)); 
             _baseUrl = credentials.BaseURL ?? throw new ArgumentNullException(nameof(credentials.BaseURL));
-            //_authService = authService ?? throw new ArgumentNullException(nameof(authService));
-            //_tenantName = tenantName ?? throw new ArgumentNullException(nameof(tenantName));
         }
 
         // --------------------------------------------------------
@@ -41,46 +55,208 @@ namespace FinancialReport.Services
         {
             string accessToken = _authService.AuthenticateAndGetToken();
             string dimensionFilter = BuildDimensionFilter(branch, organization);
-
-            // This filter does not need the LedgerID logic, as that will be handled by the ExecuteFetchWithFallback method.
             string filter = $"FinancialPeriod eq '{period}' and {dimensionFilter}";
 
             var accountData = new Dictionary<string, FinancialPeriodData>();
 
-            using (HttpClient client = new HttpClient())
+            SetAuthorizationHeader(accessToken);
+            List<JToken> results = ExecuteFetchWithFallback(_httpClient, filter, ledger);
+
+            if (results == null)
             {
-                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-                client.DefaultRequestHeaders.Accept.Clear();
-                client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                throw new PXException(Messages.FailedToFetchOData);
+            }
 
-                // Execute the fetch operation with built-in URL and Ledger fallback logic
-                List<JToken> results = ExecuteFetchWithFallback(client, filter, ledger);
+            foreach (var item in results)
+            {
+                string accountId = item["Account"]?.ToString();
+                if (string.IsNullOrEmpty(accountId)) continue;
 
-                // If both attempts fail, throw an exception.
-                if (results == null)
+                if (!accountData.ContainsKey(accountId))
                 {
-                    throw new PXException(Messages.FailedToFetchOData);
+                    accountData[accountId] = new FinancialPeriodData();
                 }
 
-                // Process the results from the successful fetch attempt
-                foreach (var item in results)
-                {
-                    string accountId = item["Account"]?.ToString();
-                    if (string.IsNullOrEmpty(accountId)) continue;
-
-                    if (!accountData.ContainsKey(accountId))
-                    {
-                        accountData[accountId] = new FinancialPeriodData();
-                    }
-
-                    accountData[accountId].BeginningBalance += item["BeginningBalance"]?.ToObject<decimal>() ?? 0;
-                    accountData[accountId].EndingBalance += item["EndingBalance"]?.ToObject<decimal>() ?? 0;
-                    accountData[accountId].Debit += item["Debit"]?.ToObject<decimal>() ?? 0;
-                    accountData[accountId].Credit += item["Credit"]?.ToObject<decimal>() ?? 0;
-                }
+                accountData[accountId].BeginningBalance += item["BeginningBalance"]?.ToObject<decimal>() ?? 0;
+                accountData[accountId].EndingBalance += item["EndingBalance"]?.ToObject<decimal>() ?? 0;
+                accountData[accountId].Debit += item["Debit"]?.ToObject<decimal>() ?? 0;
+                accountData[accountId].Credit += item["Credit"]?.ToObject<decimal>() ?? 0;
             }
 
             return new FinancialApiData { AccountData = accountData };
+        }
+
+        // --------------------------------------------------------
+        // 2) FetchJanuaryBeginningBalance
+        // --------------------------------------------------------
+        public FinancialApiData FetchJanuaryBeginningBalance(string branch, string organization, string ledger, string prevYear)
+        {
+            string januaryPeriod = "01" + prevYear;
+            string accessToken = _authService.AuthenticateAndGetToken();
+            string dimensionFilter = BuildDimensionFilter(branch, organization);
+            string baseFilter = $"FinancialPeriod eq '{januaryPeriod}' and {dimensionFilter}";
+
+            var apiData = new FinancialApiData();
+
+            SetAuthorizationHeader(accessToken);
+            var results = ExecuteFetchWithFallback(_httpClient, baseFilter, ledger);
+
+            if (results == null)
+            {
+                throw new PXException(Messages.FailedToFetchOData);
+            }
+
+            foreach (var item in results)
+            {
+                string accountId = item["Account"]?.ToString();
+                decimal beginningBalance = item["BeginningBalance"]?.ToObject<decimal>() ?? 0;
+
+                if (!apiData.AccountData.ContainsKey(accountId))
+                {
+                    apiData.AccountData[accountId] = new FinancialPeriodData();
+                }
+                apiData.AccountData[accountId].BeginningBalance += beginningBalance;
+                apiData.AccountData[accountId].EndingBalance += beginningBalance;
+            }
+
+            return apiData;
+        }
+
+        // --------------------------------------------------------
+        // 3) FetchRangeApiData
+        // --------------------------------------------------------
+        public FinancialApiData FetchRangeApiData(string branch, string organization, string ledger, string fromPeriod, string toPeriod)
+        {
+            string accessToken = _authService.AuthenticateAndGetToken();
+            string dimensionFilter = BuildDimensionFilter(branch, organization);
+            string baseFilter = $"FinancialPeriod ge '{fromPeriod}' and FinancialPeriod le '{toPeriod}' and {dimensionFilter}";
+
+            var cumulativeDict = new Dictionary<string, FinancialPeriodData>();
+
+            SetAuthorizationHeader(accessToken);
+            var results = ExecuteFetchWithFallback(_httpClient, baseFilter, ledger);
+
+            if (results == null)
+            {
+                throw new PXException(Messages.FailedToFetchOData);
+            }
+
+            foreach (var item in results)
+            {
+                string accountId = item["Account"]?.ToString();
+                decimal debit = item["Debit"]?.ToObject<decimal>() ?? 0;
+                decimal credit = item["Credit"]?.ToObject<decimal>() ?? 0;
+                decimal endingBalance = item["EndingBalance"]?.ToObject<decimal>() ?? 0;
+
+                if (!cumulativeDict.ContainsKey(accountId))
+                {
+                    cumulativeDict[accountId] = new FinancialPeriodData();
+                }
+
+                cumulativeDict[accountId].Debit += debit;
+                cumulativeDict[accountId].Credit += credit;
+                cumulativeDict[accountId].EndingBalance += endingBalance;
+            }
+
+            var apiData = new FinancialApiData();
+            foreach (var kvp in cumulativeDict)
+            {
+                apiData.AccountData[kvp.Key] = kvp.Value;
+            }
+
+            return apiData;
+        }
+
+        // --------------------------------------------------------
+        // 4) FetchCompositeKeyData
+        // --------------------------------------------------------
+        public FinancialApiData FetchCompositeKeyData(string branch, string organization, string ledger, string period)
+        {
+            string accessToken = _authService.AuthenticateAndGetToken();
+            string baseFilter = $"FinancialPeriod eq '{period}' and 1 eq 1";
+
+            var compositeData = new Dictionary<string, FinancialPeriodData>();
+
+            SetAuthorizationHeader(accessToken);
+            var results = ExecuteFetchWithFallback(_httpClient, baseFilter, ledger);
+
+            if (results == null)
+            {
+                throw new PXException(Messages.FailedToFetchOData);
+            }
+
+            foreach (var item in results)
+            {
+                string accountId = item["Account"]?.ToString()?.Trim();
+                string subaccountId = item["Subaccount"]?.ToString()?.Trim() ?? "N/A";
+                string branchId = item["BranchID"]?.ToString()?.Trim() ?? branch;
+                string orgId = item["OrganizationID"]?.ToString()?.Trim() ?? organization;
+                string compositeKey = $"{accountId}-{subaccountId}-{branchId}-{orgId}-{period}-{ledger}";
+
+                var data = new FinancialPeriodData
+                {
+                    Account = accountId,
+                    Subaccount = subaccountId,
+                    BeginningBalance = item["BeginningBalance"]?.ToObject<decimal>() ?? 0,
+                    EndingBalance = item["EndingBalance"]?.ToObject<decimal>() ?? 0,
+                    Debit = item["Debit"]?.ToObject<decimal>() ?? 0,
+                    Credit = item["Credit"]?.ToObject<decimal>() ?? 0,
+                };
+
+                compositeData[compositeKey] = data;
+            }
+
+            var apiData = new FinancialApiData();
+            foreach (var kvp in compositeData)
+            {
+                apiData.CompositeKeyData[kvp.Key] = kvp.Value;
+            }
+
+            return apiData;
+        }
+
+        // --------------------------------------------------------
+        // 5) FetchEndingBalance
+        // --------------------------------------------------------
+        public decimal FetchEndingBalance(string period, string branch, string organization, string ledger, string account, string subaccount)
+        {
+            if (string.IsNullOrEmpty(period) || string.IsNullOrEmpty(branch) ||
+                string.IsNullOrEmpty(organization) ||
+                string.IsNullOrEmpty(account) || string.IsNullOrEmpty(subaccount))
+            {
+                PXTrace.WriteWarning("FetchEndingBalance called with missing filter parameters.");
+                return 0m;
+            }
+
+            string accessToken = _authService.AuthenticateAndGetToken();
+            string baseFilter = $"FinancialPeriod eq '{period}' and BranchID eq '{branch}' and OrganizationID eq '{organization}' and " +
+                               $"Account eq '{account}' and Subaccount eq '{subaccount}'";
+
+            SetAuthorizationHeader(accessToken);
+            var results = ExecuteFetchWithFallback(_httpClient, baseFilter, ledger);
+
+            if (results == null || results.Count == 0)
+            {
+                PXTrace.WriteWarning($"No rows found for precise match: {baseFilter}");
+                return 0m;
+            }
+
+            return results.FirstOrDefault()?["EndingBalance"]?.ToObject<decimal>() ?? 0m;
+        }
+
+
+        // ✅ Thread-safe method to set authorization header
+        private static void SetAuthorizationHeader(string accessToken)
+        {
+            _authSemaphore.Wait();
+            try
+            {
+                _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            }
+            finally
+            {
+                _authSemaphore.Release();
+            }
         }
 
         /// <summary>
@@ -172,188 +348,7 @@ namespace FinancialReport.Services
             return allResults;
         }
 
-        // --------------------------------------------------------
-        // 2) FetchJanuaryBeginningBalance
-        // --------------------------------------------------------
-        public FinancialApiData FetchJanuaryBeginningBalance(string branch, string organization, string ledger, string prevYear)
-        {
-            string januaryPeriod = "01" + prevYear; // e.g. "012023"
-            string accessToken = _authService.AuthenticateAndGetToken();
-            string dimensionFilter = BuildDimensionFilter(branch, organization);
-            string baseFilter = $"FinancialPeriod eq '{januaryPeriod}' and {dimensionFilter}";
-
-            var apiData = new FinancialApiData();
-
-            using (HttpClient client = new HttpClient())
-            {
-                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-                client.DefaultRequestHeaders.Accept.Clear();
-                client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-
-                var results = ExecuteFetchWithFallback(client, baseFilter, ledger);
-
-                if (results == null)
-                {
-                    throw new PXException(Messages.FailedToFetchOData);
-                }
-
-                foreach (var item in results)
-                {
-                    string accountId = item["Account"]?.ToString();
-                    decimal beginningBalance = item["BeginningBalance"]?.ToObject<decimal>() ?? 0;
-
-                    if (!apiData.AccountData.ContainsKey(accountId))
-                    {
-                        apiData.AccountData[accountId] = new FinancialPeriodData();
-                    }
-                    apiData.AccountData[accountId].BeginningBalance += beginningBalance;
-                    apiData.AccountData[accountId].EndingBalance += beginningBalance;
-                }
-            }
-            return apiData;
-        }
-
-        // --------------------------------------------------------
-        // 3) FetchRangeApiData
-        // --------------------------------------------------------
-        public FinancialApiData FetchRangeApiData(string branch, string organization, string ledger, string fromPeriod, string toPeriod)
-        {
-            string accessToken = _authService.AuthenticateAndGetToken();
-            string dimensionFilter = BuildDimensionFilter(branch, organization);
-            string baseFilter = $"FinancialPeriod ge '{fromPeriod}' and FinancialPeriod le '{toPeriod}' and {dimensionFilter}";
-
-            var cumulativeDict = new Dictionary<string, FinancialPeriodData>();
-
-            using (HttpClient client = new HttpClient())
-            {
-                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-                client.DefaultRequestHeaders.Accept.Clear();
-                client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-
-                var results = ExecuteFetchWithFallback(client, baseFilter, ledger);
-
-                if (results == null)
-                {
-                    throw new PXException(Messages.FailedToFetchOData);
-                }
-
-                foreach (var item in results)
-                {
-                    string accountId = item["Account"]?.ToString();
-                    decimal debit = item["Debit"]?.ToObject<decimal>() ?? 0;
-                    decimal credit = item["Credit"]?.ToObject<decimal>() ?? 0;
-                    decimal endingBalance = item["EndingBalance"]?.ToObject<decimal>() ?? 0;
-
-                    if (!cumulativeDict.ContainsKey(accountId))
-                    {
-                        cumulativeDict[accountId] = new FinancialPeriodData();
-                    }
-
-                    cumulativeDict[accountId].Debit += debit;
-                    cumulativeDict[accountId].Credit += credit;
-                    cumulativeDict[accountId].EndingBalance += endingBalance;
-                }
-            }
-
-            var apiData = new FinancialApiData();
-            foreach (var kvp in cumulativeDict)
-            {
-                apiData.AccountData[kvp.Key] = kvp.Value;
-            }
-
-            return apiData;
-        }
-
-        // --------------------------------------------------------
-        // 4) FetchCompositeKeyData
-        // --------------------------------------------------------
-        public FinancialApiData FetchCompositeKeyData(string branch, string organization, string ledger, string period)
-        {
-            string accessToken = _authService.AuthenticateAndGetToken();
-            string baseFilter = $"FinancialPeriod eq '{period}' and 1 eq 1";
-            string selectColumns = "Account,Subaccount,BeginningBalance,EndingBalance,Debit,Credit,BranchID,OrganizationID";
-
-            var compositeData = new Dictionary<string, FinancialPeriodData>();
-
-            using (HttpClient client = new HttpClient())
-            {
-                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-                client.DefaultRequestHeaders.Accept.Clear();
-                client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-
-                var results = ExecuteFetchWithFallback(client, baseFilter, ledger);
-
-                if (results == null)
-                {
-                    throw new PXException(Messages.FailedToFetchOData);
-                }
-
-                foreach (var item in results)
-                {
-                    string accountId = item["Account"]?.ToString()?.Trim();
-                    string subaccountId = item["Subaccount"]?.ToString()?.Trim() ?? "N/A";
-                    string branchId = item["BranchID"]?.ToString()?.Trim() ?? branch;
-                    string orgId = item["OrganizationID"]?.ToString()?.Trim() ?? organization;
-                    string compositeKey = $"{accountId}-{subaccountId}-{branchId}-{orgId}-{period}-{ledger}";
-
-                    var data = new FinancialPeriodData
-                    {
-                        Account = accountId,
-                        Subaccount = subaccountId,
-                        BeginningBalance = item["BeginningBalance"]?.ToObject<decimal>() ?? 0,
-                        EndingBalance = item["EndingBalance"]?.ToObject<decimal>() ?? 0,
-                        Debit = item["Debit"]?.ToObject<decimal>() ?? 0,
-                        Credit = item["Credit"]?.ToObject<decimal>() ?? 0,
-                    };
-
-                    compositeData[compositeKey] = data;
-                }
-            }
-
-            var apiData = new FinancialApiData();
-            foreach (var kvp in compositeData)
-            {
-                apiData.CompositeKeyData[kvp.Key] = kvp.Value;
-            }
-
-            return apiData;
-        }
-
-        // --------------------------------------------------------
-        // 5) FetchEndingBalance
-        // --------------------------------------------------------
-        public decimal FetchEndingBalance(string period, string branch, string organization, string ledger, string account, string subaccount)
-        {
-            if (string.IsNullOrEmpty(period) || string.IsNullOrEmpty(branch) ||
-                string.IsNullOrEmpty(organization) ||
-                string.IsNullOrEmpty(account) || string.IsNullOrEmpty(subaccount))
-            {
-                PXTrace.WriteWarning("FetchEndingBalance called with missing filter parameters.");
-                return 0m;
-            }
-
-            string accessToken = _authService.AuthenticateAndGetToken();
-            string baseFilter = $"FinancialPeriod eq '{period}' and BranchID eq '{branch}' and OrganizationID eq '{organization}' and " + $"Account eq '{account}' and Subaccount eq '{subaccount}'";
-            string selectColumns = "EndingBalance";
-
-            using (HttpClient client = new HttpClient())
-            {
-                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-                client.DefaultRequestHeaders.Accept.Clear();
-                client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-
-                var results = ExecuteFetchWithFallback(client, baseFilter, ledger);
-
-                if (results == null || results.Count == 0)
-                {
-                    PXTrace.WriteWarning($"No rows found for precise match: {baseFilter}");
-                    return 0m;
-                }
-
-                return results.FirstOrDefault()?["EndingBalance"]?.ToObject<decimal>() ?? 0m;
-            }
-        }
-
+        
         // --------------------------------------------------------
         // HELPER: BuildDimensionFilter
         // --------------------------------------------------------
@@ -587,8 +582,26 @@ namespace FinancialReport.Services
 
             return placeholders;
         }
-    }
 
+
+        // ✅ Optional: Static cleanup method
+        public static void Cleanup()
+        {
+            try
+            {
+                _httpClient?.Dispose();
+                _authSemaphore?.Dispose();
+                PXTrace.WriteInformation("FinancialDataService: Static resources cleaned up");
+            }
+            catch (Exception ex)
+            {
+                PXTrace.WriteError($"Error during cleanup: {ex.Message}");
+            }
+        }
+
+
+
+    }
 
 
     // Classes for convenience
