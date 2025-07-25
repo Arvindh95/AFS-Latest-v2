@@ -107,11 +107,5 @@ namespace FinancialReport
         public abstract class noteID : PX.Data.BQL.BqlGuid.Field<noteID> { }
         #endregion
 
-        //#region Password
-        //[PXDBBinary]
-        //[PXUIField(DisplayName = "Password (Legacy)", Visible = false, Enabled = false)]
-        //public virtual byte[] Password { get; set; }
-        //public abstract class password : PX.Data.BQL.BqlByteArray.Field<password> { }
-        //#endregion
     }
 }

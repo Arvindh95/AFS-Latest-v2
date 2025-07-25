@@ -12,9 +12,6 @@ namespace FinancialReport
 
         public SelectFrom<FLRTTenantCredentials>.View TenantCredentials;
 
-        //public PXFilter<FLRTTenantCredentials> MasterView;
-        //public PXFilter<FLRTTenantCredentials> DetailsView;
-
         public FLRTTenantCredentialsMaint()
         {
             PXTrace.WriteInformation("Graph initialized.");
@@ -58,90 +55,23 @@ namespace FinancialReport
             }
         }
 
-        // FieldSelecting to display byte[] as string in UI
-        //protected void FLRTTenantCredentials_ClientID_FieldSelecting(PXCache cache, PXFieldSelectingEventArgs e)
-        //{
-        //    var row = (FLRTTenantCredentials)e.Row;
-        //    if (row?.ClientID != null)
-        //    {
-        //        string value = Encoding.UTF8.GetString(row.ClientID);
-        //        PXTrace.WriteInformation($"Displaying ClientID: {value}");
-        //        e.ReturnValue = value;
-        //    }
-        //}
-
-        //protected void FLRTTenantCredentials_SecretID_FieldSelecting(PXCache cache, PXFieldSelectingEventArgs e)
-        //{
-        //    var row = (FLRTTenantCredentials)e.Row;
-        //    if (row?.SecretID != null)
-        //    {
-        //        string value = Encoding.UTF8.GetString(row.SecretID);
-        //        PXTrace.WriteInformation($"Displaying SecretID: {value}");
-        //        e.ReturnValue = value;
-        //    }
-        //}
-
-        //protected void FLRTTenantCredentials_Username_FieldSelecting(PXCache cache, PXFieldSelectingEventArgs e)
-        //{
-        //    var row = (FLRTTenantCredentials)e.Row;
-        //    if (row?.Username != null)
-        //    {
-        //        string value = Encoding.UTF8.GetString(row.Username);
-        //        PXTrace.WriteInformation($"Displaying Username: {value}");
-        //        e.ReturnValue = value;
-        //    }
-        //}
-
-        //protected void FLRTTenantCredentials_Password_FieldSelecting(PXCache cache, PXFieldSelectingEventArgs e)
-        //{
-        //    var row = (FLRTTenantCredentials)e.Row;
-        //    if (row?.Password != null)
-        //    {
-        //        string value = Encoding.UTF8.GetString(row.Password);
-        //        PXTrace.WriteInformation($"Displaying Password: {value}");
-        //        e.ReturnValue = value;
-        //    }
-        //}
-
         // RowPersisting for validation and logging
         protected void FLRTTenantCredentials_RowPersisting(PXCache cache, PXRowPersistingEventArgs e)
         {
             var row = (FLRTTenantCredentials)e.Row;
-            if (row == null) return;
-
-            //PXTrace.WriteInformation($"Persisting row: CompanyNum={row.CompanyNum}, TenantName={row.TenantName}, ClientID={ByteArrayToString(row.ClientID)}, SecretID={ByteArrayToString(row.SecretID)}, Username={ByteArrayToString(row.Username)}, Password={ByteArrayToString(row.Password)}");
+            if (row == null) return;       
 
             // Validate required fields
             if (row.CompanyNum == null)
             {
-                cache.RaiseExceptionHandling<FLRTTenantCredentials.companyNum>(row, null, new PXSetPropertyException("Company Number is required.", PXErrorLevel.Error));
-                throw new PXException("Company Number is required.");
+                cache.RaiseExceptionHandling<FLRTTenantCredentials.companyNum>(row, null, new PXSetPropertyException(Messages.CompanyNumRequired, PXErrorLevel.Error));
+                throw new PXException(Messages.CompanyNumRequired);
             }
             if (string.IsNullOrEmpty(row.TenantName))
             {
-                cache.RaiseExceptionHandling<FLRTTenantCredentials.tenantName>(row, null, new PXSetPropertyException("Tenant Name is required.", PXErrorLevel.Error));
-                throw new PXException("Tenant Name is required.");
+                cache.RaiseExceptionHandling<FLRTTenantCredentials.tenantName>(row, null, new PXSetPropertyException(Messages.TenantNameRequired, PXErrorLevel.Error));
+                throw new PXException(Messages.TenantNameRequired);
             }
-            //if (row.ClientID == null || row.ClientID.Length == 0)
-            //{
-            //    cache.RaiseExceptionHandling<FLRTTenantCredentials.clientID>(row, null, new PXSetPropertyException("Client ID is required.", PXErrorLevel.Error));
-            //    throw new PXException("Client ID is required.");
-            //}
-            //if (row.SecretID == null || row.SecretID.Length == 0)
-            //{
-            //    cache.RaiseExceptionHandling<FLRTTenantCredentials.secretID>(row, null, new PXSetPropertyException("Client Secret is required.", PXErrorLevel.Error));
-            //    throw new PXException("Client Secret is required.");
-            //}
-            //if (row.Username == null || row.Username.Length == 0)
-            //{
-            //    cache.RaiseExceptionHandling<FLRTTenantCredentials.username>(row, null, new PXSetPropertyException("Username is required.", PXErrorLevel.Error));
-            //    throw new PXException("Username is required.");
-            //}
-            //if (row.Password == null || row.Password.Length == 0)
-            //{
-            //    cache.RaiseExceptionHandling<FLRTTenantCredentials.password>(row, null, new PXSetPropertyException("Password is required.", PXErrorLevel.Error));
-            //    throw new PXException("Password is required.");
-            //}
 
             // Check for duplicate TenantName (excluding the current row)
             FLRTTenantCredentials existing = PXSelect<FLRTTenantCredentials,
@@ -151,8 +81,8 @@ namespace FinancialReport
 
             if (existing != null)
             {
-                cache.RaiseExceptionHandling<FLRTTenantCredentials.tenantName>(row, row.TenantName, new PXSetPropertyException("Tenant Name must be unique.", PXErrorLevel.Error));
-                throw new PXException("Tenant Name must be unique.");
+                cache.RaiseExceptionHandling<FLRTTenantCredentials.tenantName>(row, row.TenantName, new PXSetPropertyException(Messages.TenantNameMustBeUnique, PXErrorLevel.Error));
+                throw new PXException(Messages.TenantNameMustBeUnique);
             }
         }
 
@@ -192,12 +122,6 @@ namespace FinancialReport
             {
                 PXTrace.WriteInformation("Save action triggered.");
 
-                // Log the state of the cache before saving
-                //foreach (FLRTTenantCredentials row in TenantCredentials.Cache.Cached)
-                //{
-                //    PXTrace.WriteInformation($"Cache state before save: CompanyNum={row.CompanyNum}, TenantName={row.TenantName}, ClientID={ByteArrayToString(row.ClientID)}, SecretID={ByteArrayToString(row.SecretID)}, Username={ByteArrayToString(row.Username)}, Password={ByteArrayToString(row.Password)}");
-                //}
-
                 // Persist the cache
                 TenantCredentials.Cache.Persist(PXDBOperation.Insert | PXDBOperation.Update);
 
@@ -211,24 +135,10 @@ namespace FinancialReport
             catch (Exception ex)
             {
                 PXTrace.WriteError($"Save failed: {ex.Message}\nStack Trace: {ex.StackTrace}");
-                throw new PXException($"Failed to save: {ex.Message}", ex);
+                throw new PXException(Messages.FailedToSaveMessage, ex);
             }
         }
 
-        //public PXAction<FLRTTenantCredentials> forceInsertTest;
-        //[PXButton]
-        //[PXUIField(DisplayName = "Force Insert Test")]
-        //protected void ForceInsertTest()
-        //{
-        //    PXDatabase.Insert<FLRTTenantCredentials>(
-        //        new PXDataFieldAssign<FLRTTenantCredentials.companyNum>(7),
-        //        new PXDataFieldAssign<FLRTTenantCredentials.tenantName>("Tenant2"),
-        //        new PXDataFieldAssign<FLRTTenantCredentials.clientID>(Encoding.UTF8.GetBytes("Client7")),
-        //        new PXDataFieldAssign<FLRTTenantCredentials.secretID>(Encoding.UTF8.GetBytes("Secret7")),
-        //        new PXDataFieldAssign<FLRTTenantCredentials.username>(Encoding.UTF8.GetBytes("User7")),
-        //        new PXDataFieldAssign<FLRTTenantCredentials.password>(Encoding.UTF8.GetBytes("Pass7"))
-        //    );
-        //}
         #endregion
     }
 }

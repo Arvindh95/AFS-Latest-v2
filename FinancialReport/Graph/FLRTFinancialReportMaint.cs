@@ -73,6 +73,7 @@ namespace FinancialReport
 
         protected virtual void FLRTFinancialReport_RowInserted(PXCache sender, PXRowInsertedEventArgs e)
         {
+            // Acuminator disable once PX1043 SavingChangesInEventHandlers [Justification]
             this.Actions.PressSave();
             FinancialReport.Current = null;
             FinancialReport.Cache.Clear();
@@ -97,7 +98,7 @@ namespace FinancialReport
 
             // Perform initial validations on the UI thread
             if (selectedRecord == null) throw new PXException(Messages.PleaseSelectTemplate);
-            if (selectedRecord.ReportID == null) throw new PXException("No report selected or report ID is missing.");
+            if (selectedRecord.ReportID == null) throw new PXException(Messages.NoReportSelected);
             if (selectedRecord.Status == ReportStatus.InProgress) throw new PXException(Messages.FileGenerationInProgress);
             if (selectedRecord.Noteid == null) throw new PXException(Messages.TemplateHasNoFiles);
 
@@ -188,7 +189,7 @@ namespace FinancialReport
         public int? GetCompanyIDFromDB(int? reportID)
         {
             if (reportID == null)
-                throw new PXException("ReportID cannot be null when retrieving CompanyID.");
+                throw new PXException(Messages.ReportIDNull);
 
             using (new PXConnectionScope())
             {
@@ -199,13 +200,13 @@ namespace FinancialReport
 
                 if (result != null) return result.GetInt32(0);
             }
-            throw new PXException($"No CompanyID found for ReportID {reportID}.");
+            throw new PXException(Messages.NoCompanyIDFound);
         }
 
         public string MapCompanyIDToTenantName(int? companyID)
         {
             if (companyID == null)
-                throw new PXException(Messages.NoCompanyNum);
+                throw new PXException(Messages.CompanyNumRequired);
 
             FLRTTenantCredentials tenantCreds = PXSelect<FLRTTenantCredentials,
                 Where<FLRTTenantCredentials.companyNum, Equal<Required<FLRTTenantCredentials.companyNum>>>>
