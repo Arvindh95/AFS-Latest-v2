@@ -94,9 +94,37 @@ namespace FinancialReport.Services
 
                 // 6. Map Data to Placeholders
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                Dictionary<string, string> finalPlaceholders = localDataService.BuildSmartPlaceholderMapFromKeys(
-                    extractedKeys, currYearData, prevYearData, januaryBeginningDataCY, januaryBeginningDataPY, cumulativeCYData, cumulativePYData
+
+                // Split placeholders into standard and prefix-based
+                var standardPlaceholders = extractedKeys.Where(key => !localDataService.HasPrefixPattern(key)).ToList();
+                var prefixPlaceholders = extractedKeys.Where(key => localDataService.HasPrefixPattern(key)).ToList();
+
+                PXTrace.WriteInformation($"Found {standardPlaceholders.Count} standard placeholders and {prefixPlaceholders.Count} prefix placeholders");
+
+                // Process standard placeholders with existing logic
+                Dictionary<string, string> standardResults = localDataService.BuildSmartPlaceholderMapFromKeys(
+                    standardPlaceholders, currYearData, prevYearData, januaryBeginningDataCY, januaryBeginningDataPY, cumulativeCYData, cumulativePYData
                 );
+
+                // Process prefix placeholders with new logic
+                var userSettings = new UserSettings
+                {
+                    Branch = _currentRecord.Branch,
+                    Organization = _currentRecord.Organization,
+                    Ledger = _currentRecord.Ledger
+                };
+
+                Dictionary<string, string> prefixResults = localDataService.ProcessPrefixPlaceholders(
+                    prefixPlaceholders, selectedPeriod, prevYearPeriod, userSettings
+                );
+
+                // Merge results
+                Dictionary<string, string> finalPlaceholders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var kvp in standardResults)
+                    finalPlaceholders[kvp.Key] = kvp.Value;
+                foreach (var kvp in prefixResults)
+                    finalPlaceholders[kvp.Key] = kvp.Value;
+
                 sw.Stop();
                 PXTrace.WriteInformation($"Placeholder mapping completed in {sw.ElapsedMilliseconds} ms");
 

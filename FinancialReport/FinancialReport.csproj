@@ -16,6 +16,8 @@
     <FileVersion>24.204.0004</FileVersion>
     <InformationalVersion>24.204.0004</InformationalVersion>
     <Copyright>Copyright © 2005-2024 Acumatica, Inc. All rights reserved.</Copyright>
+	<LangVersion>9.0</LangVersion>
+    <Nullable>enable</Nullable>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>

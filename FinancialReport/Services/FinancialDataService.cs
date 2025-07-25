@@ -53,6 +53,7 @@ namespace FinancialReport.Services
         // --------------------------------------------------------
         public FinancialApiData FetchAllApiData(string branch, string organization, string ledger, string period)
         {
+            TestBalanceTypes();
             string accessToken = _authService.AuthenticateAndGetToken();
             string dimensionFilter = BuildDimensionFilter(branch, organization);
             string filter = $"FinancialPeriod eq '{period}' and {dimensionFilter}";
@@ -599,6 +600,454 @@ namespace FinancialReport.Services
             }
         }
 
+        // Add this method to FinancialDataService class
+        // Replace the existing FetchBalanceForPrefixPlaceholder method with this enhanced version
+        private decimal FetchBalanceForPrefixPlaceholder(PrefixPlaceholderInfo info)
+        {
+            try
+            {
+                // Build OData filter
+                var filterParts = new List<string>();
+
+                // Always filter by period and account
+                filterParts.Add($"FinancialPeriod eq '{info.Period}'");
+                filterParts.Add($"Account eq '{info.Account}'");
+
+                // Add dimensional filters only if not "1" (which means no filter)
+                if (!string.IsNullOrEmpty(info.Branch) && info.Branch != "1")
+                    filterParts.Add($"BranchID eq '{info.Branch}'");
+
+                if (!string.IsNullOrEmpty(info.Organization) && info.Organization != "1")
+                    filterParts.Add($"OrganizationID eq '{info.Organization}'");
+
+                if (!string.IsNullOrEmpty(info.Ledger) && info.Ledger != "1")
+                    filterParts.Add($"LedgerID eq '{info.Ledger}'");
+
+                if (!string.IsNullOrEmpty(info.Subaccount) && info.Subaccount != "1")
+                    filterParts.Add($"Subaccount eq '{info.Subaccount}'");
+
+                string filter = string.Join(" and ", filterParts);
+
+                // Select columns based on balance type
+                string selectColumns = GetSelectColumnsForBalanceType(info.BalanceType);
+
+                PXTrace.WriteInformation($"Executing prefix OData query (BalanceType: {info.BalanceType}): {filter}");
+
+                // Get access token and execute query
+                string accessToken = _authService.AuthenticateAndGetToken();
+                SetAuthorizationHeader(accessToken);
+
+                // Use existing fallback logic
+                var results = ExecutePrefixFetchWithFallback(filter, selectColumns);
+
+                // Sum all matching records based on balance type
+                decimal totalBalance = 0m;
+                foreach (var result in results)
+                {
+                    decimal value = GetBalanceValueFromResult(result, info.BalanceType);
+                    totalBalance += value;
+                }
+
+                PXTrace.WriteInformation($"Prefix query returned {results.Count} records, total {info.BalanceType} balance: {totalBalance}");
+
+                return totalBalance;
+            }
+            catch (Exception ex)
+            {
+                PXTrace.WriteError($"Failed to fetch balance for prefix placeholder {info.OriginalPlaceholder}: {ex.Message}");
+                return 0m;
+            }
+        }
+
+        // Helper method to get appropriate select columns based on balance type
+        private string GetSelectColumnsForBalanceType(string balanceType)
+        {
+            switch (balanceType.ToLower())
+            {
+                case "credit":
+                    return "Credit";
+                case "debit":
+                    return "Debit";
+                case "beginning":
+                    return "BeginningBalance";
+                case "ending":
+                default:
+                    return "EndingBalance";
+            }
+        }
+
+        // Helper method to extract the correct balance value from the result
+        private decimal GetBalanceValueFromResult(JToken result, string balanceType)
+        {
+            switch (balanceType.ToLower())
+            {
+                case "credit":
+                    return result["Credit"]?.ToObject<decimal>() ?? 0m;
+                case "debit":
+                    return result["Debit"]?.ToObject<decimal>() ?? 0m;
+                case "beginning":
+                    return result["BeginningBalance"]?.ToObject<decimal>() ?? 0m;
+                case "ending":
+                default:
+                    return result["EndingBalance"]?.ToObject<decimal>() ?? 0m;
+            }
+        }
+
+        // Helper method for prefix placeholder OData execution
+        private List<JToken> ExecutePrefixFetchWithFallback(string filter, string selectColumns)
+        {
+            string modernUrlBase = $"{_baseUrl}/odata/{_tenantName}/TrialBalance";
+            string legacyUrlBase = $"{_baseUrl}/t/{_tenantName}/api/odata/gi/TrialBalance";
+
+            // Try modern URL first
+            var results = PaginatedFetch(_httpClient, modernUrlBase, filter, selectColumns);
+            if (results != null) return results;
+
+            // Try legacy URL if modern fails
+            results = PaginatedFetch(_httpClient, legacyUrlBase, filter, selectColumns);
+            if (results != null) return results;
+
+            // Return empty list if both fail
+            PXTrace.WriteWarning($"Both modern and legacy URLs failed for filter: {filter}");
+            return new List<JToken>();
+        }
+
+        // Add this method to FinancialDataService class
+        // Replace the existing ParsePrefixPlaceholder method with this enhanced version
+        private PrefixPlaceholderInfo ParsePrefixPlaceholder(string placeholder, string currentYearPeriod, string previousYearPeriod, UserSettings userSettings)
+        {
+            try
+            {
+                string cleanKey = placeholder.Trim('{', '}');
+                var parts = cleanKey.Split('_');
+
+                if (parts.Length < 2)
+                {
+                    PXTrace.WriteWarning($"Invalid prefix placeholder format: {placeholder}");
+                    return null;
+                }
+
+                // First part should be account
+                string account = parts[0];
+
+                // Last part should be CY or PY
+                string yearType = parts[parts.Length - 1].ToUpper();
+                if (yearType != "CY" && yearType != "PY")
+                {
+                    PXTrace.WriteWarning($"Invalid year type in placeholder: {placeholder}");
+                    return null;
+                }
+
+                // Create placeholder info with defaults from user settings
+                var info = new PrefixPlaceholderInfo
+                {
+                    OriginalPlaceholder = placeholder,
+                    Account = account,
+                    YearType = yearType,
+                    Period = yearType == "CY" ? currentYearPeriod : previousYearPeriod,
+                    BalanceType = "ending", // Default balance type
+
+                    // Set defaults from user settings or "1"
+                    Branch = !string.IsNullOrEmpty(userSettings?.Branch) ? userSettings.Branch : "1",
+                    Organization = !string.IsNullOrEmpty(userSettings?.Organization) ? userSettings.Organization : "1",
+                    Ledger = !string.IsNullOrEmpty(userSettings?.Ledger) ? userSettings.Ledger : "1",
+                    Subaccount = "1" // Always default to "1"
+                };
+
+                // Parse middle parts for prefix components
+                var middleParts = parts.Skip(1).Take(parts.Length - 2);
+
+                foreach (var part in middleParts)
+                {
+                    if (part.StartsWith("sb", StringComparison.OrdinalIgnoreCase))
+                    {
+                        info.Subaccount = part.Substring(2); // Remove "sb" prefix
+                    }
+                    else if (part.StartsWith("br", StringComparison.OrdinalIgnoreCase))
+                    {
+                        info.Branch = part.Substring(2); // Remove "br" prefix
+                    }
+                    else if (part.StartsWith("ld", StringComparison.OrdinalIgnoreCase))
+                    {
+                        info.Ledger = part.Substring(2); // Remove "ld" prefix
+                    }
+                    else if (part.StartsWith("or", StringComparison.OrdinalIgnoreCase))
+                    {
+                        info.Organization = part.Substring(2); // Remove "or" prefix
+                    }
+                    else if (part.StartsWith("bt", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string balanceType = part.Substring(2).ToLower(); // Remove "bt" prefix
+
+                        // Validate balance type
+                        if (balanceType == "credit" || balanceType == "debit" ||
+                            balanceType == "beginning" || balanceType == "ending")
+                        {
+                            info.BalanceType = balanceType;
+                        }
+                        else
+                        {
+                            PXTrace.WriteWarning($"Invalid balance type '{balanceType}' in placeholder {placeholder}. Using default 'ending'.");
+                            info.BalanceType = "ending";
+                        }
+                    }
+                }
+
+                PXTrace.WriteInformation($"Parsed {placeholder} → Account:{info.Account}, Branch:{info.Branch}, Org:{info.Organization}, Ledger:{info.Ledger}, Subacct:{info.Subaccount}, BalanceType:{info.BalanceType}, Period:{info.Period}");
+
+                return info;
+            }
+            catch (Exception ex)
+            {
+                PXTrace.WriteError($"Failed to parse prefix placeholder {placeholder}: {ex.Message}");
+                return null;
+            }
+        }
+
+        // Add this main method to FinancialDataService class
+        public Dictionary<string, string> ProcessPrefixPlaceholders(List<string> prefixPlaceholders,string currentYearPeriod,string previousYearPeriod,UserSettings userSettings)
+        {
+            var results = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            // Apply 50 placeholder limit
+            const int MAX_PREFIX_QUERIES = 50;
+            var keysToProcess = prefixPlaceholders.Take(MAX_PREFIX_QUERIES).ToList();
+
+            if (prefixPlaceholders.Count > MAX_PREFIX_QUERIES)
+            {
+                PXTrace.WriteWarning($"Prefix placeholder limit reached. Processing {MAX_PREFIX_QUERIES} out of {prefixPlaceholders.Count} prefix placeholders.");
+
+                // Set remaining keys to 0
+                foreach (var skippedKey in prefixPlaceholders.Skip(MAX_PREFIX_QUERIES))
+                {
+                    results[skippedKey] = "0";
+                }
+            }
+
+            PXTrace.WriteInformation($"Processing {keysToProcess.Count} prefix placeholders...");
+
+            // Process each prefix placeholder
+            foreach (var placeholder in keysToProcess)
+            {
+                try
+                {
+                    // Parse the placeholder
+                    var info = ParsePrefixPlaceholder(placeholder, currentYearPeriod, previousYearPeriod, userSettings);
+                    if (info == null)
+                    {
+                        results[placeholder] = "0";
+                        continue;
+                    }
+
+                    // Build and execute OData query
+                    decimal balance = FetchBalanceForPrefixPlaceholder(info);
+                    results[placeholder] = balance.ToString("#,##0");
+
+                    PXTrace.WriteInformation($"Prefix result: {placeholder} = {balance}");
+                }
+                catch (Exception ex)
+                {
+                    PXTrace.WriteError($"Failed to process prefix placeholder {placeholder}: {ex.Message}");
+                    results[placeholder] = "0";
+                }
+            }
+
+            return results;
+        }
+
+        // Add this method to FinancialDataService class
+        public bool HasPrefixPattern(string placeholder)
+        {
+            string cleanKey = placeholder.Trim('{', '}');
+            return cleanKey.Contains("_sb") || cleanKey.Contains("_ld") ||
+                   cleanKey.Contains("_or") || cleanKey.Contains("_br") ||
+                   cleanKey.Contains("_bt"); // NEW: Add bt detection
+        }
+
+        // Temporary test method - we'll remove this later
+        public void TestPrefixParsing()
+        {
+            // Create mock user settings
+            var userSettings = new UserSettings
+            {
+                Branch = "USERBRANCH",
+                Organization = "USERORG",
+                Ledger = "USERLEDGER"
+            };
+
+            var testPlaceholders = new List<string>
+            {
+                "{{A123456_brHQ_CY}}",                              // Only branch specified
+                "{{B111222_sbMAIN-001_ldACTUAL_PY}}",              // Subaccount and ledger
+                "{{C333444_orM_CY}}",                               // Only organization
+                "{{D444555_ldBUDGET_brHQ_orM_sbXXXXXX_CY}}",       // All components
+                "{{E555666_CY}}"                                    // No prefixes (should fail)
+            };
+
+            PXTrace.WriteInformation("=== Testing Prefix Parsing ===");
+
+            foreach (var placeholder in testPlaceholders)
+            {
+                if (HasPrefixPattern(placeholder))
+                {
+                    var parsed = ParsePrefixPlaceholder(placeholder, "122024", "122023", userSettings);
+                    if (parsed != null)
+                    {
+                        PXTrace.WriteInformation($"✅ SUCCESS: {placeholder}");
+                    }
+                    else
+                    {
+                        PXTrace.WriteError($"❌ FAILED: {placeholder}");
+                    }
+                }
+                else
+                {
+                    PXTrace.WriteInformation($"⏭️ SKIPPED (no prefix): {placeholder}");
+                }
+            }
+
+            PXTrace.WriteInformation("=== Parsing Test Complete ===");
+        }
+
+        //// Temporary test method - we'll remove this later
+        //public void TestPrefixDetection()
+        //{
+        //    var testPlaceholders = new List<string>
+        //    {
+        //        "{{A123456_CY}}",                                    // Should return FALSE
+        //        "{{Sum3_B53_CY}}",                                   // Should return FALSE  
+        //        "{{A123456_brHQ_CY}}",                              // Should return TRUE
+        //        "{{B111222_sbMAIN-001_ldACTUAL_PY}}",              // Should return TRUE
+        //        "{{C333444_orM_CY}}",                               // Should return TRUE
+        //        "{{D444555_ldBUDGET_brHQ_orM_sbXXXXXX_CY}}"        // Should return TRUE
+        //    };
+
+        //    PXTrace.WriteInformation("=== Testing Prefix Detection ===");
+
+        //    foreach (var placeholder in testPlaceholders)
+        //    {
+        //        bool hasPrefix = HasPrefixPattern(placeholder);
+        //        PXTrace.WriteInformation($"{placeholder} → {hasPrefix}");
+        //    }
+
+        //    PXTrace.WriteInformation("=== Test Complete ===");
+        //}
+
+        //// Temporary test method for full system testing
+        //public void TestCompleteSystem()
+        //{
+        //    PXTrace.WriteInformation("=== Testing Complete Prefix System ===");
+
+        //    // Simulate extracted placeholders from a document
+        //    var mockExtractedKeys = new List<string>
+        //    {
+        //        "{{A123456_CY}}",                              // Standard placeholder
+        //        "{{Sum3_B53_CY}}",                             // Standard aggregation
+        //        "{{A123456_brHQ_CY}}",                         // Prefix: branch only
+        //        "{{B111222_sbMAIN-001_ldACTUAL_PY}}",         // Prefix: subaccount + ledger
+        //        "{{C333444_orM_brMAIN_CY}}",                   // Prefix: org + branch
+        //        "{{D444555_ldBUDGET_CY}}"                      // Prefix: ledger only
+        //    };
+
+        //    // Mock user settings
+        //    var userSettings = new UserSettings
+        //    {
+        //        Branch = "DEFAULTBRANCH",
+        //        Organization = "DEFAULTORG",
+        //        Ledger = "DEFAULTLEDGER"
+        //    };
+
+        //    // Split placeholders (like the real system does)
+        //    var standardPlaceholders = mockExtractedKeys.Where(key => !HasPrefixPattern(key)).ToList();
+        //    var prefixPlaceholders = mockExtractedKeys.Where(key => HasPrefixPattern(key)).ToList();
+
+        //    PXTrace.WriteInformation($"Standard placeholders ({standardPlaceholders.Count}): {string.Join(", ", standardPlaceholders)}");
+        //    PXTrace.WriteInformation($"Prefix placeholders ({prefixPlaceholders.Count}): {string.Join(", ", prefixPlaceholders)}");
+
+        //    // Test prefix processing
+        //    PXTrace.WriteInformation("--- Testing Prefix Processing ---");
+        //    try
+        //    {
+        //        var prefixResults = ProcessPrefixPlaceholders(prefixPlaceholders, "122024", "122023", userSettings);
+
+        //        foreach (var result in prefixResults)
+        //        {
+        //            PXTrace.WriteInformation($"Prefix Result: {result.Key} = {result.Value}");
+        //        }
+
+        //        PXTrace.WriteInformation("✅ Prefix processing completed successfully!");
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        PXTrace.WriteError($"❌ Prefix processing failed: {ex.Message}");
+        //    }
+
+        //    PXTrace.WriteInformation("=== Complete System Test Finished ===");
+        //}
+
+        //// Temporary test method for balance types
+        //public void TestBalanceTypes()
+        //{
+        //    PXTrace.WriteInformation("=== Testing Balance Types ===");
+
+        //    // Test different balance types
+        //    var testPlaceholders = new List<string>
+        //    {
+        //        "{{A123456_brHQ_CY}}",                    // Default (ending balance)
+        //        "{{A123456_brHQ_btEnding_CY}}",          // Explicit ending balance
+        //        "{{A123456_brHQ_btCredit_CY}}",          // Credit balance
+        //        "{{A123456_brHQ_btDebit_CY}}",           // Debit balance
+        //        "{{A123456_brHQ_btBeginning_CY}}",       // Beginning balance
+        //        "{{B111222_sbMAIN-001_btCredit_PY}}",    // Credit with subaccount
+        //        "{{C333444_ldACTUAL_btDebit_CY}}",       // Debit with ledger
+        //        "{{D444555_btInvalid_CY}}"               // Invalid balance type (should default to ending)
+        //    };
+
+        //    var userSettings = new UserSettings
+        //    {
+        //        Branch = "TESTBRANCH",
+        //        Organization = "TESTORG",
+        //        Ledger = "TESTLEDGER"
+        //    };
+
+        //    foreach (var placeholder in testPlaceholders)
+        //    {
+        //        if (HasPrefixPattern(placeholder))
+        //        {
+        //            PXTrace.WriteInformation($"--- Testing: {placeholder} ---");
+
+        //            // Parse the placeholder
+        //            var parsed = ParsePrefixPlaceholder(placeholder, "122024", "122023", userSettings);
+        //            if (parsed != null)
+        //            {
+        //                PXTrace.WriteInformation($"Parsed BalanceType: {parsed.BalanceType}");
+
+        //                // Test the actual data fetching
+        //                try
+        //                {
+        //                    decimal balance = FetchBalanceForPrefixPlaceholder(parsed);
+        //                    PXTrace.WriteInformation($"✅ Result: {placeholder} = {balance}");
+        //                }
+        //                catch (Exception ex)
+        //                {
+        //                    PXTrace.WriteError($"❌ Failed to fetch: {ex.Message}");
+        //                }
+        //            }
+        //            else
+        //            {
+        //                PXTrace.WriteError($"❌ Failed to parse: {placeholder}");
+        //            }
+        //        }
+        //        else
+        //        {
+        //            PXTrace.WriteInformation($"⏭️ SKIPPED (no prefix): {placeholder}");
+        //        }
+        //    }
+
+        //    PXTrace.WriteInformation("=== Balance Types Test Complete ===");
+        //}
+
+
 
 
     }
@@ -621,5 +1070,25 @@ namespace FinancialReport.Services
 
         // 🔥 New: Optional composite key-level data
         public Dictionary<string, FinancialPeriodData> CompositeKeyData { get; set; } = new Dictionary<string, FinancialPeriodData>();
+    }
+
+    public class PrefixPlaceholderInfo
+    {
+        public string OriginalPlaceholder { get; set; }
+        public string Account { get; set; }
+        public string Subaccount { get; set; }
+        public string Branch { get; set; }
+        public string Ledger { get; set; }
+        public string Organization { get; set; }
+        public string YearType { get; set; } // "CY" or "PY"
+        public string Period { get; set; }   // "122024" or "122023"
+        public string BalanceType { get; set; } = "ending";
+    }
+
+    public class UserSettings
+    {
+        public string Branch { get; set; }
+        public string Organization { get; set; }
+        public string Ledger { get; set; }
     }
 }
