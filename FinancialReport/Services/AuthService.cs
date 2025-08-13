@@ -157,7 +157,8 @@ namespace FinancialReport.Services
             try
             {
                 string url = $"{_baseUrl}/entity/auth/logout";
-                using (var client = new HttpClient { Timeout = HttpTimeout })
+                var handler = new HttpClientHandler { UseProxy = false };
+                using (var client = new HttpClient(handler) { Timeout = HttpTimeout }) // ✅ Add this line
                 {
                     client.DefaultRequestHeaders.Authorization =
                         new AuthenticationHeaderValue("Bearer", _accessToken);

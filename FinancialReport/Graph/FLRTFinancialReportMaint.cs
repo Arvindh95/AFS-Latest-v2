@@ -115,8 +115,8 @@ namespace FinancialReport
             );
 
             // Pre-authenticate to ensure credentials are valid before starting the long operation
-            authService.AuthenticateAndGetToken();
-            PXTrace.WriteInformation($"Successfully authenticated for {tenantName}.");
+            //authService.AuthenticateAndGetToken();
+            //PXTrace.WriteInformation($"Successfully authenticated for {tenantName}.");
 
             // Mark record as In Progress and save before starting background task
             selectedRecord.Status = ReportStatus.InProgress;
@@ -135,6 +135,13 @@ namespace FinancialReport
                 {
                     if (dbRecord == null) throw new PXException(Messages.FailedToRetrieveFile);
                     if (dbRecord.Noteid == null) throw new PXException(Messages.TemplateHasNoFiles);
+
+                    // ← ADD THE AUTHENTICATION CODE HERE ↓
+                    // Pre-authenticate INSIDE the long operation where async/sync issues are less problematic
+                    PXTrace.WriteInformation("Authenticating...");
+                    authService.AuthenticateAndGetToken();
+                    PXTrace.WriteInformation($"Successfully authenticated for {tenantName}.");
+                    // ← ADD THE AUTHENTICATION CODE HERE ↑
 
                     // Instantiate and execute the new service
                     var generationService = new ReportGenerationService(reportGraph, dbRecord, authService);
