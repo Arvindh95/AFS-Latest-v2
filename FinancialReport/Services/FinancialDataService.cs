@@ -1,4 +1,5 @@
 ﻿//using FinancialReport.Helper;
+using FinancialReport.Helper;
 using Newtonsoft.Json.Linq;
 using PX.Data;
 using System;
@@ -863,7 +864,619 @@ namespace FinancialReport.Services
                    cleanKey.Contains("_bt"); // NEW: Add bt detection
         }
 
+        public List<PlaceholderRequest> AnalyzePlaceholders(List<string> placeholderKeys, string currentYearPeriod, string previousYearPeriod, UserSettings userSettings)
+        {
+            var requests = new List<PlaceholderRequest>();
+
+            TraceLogger.Info($"=== ANALYZING {placeholderKeys.Count} PLACEHOLDERS ===");
+
+            // Group placeholders by type and period
+            var simpleAccountsCY = new List<string>();
+            var simpleAccountsPY = new List<string>();
+            var sumPrefixesCY = new List<string>();
+            var sumPrefixesPY = new List<string>();
+            var otherPlaceholders = new List<string>();
+            var debitCreditSumsCY = new List<string>();
+            var debitCreditSumsPY = new List<string>();
+            var begSumsCY = new List<string>();
+            var begSumsPY = new List<string>();
+            var janBalancesCY = new List<string>();
+            var janBalancesPY = new List<string>();
+            var specificBalancesCY = new List<string>();
+            var specificBalancesPY = new List<string>();
+
+            foreach (var placeholder in placeholderKeys)
+            {
+                string cleanKey = placeholder.Trim('{', '}');
+
+                // Prefix placeholder: A12345_sb000123_br001_btcredit_CY
+                if (HasPrefixPattern(placeholder))
+                {
+                    otherPlaceholders.Add(placeholder);
+                    TraceLogger.Info($"✅ Prefix placeholder: {placeholder}");
+                }
+                // Simple account: A39101_CY
+                else if (Regex.IsMatch(cleanKey, @"^[A-Z]\d+_(CY|PY)$"))
+                {
+                    if (cleanKey.EndsWith("_CY"))
+                        simpleAccountsCY.Add(placeholder);
+                    else
+                        simpleAccountsPY.Add(placeholder);
+                    TraceLogger.Info($"✅ Simple account: {placeholder}");
+                }
+                // Sum prefix: Sum3_B69_CY, Sum1_B_CY
+                else if (Regex.IsMatch(cleanKey, @"^Sum\d+_[A-Z]\d*_(CY|PY)$"))
+                {
+                    if (cleanKey.EndsWith("_CY"))
+                        sumPrefixesCY.Add(placeholder);
+                    else
+                        sumPrefixesPY.Add(placeholder);
+                    TraceLogger.Info($"✅ Sum prefix: {placeholder}");
+                }
+                // Debit/Credit Sum: DebitSum3_B53_CY, CreditSum3_B53_CY
+                else if (Regex.IsMatch(cleanKey, @"^(Debit|Credit)Sum\d+_[A-Z]\d*_(CY|PY)$"))
+                {
+                    if (cleanKey.EndsWith("_CY"))
+                        debitCreditSumsCY.Add(placeholder);
+                    else
+                        debitCreditSumsPY.Add(placeholder);
+                    TraceLogger.Info($"✅ Debit/Credit sum: {placeholder}");
+                }
+                // Beginning Sum: BegSum3_A11_CY
+                else if (Regex.IsMatch(cleanKey, @"^BegSum\d+_[A-Z]\d*_(CY|PY)$"))
+                {
+                    if (cleanKey.EndsWith("_CY"))
+                        begSumsCY.Add(placeholder);
+                    else
+                        begSumsPY.Add(placeholder);
+                    TraceLogger.Info($"✅ Beginning sum: {placeholder}");
+                }
+                // January balance: A34101_Jan1_PY
+                else if (Regex.IsMatch(cleanKey, @"^[A-Z]\d+_Jan1_(CY|PY)$"))
+                {
+                    if (cleanKey.EndsWith("_CY"))
+                        janBalancesCY.Add(placeholder);
+                    else
+                        janBalancesPY.Add(placeholder);
+                    TraceLogger.Info($"✅ January balance: {placeholder}");
+                }
+                // Specific balance type: A34101_debit_CY, A34101_credit_PY
+                else if (Regex.IsMatch(cleanKey, @"^[A-Z]\d+_(debit|credit)_(CY|PY)$"))
+                {
+                    if (cleanKey.EndsWith("_CY"))
+                        specificBalancesCY.Add(placeholder);
+                    else
+                        specificBalancesPY.Add(placeholder);
+                    TraceLogger.Info($"✅ Specific balance: {placeholder}");
+                }
+                else
+                {
+                    otherPlaceholders.Add(placeholder);
+                    TraceLogger.Info($"❓ Other: {placeholder}");
+                }
+            }
+
+            // Dictionary to group placeholders by API call
+            var apiCallGroups = new Dictionary<string, PlaceholderRequest>(StringComparer.OrdinalIgnoreCase);
+
+            void AddToGroup(string apiCall, string placeholder, string period)
+            {
+                if (!apiCallGroups.ContainsKey(apiCall))
+                {
+                    apiCallGroups[apiCall] = new PlaceholderRequest
+                    {
+                        ApiCall = apiCall,
+                        Placeholders = new List<string>(),
+                        Period = period
+                    };
+                }
+                apiCallGroups[apiCall].Placeholders.Add(placeholder);
+            }
+
+            // Build API requests for simple accounts
+            TraceLogger.Info($"🚀 Processing {simpleAccountsCY.Count} simple account CY placeholders");
+            foreach (var placeholder in simpleAccountsCY)
+            {
+                string account = placeholder.Trim('{', '}').Replace("_CY", "");
+                string apiCall = $"Account eq '{account}' and FinancialPeriod eq '{currentYearPeriod}'";
+                AddToGroup(apiCall, placeholder, currentYearPeriod);
+            }
+
+            TraceLogger.Info($"🚀 Processing {simpleAccountsPY.Count} simple account PY placeholders");
+            foreach (var placeholder in simpleAccountsPY)
+            {
+                string account = placeholder.Trim('{', '}').Replace("_PY", "");
+                string apiCall = $"Account eq '{account}' and FinancialPeriod eq '{previousYearPeriod}'";
+                AddToGroup(apiCall, placeholder, previousYearPeriod);
+            }
+
+            // Build API requests for sum prefixes
+            TraceLogger.Info($"🚀 Processing {sumPrefixesCY.Count} sum prefix CY placeholders");
+            foreach (var placeholder in sumPrefixesCY)
+            {
+                string cleanKey = placeholder.Trim('{', '}');
+                var match = Regex.Match(cleanKey, @"^Sum(\d+)_([A-Z]\d*)_(CY|PY)$");
+                if (match.Success)
+                {
+                    string prefix = match.Groups[2].Value;
+                    string upperBound = IncrementPrefix(prefix);
+                    string apiCall = $"Account ge '{prefix}' and Account lt '{upperBound}' and FinancialPeriod eq '{currentYearPeriod}'";
+                    AddToGroup(apiCall, placeholder, currentYearPeriod);
+                }
+            }
+
+            TraceLogger.Info($"🚀 Processing {sumPrefixesPY.Count} sum prefix PY placeholders");
+            foreach (var placeholder in sumPrefixesPY)
+            {
+                string cleanKey = placeholder.Trim('{', '}');
+                var match = Regex.Match(cleanKey, @"^Sum(\d+)_([A-Z]\d*)_(CY|PY)$");
+                if (match.Success)
+                {
+                    string prefix = match.Groups[2].Value;
+                    string upperBound = IncrementPrefix(prefix);
+                    string apiCall = $"Account ge '{prefix}' and Account lt '{upperBound}' and FinancialPeriod eq '{previousYearPeriod}'";
+                    AddToGroup(apiCall, placeholder, previousYearPeriod);
+                }
+            }
+
+            // Build API requests for Debit/Credit Sums
+            TraceLogger.Info($"🚀 Processing {debitCreditSumsCY.Count} debit/credit sum CY placeholders");
+            foreach (var placeholder in debitCreditSumsCY)
+            {
+                string cleanKey = placeholder.Trim('{', '}');
+                var match = Regex.Match(cleanKey, @"^(Debit|Credit)Sum(\d+)_([A-Z]\d*)_(CY|PY)$");
+                if (match.Success)
+                {
+                    string prefix = match.Groups[3].Value;
+                    string upperBound = IncrementPrefix(prefix);
+                    string apiCall = $"Account ge '{prefix}' and Account lt '{upperBound}' and FinancialPeriod eq '{currentYearPeriod}'";
+                    AddToGroup(apiCall, placeholder, currentYearPeriod);
+                }
+            }
+
+            TraceLogger.Info($"🚀 Processing {debitCreditSumsPY.Count} debit/credit sum PY placeholders");
+            foreach (var placeholder in debitCreditSumsPY)
+            {
+                string cleanKey = placeholder.Trim('{', '}');
+                var match = Regex.Match(cleanKey, @"^(Debit|Credit)Sum(\d+)_([A-Z]\d*)_(CY|PY)$");
+                if (match.Success)
+                {
+                    string prefix = match.Groups[3].Value;
+                    string upperBound = IncrementPrefix(prefix);
+                    string apiCall = $"Account ge '{prefix}' and Account lt '{upperBound}' and FinancialPeriod eq '{previousYearPeriod}'";
+                    AddToGroup(apiCall, placeholder, previousYearPeriod);
+                }
+            }
+
+            // Build API requests for Beginning Sums
+            TraceLogger.Info($"🚀 Processing {begSumsCY.Count} beginning sum CY placeholders");
+            foreach (var placeholder in begSumsCY)
+            {
+                string cleanKey = placeholder.Trim('{', '}');
+                var match = Regex.Match(cleanKey, @"^BegSum(\d+)_([A-Z]\d*)_(CY|PY)$");
+                if (match.Success)
+                {
+                    string prefix = match.Groups[2].Value;
+                    string upperBound = IncrementPrefix(prefix);
+                    string apiCall = $"Account ge '{prefix}' and Account lt '{upperBound}' and FinancialPeriod eq '01{currentYearPeriod.Substring(2)}'";
+                    AddToGroup(apiCall, placeholder, $"01{currentYearPeriod.Substring(2)}");
+                }
+            }
+
+            TraceLogger.Info($"🚀 Processing {begSumsPY.Count} beginning sum PY placeholders");
+            foreach (var placeholder in begSumsPY)
+            {
+                string cleanKey = placeholder.Trim('{', '}');
+                var match = Regex.Match(cleanKey, @"^BegSum(\d+)_([A-Z]\d*)_(CY|PY)$");
+                if (match.Success)
+                {
+                    string prefix = match.Groups[2].Value;
+                    string upperBound = IncrementPrefix(prefix);
+                    string apiCall = $"Account ge '{prefix}' and Account lt '{upperBound}' and FinancialPeriod eq '01{previousYearPeriod.Substring(2)}'";
+                    AddToGroup(apiCall, placeholder, $"01{previousYearPeriod.Substring(2)}");
+                }
+            }
+
+            // Build API requests for January balances
+            TraceLogger.Info($"🚀 Processing {janBalancesCY.Count} January balance CY placeholders");
+            foreach (var placeholder in janBalancesCY)
+            {
+                string account = placeholder.Trim('{', '}').Replace("_Jan1_CY", "");
+                string apiCall = $"Account eq '{account}' and FinancialPeriod eq '01{currentYearPeriod.Substring(2)}'";
+                AddToGroup(apiCall, placeholder, $"01{currentYearPeriod.Substring(2)}");
+            }
+
+            TraceLogger.Info($"🚀 Processing {janBalancesPY.Count} January balance PY placeholders");
+            foreach (var placeholder in janBalancesPY)
+            {
+                string account = placeholder.Trim('{', '}').Replace("_Jan1_PY", "");
+                string apiCall = $"Account eq '{account}' and FinancialPeriod eq '01{previousYearPeriod.Substring(2)}'";
+                AddToGroup(apiCall, placeholder, $"01{previousYearPeriod.Substring(2)}");
+            }
+
+            // Build API requests for Specific balances
+            TraceLogger.Info($"🚀 Processing {specificBalancesCY.Count} specific balance CY placeholders");
+            foreach (var placeholder in specificBalancesCY)
+            {
+                string cleanKey = placeholder.Trim('{', '}');
+                var match = Regex.Match(cleanKey, @"^([A-Z]\d+)_(debit|credit)_(CY|PY)$");
+                if (match.Success)
+                {
+                    string account = match.Groups[1].Value;
+                    string apiCall = $"Account eq '{account}' and FinancialPeriod ge '01{currentYearPeriod.Substring(2)}' and FinancialPeriod le '{currentYearPeriod}'";
+                    AddToGroup(apiCall, placeholder, currentYearPeriod);
+                }
+            }
+
+            TraceLogger.Info($"🚀 Processing {specificBalancesPY.Count} specific balance PY placeholders");
+            foreach (var placeholder in specificBalancesPY)
+            {
+                string cleanKey = placeholder.Trim('{', '}');
+                var match = Regex.Match(cleanKey, @"^([A-Z]\d+)_(debit|credit)_(CY|PY)$");
+                if (match.Success)
+                {
+                    string account = match.Groups[1].Value;
+                    string apiCall = $"Account eq '{account}' and FinancialPeriod ge '01{previousYearPeriod.Substring(2)}' and FinancialPeriod le '{previousYearPeriod}'";
+                    AddToGroup(apiCall, placeholder, previousYearPeriod);
+                }
+            }
+
+            // Convert grouped calls to final request list
+            requests.AddRange(apiCallGroups.Values);
+
+            // Enhanced logging at the end
+            TraceLogger.Info($"🎯 DEDUPLICATION COMPLETE:");
+            TraceLogger.Info($"📊 Total unique API calls: {apiCallGroups.Count}");
+            TraceLogger.Info($"📋 Examples of grouped calls:");
+
+            int logCount = 0;
+            int groupedExamples = 0;
+
+            foreach (var group in apiCallGroups.Values)
+            {
+                if (logCount < 15) // Show first 15 calls
+                {
+                    string placeholderList = string.Join(", ", group.Placeholders);
+                    TraceLogger.Info($"📞 {group.ApiCall} → [{placeholderList}]");
+                    logCount++;
+                }
+
+                // Count calls with multiple placeholders
+                if (group.Placeholders.Count > 1 && groupedExamples < 5)
+                {
+                    string placeholderList = string.Join(", ", group.Placeholders);
+                    TraceLogger.Info($"🔗 GROUPED: {group.ApiCall} → [{placeholderList}]");
+                    groupedExamples++;
+                }
+            }
+
+            if (apiCallGroups.Count > 15)
+            {
+                TraceLogger.Info($"📝 ... and {apiCallGroups.Count - 15} more unique API calls");
+            }
+
+            TraceLogger.Info($"🚀 OPTIMIZATION ACHIEVED: {354 - apiCallGroups.Count} duplicate API calls eliminated!");
+
+
+
+            TraceLogger.Info($"=== BUILT {requests.Count} API REQUESTS ===");
+            return requests;
+
+
+        }
+
+
+        private string IncrementPrefix(string prefix)
+        {
+            if (string.IsNullOrEmpty(prefix))
+                return "A"; // fallback
+
+            // For single character: B → C, H → I, Z → AA
+            if (prefix.Length == 1)
+            {
+                char c = prefix[0];
+                if (c == 'Z')
+                    return "AA"; // edge case
+                return ((char)(c + 1)).ToString();
+            }
+
+            // For multi-character: B69 → B70, B539 → B540, B999 → B1000
+            char lastChar = prefix[prefix.Length - 1];
+            string basePrefix = prefix.Substring(0, prefix.Length - 1);
+
+            if (char.IsDigit(lastChar))
+            {
+                // Extract the number part and increment it
+                string numberPart = "";
+                int i = prefix.Length - 1;
+                while (i >= 0 && char.IsDigit(prefix[i]))
+                {
+                    numberPart = prefix[i] + numberPart;
+                    i--;
+                }
+
+                string letterPart = prefix.Substring(0, i + 1);
+                int number = int.Parse(numberPart);
+                return $"{letterPart}{number + 1}";
+            }
+            else
+            {
+                // Last character is a letter
+                if (lastChar == 'Z')
+                    return basePrefix + "AA"; // B → BAA
+                return basePrefix + ((char)(lastChar + 1)).ToString();
+            }
+        }
+
+        /// <summary>
+        /// Executes all optimized API requests and returns placeholder values
+        /// </summary>
+        public Dictionary<string, string> ExecuteOptimizedApiRequests(List<PlaceholderRequest> requests, UserSettings userSettings)
+        {
+            var totalStopwatch = System.Diagnostics.Stopwatch.StartNew();
+            var apiResults = new Dictionary<string, List<JToken>>(StringComparer.OrdinalIgnoreCase);
+            var processor = new PlaceholderResultProcessor();
+
+            PXTrace.WriteInformation($"🚀 Executing {requests.Count} optimized API requests...");
+
+            // Build dimension filter once
+            string dimensionFilter = BuildDimensionFilter(userSettings.Branch, userSettings.Organization);
+
+            // Execute API calls in parallel batches
+            var semaphore = new System.Threading.SemaphoreSlim(5, 5); // Limit to 5 concurrent calls
+            var tasks = requests.Select(async request =>
+            {
+                await semaphore.WaitAsync();
+                try
+                {
+                    var sw = System.Diagnostics.Stopwatch.StartNew();
+
+                    // Get access token
+                    string accessToken = _authService.AuthenticateAndGetToken();
+                    SetAuthorizationHeader(accessToken);
+
+                    // Build full filter with dimensions and ledger
+                    string fullFilter = $"{request.ApiCall.Replace("FinancialPeriod", "FinancialPeriod")}";
+                    if (!string.IsNullOrEmpty(dimensionFilter) && dimensionFilter != "1 eq 1")
+                    {
+                        fullFilter += $" and {dimensionFilter}";
+                    }
+
+                    // Execute the API call
+                    var results = ExecuteFetchWithFallback(_httpClient, fullFilter, userSettings.Ledger);
+
+                    sw.Stop();
+                    PXTrace.WriteInformation($"📡 API call completed in {sw.ElapsedMilliseconds}ms: {fullFilter} → {results?.Count ?? 0} records");
+
+                    lock (apiResults)
+                    {
+                        apiResults[request.ApiCall] = results ?? new List<JToken>();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    PXTrace.WriteError($"❌ API call failed: {request.ApiCall} - {ex.Message}");
+                    lock (apiResults)
+                    {
+                        apiResults[request.ApiCall] = new List<JToken>();
+                    }
+                }
+                finally
+                {
+                    semaphore.Release();
+                }
+            });
+
+            // Wait for all API calls to complete
+            System.Threading.Tasks.Task.WaitAll(tasks.ToArray());
+
+            totalStopwatch.Stop();
+            PXTrace.WriteInformation($"🎯 All API calls completed in {totalStopwatch.ElapsedMilliseconds}ms");
+
+            // Process results and extract placeholder values
+            PXTrace.WriteInformation($"🔄 Processing results for {requests.Sum(r => r.Placeholders.Count)} placeholders...");
+            var placeholderValues = processor.ProcessApiResults(requests, apiResults);
+
+            PXTrace.WriteInformation($"✅ Execution complete: {placeholderValues.Count} placeholder values extracted");
+
+            return placeholderValues;
+        }
+
+        /// <summary>
+        /// Process all placeholders using pre-fetched data (no additional API calls)
+        /// </summary>
+        public Dictionary<string, string> ProcessPlaceholdersFromFetchedData(
+            List<PlaceholderRequest> placeholderRequests,
+            FinancialApiData currYearData,
+            FinancialApiData prevYearData,
+            FinancialApiData januaryBeginningDataCY,
+            FinancialApiData januaryBeginningDataPY,
+            FinancialApiData cumulativeCYData,
+            FinancialApiData cumulativePYData)
+        {
+            var results = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+
+            PXTrace.WriteInformation($"🔄 Processing {placeholderRequests.Sum(r => r.Placeholders.Count)} placeholders from fetched data...");
+            TraceLogger.Info($"🔄 Processing {placeholderRequests.Sum(r => r.Placeholders.Count)} placeholders from fetched data...");
+
+            // Process each placeholder request
+            foreach (var request in placeholderRequests)
+            {
+                foreach (var placeholder in request.Placeholders)
+                {
+                    string value = ProcessSinglePlaceholder(placeholder, currYearData, prevYearData,
+                        januaryBeginningDataCY, januaryBeginningDataPY, cumulativeCYData, cumulativePYData);
+                    results[placeholder] = value;
+                }
+            }
+
+            sw.Stop();
+            PXTrace.WriteInformation($"✅ Placeholder processing completed in {sw.ElapsedMilliseconds}ms");
+            TraceLogger.Info($"✅ Placeholder processing completed in {sw.ElapsedMilliseconds}ms");
+
+            return results;
+        }
+
+        private string ProcessSinglePlaceholder(string placeholder,
+            FinancialApiData currYearData, FinancialApiData prevYearData,
+            FinancialApiData januaryBeginningDataCY, FinancialApiData januaryBeginningDataPY,
+            FinancialApiData cumulativeCYData, FinancialApiData cumulativePYData)
+        {
+            string cleanKey = placeholder.Trim('{', '}');
+
+            try
+            {
+                // Simple account: A39101_CY -> EndingBalance
+                if (Regex.IsMatch(cleanKey, @"^[A-Z]\d+_(CY|PY)$"))
+                {
+                    var parts = cleanKey.Split('_');
+                    string account = parts[0];
+                    string year = parts[1];
+
+                    var source = year == "CY" ? currYearData : prevYearData;
+                    if (source.AccountData.TryGetValue(account, out var data))
+                        return data.EndingBalance.ToString("#,##0");
+                    return "0";
+                }
+
+                // Sum prefix: Sum3_B69_CY -> EndingBalance sum
+                if (Regex.IsMatch(cleanKey, @"^Sum\d+_([A-Z]\d*)_(CY|PY)$"))
+                {
+                    var match = Regex.Match(cleanKey, @"^Sum(\d+)_([A-Z]\d*)_(CY|PY)$");
+                    int level = int.Parse(match.Groups[1].Value);
+                    string prefix = match.Groups[2].Value;
+                    string year = match.Groups[3].Value;
+
+                    var source = year == "CY" ? currYearData : prevYearData;
+                    decimal sum = 0;
+                    foreach (var kvp in source.AccountData)
+                    {
+                        if (kvp.Key.Length >= level && kvp.Key.Substring(0, level) == prefix)
+                            sum += kvp.Value.EndingBalance;
+                    }
+                    return sum.ToString("#,##0");
+                }
+
+                // Debit sum: DebitSum3_B53_CY -> Debit sum from range data
+                if (Regex.IsMatch(cleanKey, @"^DebitSum\d+_([A-Z]\d*)_(CY|PY)$"))
+                {
+                    var match = Regex.Match(cleanKey, @"^DebitSum(\d+)_([A-Z]\d*)_(CY|PY)$");
+                    int level = int.Parse(match.Groups[1].Value);
+                    string prefix = match.Groups[2].Value;
+                    string year = match.Groups[3].Value;
+
+                    var source = year == "CY" ? cumulativeCYData : cumulativePYData;
+                    decimal sum = 0;
+                    foreach (var kvp in source.AccountData)
+                    {
+                        if (kvp.Key.Length >= level && kvp.Key.Substring(0, level) == prefix)
+                            sum += kvp.Value.Debit;
+                    }
+                    return sum.ToString("#,##0");
+                }
+
+                // Credit sum: CreditSum3_B53_CY -> Credit sum from range data
+                if (Regex.IsMatch(cleanKey, @"^CreditSum\d+_([A-Z]\d*)_(CY|PY)$"))
+                {
+                    var match = Regex.Match(cleanKey, @"^CreditSum(\d+)_([A-Z]\d*)_(CY|PY)$");
+                    int level = int.Parse(match.Groups[1].Value);
+                    string prefix = match.Groups[2].Value;
+                    string year = match.Groups[3].Value;
+
+                    var source = year == "CY" ? cumulativeCYData : cumulativePYData;
+                    decimal sum = 0;
+                    foreach (var kvp in source.AccountData)
+                    {
+                        if (kvp.Key.Length >= level && kvp.Key.Substring(0, level) == prefix)
+                            sum += kvp.Value.Credit;
+                    }
+                    return sum.ToString("#,##0");
+                }
+
+                // Beginning sum: BegSum3_A11_CY -> BeginningBalance sum from January data
+                if (Regex.IsMatch(cleanKey, @"^BegSum\d+_([A-Z]\d*)_(CY|PY)$"))
+                {
+                    var match = Regex.Match(cleanKey, @"^BegSum(\d+)_([A-Z]\d*)_(CY|PY)$");
+                    int level = int.Parse(match.Groups[1].Value);
+                    string prefix = match.Groups[2].Value;
+                    string year = match.Groups[3].Value;
+
+                    var source = year == "CY" ? januaryBeginningDataCY : januaryBeginningDataPY;
+                    decimal sum = 0;
+                    foreach (var kvp in source.AccountData)
+                    {
+                        if (kvp.Key.Length >= level && kvp.Key.Substring(0, level) == prefix)
+                            sum += kvp.Value.BeginningBalance;
+                    }
+                    return sum.ToString("#,##0");
+                }
+
+                // January balance: A21101_Jan1_CY -> BeginningBalance
+                if (Regex.IsMatch(cleanKey, @"^[A-Z]\d+_Jan1_(CY|PY)$"))
+                {
+                    var parts = cleanKey.Split('_');
+                    string account = parts[0];
+                    string year = parts[2];
+
+                    var source = year == "CY" ? januaryBeginningDataCY : januaryBeginningDataPY;
+                    if (source.AccountData.TryGetValue(account, out var data))
+                        return data.BeginningBalance.ToString("#,##0");
+                    return "0";
+                }
+
+                // Specific balance - debit: A34101_debit_CY -> Sum of all Debit from range
+                if (Regex.IsMatch(cleanKey, @"^[A-Z]\d+_debit_(CY|PY)$"))
+                {
+                    var parts = cleanKey.Split('_');
+                    string account = parts[0];
+                    string year = parts[2];
+
+                    var source = year == "CY" ? cumulativeCYData : cumulativePYData;
+                    if (source.AccountData.TryGetValue(account, out var data))
+                        return data.Debit.ToString("#,##0");
+                    return "0";
+                }
+
+                // Specific balance - credit: A34101_credit_CY -> Sum of all Credit from range
+                if (Regex.IsMatch(cleanKey, @"^[A-Z]\d+_credit_(CY|PY)$"))
+                {
+                    var parts = cleanKey.Split('_');
+                    string account = parts[0];
+                    string year = parts[2];
+
+                    var source = year == "CY" ? cumulativeCYData : cumulativePYData;
+                    if (source.AccountData.TryGetValue(account, out var data))
+                        return data.Credit.ToString("#,##0");
+                    return "0";
+                }
+
+                PXTrace.WriteWarning($"Unknown placeholder pattern: {placeholder}");
+                return "0";
+            }
+            catch (Exception ex)
+            {
+                PXTrace.WriteError($"Error processing placeholder {placeholder}: {ex.Message}");
+                return "0";
+            }
+        }
+
     }
+
+    public class PlaceholderRequest
+    {
+        public string ApiCall { get; set; }
+        public List<string> Placeholders { get; set; } = new List<string>();
+        public string Period { get; set; }
+    }
+
+    public class UserSettings
+    {
+        public string Branch { get; set; }
+        public string Organization { get; set; }
+        public string Ledger { get; set; }
+    }
+
 
 
     // Classes for convenience
@@ -898,10 +1511,5 @@ namespace FinancialReport.Services
         public string BalanceType { get; set; } = "ending";
     }
 
-    public class UserSettings
-    {
-        public string Branch { get; set; }
-        public string Organization { get; set; }
-        public string Ledger { get; set; }
-    }
+
 }

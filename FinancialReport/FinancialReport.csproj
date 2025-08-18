@@ -16,7 +16,7 @@
     <FileVersion>24.204.0004</FileVersion>
     <InformationalVersion>24.204.0004</InformationalVersion>
     <Copyright>Copyright © 2005-2024 Acumatica, Inc. All rights reserved.</Copyright>
-	<LangVersion>9.0</LangVersion>
+    <LangVersion>9.0</LangVersion>
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
@@ -79,7 +79,9 @@
     <Compile Include="Services\CredentialProvider.cs" />
     <Compile Include="Services\FileService.cs" />
     <Compile Include="Services\FinancialDataService.cs" />
+    <Compile Include="Services\PlaceholderResultProcessor.cs" />
     <Compile Include="Services\ReportGenerationService.cs" />
+    <Compile Include="Services\TraceLogger.cs" />
     <Compile Include="Services\WordTemplateService.cs" />
   </ItemGroup>
   <ItemGroup>
