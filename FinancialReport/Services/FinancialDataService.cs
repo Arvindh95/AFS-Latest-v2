@@ -868,7 +868,7 @@ namespace FinancialReport.Services
         {
             var requests = new List<PlaceholderRequest>();
 
-            TraceLogger.Info($"=== ANALYZING {placeholderKeys.Count} PLACEHOLDERS ===");
+            //TraceLogger.Info($"=== ANALYZING {placeholderKeys.Count} PLACEHOLDERS ===");
 
             // Group placeholders by type and period
             var simpleAccountsCY = new List<string>();
@@ -893,7 +893,7 @@ namespace FinancialReport.Services
                 if (HasPrefixPattern(placeholder))
                 {
                     otherPlaceholders.Add(placeholder);
-                    TraceLogger.Info($"✅ Prefix placeholder: {placeholder}");
+                    //TraceLogger.Info($"✅ Prefix placeholder: {placeholder}");
                 }
                 // Simple account: A39101_CY
                 else if (Regex.IsMatch(cleanKey, @"^[A-Z]\d+_(CY|PY)$"))
@@ -902,7 +902,7 @@ namespace FinancialReport.Services
                         simpleAccountsCY.Add(placeholder);
                     else
                         simpleAccountsPY.Add(placeholder);
-                    TraceLogger.Info($"✅ Simple account: {placeholder}");
+                    //TraceLogger.Info($"✅ Simple account: {placeholder}");
                 }
                 // Sum prefix: Sum3_B69_CY, Sum1_B_CY
                 else if (Regex.IsMatch(cleanKey, @"^Sum\d+_[A-Z]\d*_(CY|PY)$"))
@@ -911,7 +911,7 @@ namespace FinancialReport.Services
                         sumPrefixesCY.Add(placeholder);
                     else
                         sumPrefixesPY.Add(placeholder);
-                    TraceLogger.Info($"✅ Sum prefix: {placeholder}");
+                    //TraceLogger.Info($"✅ Sum prefix: {placeholder}");
                 }
                 // Debit/Credit Sum: DebitSum3_B53_CY, CreditSum3_B53_CY
                 else if (Regex.IsMatch(cleanKey, @"^(Debit|Credit)Sum\d+_[A-Z]\d*_(CY|PY)$"))
@@ -920,7 +920,7 @@ namespace FinancialReport.Services
                         debitCreditSumsCY.Add(placeholder);
                     else
                         debitCreditSumsPY.Add(placeholder);
-                    TraceLogger.Info($"✅ Debit/Credit sum: {placeholder}");
+                    //TraceLogger.Info($"✅ Debit/Credit sum: {placeholder}");
                 }
                 // Beginning Sum: BegSum3_A11_CY
                 else if (Regex.IsMatch(cleanKey, @"^BegSum\d+_[A-Z]\d*_(CY|PY)$"))
@@ -929,7 +929,7 @@ namespace FinancialReport.Services
                         begSumsCY.Add(placeholder);
                     else
                         begSumsPY.Add(placeholder);
-                    TraceLogger.Info($"✅ Beginning sum: {placeholder}");
+                    //TraceLogger.Info($"✅ Beginning sum: {placeholder}");
                 }
                 // January balance: A34101_Jan1_PY
                 else if (Regex.IsMatch(cleanKey, @"^[A-Z]\d+_Jan1_(CY|PY)$"))
@@ -938,7 +938,7 @@ namespace FinancialReport.Services
                         janBalancesCY.Add(placeholder);
                     else
                         janBalancesPY.Add(placeholder);
-                    TraceLogger.Info($"✅ January balance: {placeholder}");
+                    //TraceLogger.Info($"✅ January balance: {placeholder}");
                 }
                 // Specific balance type: A34101_debit_CY, A34101_credit_PY
                 else if (Regex.IsMatch(cleanKey, @"^[A-Z]\d+_(debit|credit)_(CY|PY)$"))
@@ -947,12 +947,12 @@ namespace FinancialReport.Services
                         specificBalancesCY.Add(placeholder);
                     else
                         specificBalancesPY.Add(placeholder);
-                    TraceLogger.Info($"✅ Specific balance: {placeholder}");
+                    //TraceLogger.Info($"✅ Specific balance: {placeholder}");
                 }
                 else
                 {
                     otherPlaceholders.Add(placeholder);
-                    TraceLogger.Info($"❓ Other: {placeholder}");
+                    //TraceLogger.Info($"❓ Other: {placeholder}");
                 }
             }
 
@@ -974,7 +974,7 @@ namespace FinancialReport.Services
             }
 
             // Build API requests for simple accounts
-            TraceLogger.Info($"🚀 Processing {simpleAccountsCY.Count} simple account CY placeholders");
+            //TraceLogger.Info($"🚀 Processing {simpleAccountsCY.Count} simple account CY placeholders");
             foreach (var placeholder in simpleAccountsCY)
             {
                 string account = placeholder.Trim('{', '}').Replace("_CY", "");
@@ -982,7 +982,7 @@ namespace FinancialReport.Services
                 AddToGroup(apiCall, placeholder, currentYearPeriod);
             }
 
-            TraceLogger.Info($"🚀 Processing {simpleAccountsPY.Count} simple account PY placeholders");
+            //TraceLogger.Info($"🚀 Processing {simpleAccountsPY.Count} simple account PY placeholders");
             foreach (var placeholder in simpleAccountsPY)
             {
                 string account = placeholder.Trim('{', '}').Replace("_PY", "");
@@ -991,7 +991,7 @@ namespace FinancialReport.Services
             }
 
             // Build API requests for sum prefixes
-            TraceLogger.Info($"🚀 Processing {sumPrefixesCY.Count} sum prefix CY placeholders");
+           //TraceLogger.Info($"🚀 Processing {sumPrefixesCY.Count} sum prefix CY placeholders");
             foreach (var placeholder in sumPrefixesCY)
             {
                 string cleanKey = placeholder.Trim('{', '}');
@@ -1005,7 +1005,7 @@ namespace FinancialReport.Services
                 }
             }
 
-            TraceLogger.Info($"🚀 Processing {sumPrefixesPY.Count} sum prefix PY placeholders");
+            //TraceLogger.Info($"🚀 Processing {sumPrefixesPY.Count} sum prefix PY placeholders");
             foreach (var placeholder in sumPrefixesPY)
             {
                 string cleanKey = placeholder.Trim('{', '}');
@@ -1020,7 +1020,7 @@ namespace FinancialReport.Services
             }
 
             // Build API requests for Debit/Credit Sums
-            TraceLogger.Info($"🚀 Processing {debitCreditSumsCY.Count} debit/credit sum CY placeholders");
+            //TraceLogger.Info($"🚀 Processing {debitCreditSumsCY.Count} debit/credit sum CY placeholders");
             foreach (var placeholder in debitCreditSumsCY)
             {
                 string cleanKey = placeholder.Trim('{', '}');
@@ -1034,7 +1034,7 @@ namespace FinancialReport.Services
                 }
             }
 
-            TraceLogger.Info($"🚀 Processing {debitCreditSumsPY.Count} debit/credit sum PY placeholders");
+            //TraceLogger.Info($"🚀 Processing {debitCreditSumsPY.Count} debit/credit sum PY placeholders");
             foreach (var placeholder in debitCreditSumsPY)
             {
                 string cleanKey = placeholder.Trim('{', '}');
@@ -1049,7 +1049,7 @@ namespace FinancialReport.Services
             }
 
             // Build API requests for Beginning Sums
-            TraceLogger.Info($"🚀 Processing {begSumsCY.Count} beginning sum CY placeholders");
+            //TraceLogger.Info($"🚀 Processing {begSumsCY.Count} beginning sum CY placeholders");
             foreach (var placeholder in begSumsCY)
             {
                 string cleanKey = placeholder.Trim('{', '}');
@@ -1063,7 +1063,7 @@ namespace FinancialReport.Services
                 }
             }
 
-            TraceLogger.Info($"🚀 Processing {begSumsPY.Count} beginning sum PY placeholders");
+            //TraceLogger.Info($"🚀 Processing {begSumsPY.Count} beginning sum PY placeholders");
             foreach (var placeholder in begSumsPY)
             {
                 string cleanKey = placeholder.Trim('{', '}');
@@ -1078,7 +1078,7 @@ namespace FinancialReport.Services
             }
 
             // Build API requests for January balances
-            TraceLogger.Info($"🚀 Processing {janBalancesCY.Count} January balance CY placeholders");
+            //TraceLogger.Info($"🚀 Processing {janBalancesCY.Count} January balance CY placeholders");
             foreach (var placeholder in janBalancesCY)
             {
                 string account = placeholder.Trim('{', '}').Replace("_Jan1_CY", "");
@@ -1086,7 +1086,7 @@ namespace FinancialReport.Services
                 AddToGroup(apiCall, placeholder, $"01{currentYearPeriod.Substring(2)}");
             }
 
-            TraceLogger.Info($"🚀 Processing {janBalancesPY.Count} January balance PY placeholders");
+            //TraceLogger.Info($"🚀 Processing {janBalancesPY.Count} January balance PY placeholders");
             foreach (var placeholder in janBalancesPY)
             {
                 string account = placeholder.Trim('{', '}').Replace("_Jan1_PY", "");
@@ -1095,7 +1095,7 @@ namespace FinancialReport.Services
             }
 
             // Build API requests for Specific balances
-            TraceLogger.Info($"🚀 Processing {specificBalancesCY.Count} specific balance CY placeholders");
+            //TraceLogger.Info($"🚀 Processing {specificBalancesCY.Count} specific balance CY placeholders");
             foreach (var placeholder in specificBalancesCY)
             {
                 string cleanKey = placeholder.Trim('{', '}');
@@ -1108,7 +1108,7 @@ namespace FinancialReport.Services
                 }
             }
 
-            TraceLogger.Info($"🚀 Processing {specificBalancesPY.Count} specific balance PY placeholders");
+            //TraceLogger.Info($"🚀 Processing {specificBalancesPY.Count} specific balance PY placeholders");
             foreach (var placeholder in specificBalancesPY)
             {
                 string cleanKey = placeholder.Trim('{', '}');
@@ -1125,9 +1125,9 @@ namespace FinancialReport.Services
             requests.AddRange(apiCallGroups.Values);
 
             // Enhanced logging at the end
-            TraceLogger.Info($"🎯 DEDUPLICATION COMPLETE:");
-            TraceLogger.Info($"📊 Total unique API calls: {apiCallGroups.Count}");
-            TraceLogger.Info($"📋 Examples of grouped calls:");
+            //TraceLogger.Info($"🎯 DEDUPLICATION COMPLETE:");
+            //TraceLogger.Info($"📊 Total unique API calls: {apiCallGroups.Count}");
+            //TraceLogger.Info($"📋 Examples of grouped calls:");
 
             int logCount = 0;
             int groupedExamples = 0;
@@ -1137,7 +1137,7 @@ namespace FinancialReport.Services
                 if (logCount < 15) // Show first 15 calls
                 {
                     string placeholderList = string.Join(", ", group.Placeholders);
-                    TraceLogger.Info($"📞 {group.ApiCall} → [{placeholderList}]");
+                    //TraceLogger.Info($"📞 {group.ApiCall} → [{placeholderList}]");
                     logCount++;
                 }
 
@@ -1145,21 +1145,21 @@ namespace FinancialReport.Services
                 if (group.Placeholders.Count > 1 && groupedExamples < 5)
                 {
                     string placeholderList = string.Join(", ", group.Placeholders);
-                    TraceLogger.Info($"🔗 GROUPED: {group.ApiCall} → [{placeholderList}]");
+                    //TraceLogger.Info($"🔗 GROUPED: {group.ApiCall} → [{placeholderList}]");
                     groupedExamples++;
                 }
             }
 
-            if (apiCallGroups.Count > 15)
-            {
-                TraceLogger.Info($"📝 ... and {apiCallGroups.Count - 15} more unique API calls");
-            }
+            //if (apiCallGroups.Count > 15)
+            //{
+            //    TraceLogger.Info($"📝 ... and {apiCallGroups.Count - 15} more unique API calls");
+            //}
 
-            TraceLogger.Info($"🚀 OPTIMIZATION ACHIEVED: {354 - apiCallGroups.Count} duplicate API calls eliminated!");
+            //TraceLogger.Info($"🚀 OPTIMIZATION ACHIEVED: {354 - apiCallGroups.Count} duplicate API calls eliminated!");
 
 
 
-            TraceLogger.Info($"=== BUILT {requests.Count} API REQUESTS ===");
+            //TraceLogger.Info($"=== BUILT {requests.Count} API REQUESTS ===");
             return requests;
 
 
@@ -1298,7 +1298,7 @@ namespace FinancialReport.Services
             var sw = System.Diagnostics.Stopwatch.StartNew();
 
             PXTrace.WriteInformation($"🔄 Processing {placeholderRequests.Sum(r => r.Placeholders.Count)} placeholders from fetched data...");
-            TraceLogger.Info($"🔄 Processing {placeholderRequests.Sum(r => r.Placeholders.Count)} placeholders from fetched data...");
+            //TraceLogger.Info($"🔄 Processing {placeholderRequests.Sum(r => r.Placeholders.Count)} placeholders from fetched data...");
 
             // Process each placeholder request
             foreach (var request in placeholderRequests)
@@ -1313,7 +1313,7 @@ namespace FinancialReport.Services
 
             sw.Stop();
             PXTrace.WriteInformation($"✅ Placeholder processing completed in {sw.ElapsedMilliseconds}ms");
-            TraceLogger.Info($"✅ Placeholder processing completed in {sw.ElapsedMilliseconds}ms");
+            //TraceLogger.Info($"✅ Placeholder processing completed in {sw.ElapsedMilliseconds}ms");
 
             return results;
         }

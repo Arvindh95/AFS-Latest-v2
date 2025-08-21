@@ -99,7 +99,7 @@ namespace FinancialReport.Services
                 // 6. Enhanced Data Fetching with Optimized Processing
                 var sw = System.Diagnostics.Stopwatch.StartNew();
                 PXTrace.WriteInformation("🚀 Starting hybrid approach: 6 fast API calls + optimized processing");
-                TraceLogger.Info("🚀 Starting hybrid approach: 6 fast API calls + optimized processing");
+                //TraceLogger.Info("🚀 Starting hybrid approach: 6 fast API calls + optimized processing");
 
                 // Your proven fast 6 API calls
                 var dataFetchTasks = new[]
@@ -121,7 +121,7 @@ namespace FinancialReport.Services
                 var cumulativePYData = results[5];
 
                 PXTrace.WriteInformation("📊 6 API calls completed - starting optimized placeholder processing");
-                TraceLogger.Info("📊 6 API calls completed - starting optimized placeholder processing");
+                //TraceLogger.Info("📊 6 API calls completed - starting optimized placeholder processing");
 
                 // Set up user settings for analysis
                 var userSettings = new UserSettings
@@ -141,17 +141,17 @@ namespace FinancialReport.Services
 
                 sw.Stop();
                 PXTrace.WriteInformation($"🎯 Hybrid processing completed in {sw.ElapsedMilliseconds} ms");
-                TraceLogger.Info($"🎯 Hybrid processing completed in {sw.ElapsedMilliseconds} ms");
+                //TraceLogger.Info($"🎯 Hybrid processing completed in {sw.ElapsedMilliseconds} ms");
 
                 // Add year constants
                 finalPlaceholders[Constants.CurrentYearSuffix] = currYear;
                 finalPlaceholders[Constants.PreviousYearSuffix] = prevYear;
 
                 PXTrace.WriteInformation($"📋 Final placeholder count: {finalPlaceholders.Count}");
-                TraceLogger.Info($"📋 Final placeholder count: {finalPlaceholders.Count}");
+                //TraceLogger.Info($"📋 Final placeholder count: {finalPlaceholders.Count}");
 
                 PXTrace.WriteInformation("✅ Hybrid system ready for Word template population");
-                TraceLogger.Info("✅ Hybrid system ready for Word template population");
+                //TraceLogger.Info("✅ Hybrid system ready for Word template population");
                 // 7. Populate Word Template
                 string outputFileName = $"{_currentRecord.ReportCD}_Generated_{DateTime.Now:yyyyMMdd_HHmmssfff}{extension}";
                 outputPath = Path.Combine(Path.GetTempPath(), outputFileName);

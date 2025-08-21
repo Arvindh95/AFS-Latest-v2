@@ -81,7 +81,6 @@
     <Compile Include="Services\FinancialDataService.cs" />
     <Compile Include="Services\PlaceholderResultProcessor.cs" />
     <Compile Include="Services\ReportGenerationService.cs" />
-    <Compile Include="Services\TraceLogger.cs" />
     <Compile Include="Services\WordTemplateService.cs" />
   </ItemGroup>
   <ItemGroup>
