@@ -584,6 +584,435 @@ namespace FinancialReport.Services
             return placeholders;
         }
 
+        #region Range Fetch Methods
+        /// <summary>
+        /// Checks if a placeholder follows the account range pattern
+        /// </summary>
+        public bool HasAccountRangePattern(string placeholder)
+        {
+            string cleanKey = placeholder.Trim('{', '}');
+            // Pattern: A74101:A75101_e_CY
+            return Regex.IsMatch(cleanKey, @"^[A-Z]\d+:[A-Z]\d+_(e|b|c|d)_(CY|PY)$", RegexOptions.IgnoreCase);
+        }
+
+        /// <summary>
+        /// Processes account range placeholders and returns their calculated values
+        /// </summary>
+        public Dictionary<string, string> ProcessAccountRangePlaceholders(
+            List<string> rangePlaceholders,
+            FinancialApiData currYearData,
+            FinancialApiData prevYearData,
+            FinancialApiData januaryBeginningDataCY,
+            FinancialApiData januaryBeginningDataPY,
+            FinancialApiData cumulativeCYData,
+            FinancialApiData cumulativePYData)
+        {
+            var results = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            PXTrace.WriteInformation($"Processing {rangePlaceholders.Count} account range placeholders...");
+
+            foreach (var placeholder in rangePlaceholders)
+            {
+                try
+                {
+                    string cleanKey = placeholder.Trim('{', '}');
+
+                    // Parse the range placeholder: A74101:A75101_e_CY
+                    var match = Regex.Match(cleanKey, @"^([A-Z]\d+):([A-Z]\d+)_(e|b|c|d)_(CY|PY)$", RegexOptions.IgnoreCase);
+
+                    if (!match.Success)
+                    {
+                        PXTrace.WriteWarning($"Invalid account range format: {placeholder}");
+                        results[placeholder] = "0";
+                        continue;
+                    }
+
+                    string startAccount = match.Groups[1].Value;
+                    string endAccount = match.Groups[2].Value;
+                    string balanceTypeCode = match.Groups[3].Value.ToLower();
+                    string yearType = match.Groups[4].Value.ToUpper();
+
+                    // Convert single letter to full balance type
+                    string balanceType = ConvertBalanceTypeCode(balanceTypeCode);
+
+                    // Get the appropriate data source
+                    FinancialApiData dataSource = GetDataSourceForRangeCalculation(balanceType, yearType,
+                        currYearData, prevYearData, januaryBeginningDataCY, januaryBeginningDataPY,
+                        cumulativeCYData, cumulativePYData);
+
+                    // Calculate the sum for accounts in range
+                    decimal total = CalculateAccountRangeSum(startAccount, endAccount, balanceType, dataSource);
+
+                    results[placeholder] = total.ToString("#,##0");
+                    PXTrace.WriteInformation($"Range result: {placeholder} = {total}");
+                }
+                catch (Exception ex)
+                {
+                    PXTrace.WriteError($"Failed to process range placeholder {placeholder}: {ex.Message}");
+                    results[placeholder] = "0";
+                }
+            }
+
+            return results;
+        }
+
+        /// <summary>
+        /// Converts single letter balance type codes to full names
+        /// </summary>
+        private string ConvertBalanceTypeCode(string code)
+        {
+            switch (code.ToLower())
+            {
+                case "e":
+                    return "ending";
+                case "b":
+                    return "beginning";
+                case "c":
+                    return "credit";
+                case "d":
+                    return "debit";
+                default:
+                    PXTrace.WriteWarning($"Unknown balance type code: {code}, defaulting to 'ending'");
+                    return "ending";
+            }
+        }
+
+        /// <summary>
+        /// Gets the appropriate data source based on balance type and year
+        /// </summary>
+        private FinancialApiData GetDataSourceForRangeCalculation(
+            string balanceType,
+            string yearType,
+            FinancialApiData currYearData,
+            FinancialApiData prevYearData,
+            FinancialApiData januaryBeginningDataCY,
+            FinancialApiData januaryBeginningDataPY,
+            FinancialApiData cumulativeCYData,
+            FinancialApiData cumulativePYData)
+        {
+            switch (balanceType.ToLower())
+            {
+                case "beginning":
+                    return yearType == "CY" ? januaryBeginningDataCY : januaryBeginningDataPY;
+
+                case "credit":
+                case "debit":
+                    return yearType == "CY" ? cumulativeCYData : cumulativePYData;
+
+                case "ending":
+                default:
+                    return yearType == "CY" ? currYearData : prevYearData;
+            }
+        }
+
+        /// <summary>
+        /// Calculates the sum for all accounts within the specified range
+        /// </summary>
+        private decimal CalculateAccountRangeSum(string startAccount, string endAccount, string balanceType, FinancialApiData dataSource)
+        {
+            decimal total = 0;
+            int processedCount = 0;
+
+            foreach (var kvp in dataSource.AccountData)
+            {
+                string account = kvp.Key;
+
+                // Check if account is within range (inclusive)
+                if (IsAccountInRange(account, startAccount, endAccount))
+                {
+                    var data = kvp.Value;
+
+                    switch (balanceType.ToLower())
+                    {
+                        case "ending":
+                            total += data.EndingBalance;
+                            break;
+                        case "beginning":
+                            total += data.BeginningBalance;
+                            break;
+                        case "credit":
+                            total += data.Credit;
+                            break;
+                        case "debit":
+                            total += data.Debit;
+                            break;
+                    }
+
+                    processedCount++;
+                }
+            }
+
+            PXTrace.WriteInformation($"Range {startAccount}:{endAccount} processed {processedCount} accounts, {balanceType} total: {total}");
+            return total;
+        }
+
+        /// <summary>
+        /// Determines if an account is within the specified range (inclusive)
+        /// </summary>
+        private bool IsAccountInRange(string account, string startAccount, string endAccount)
+        {
+            // Simple string comparison works for most account numbering schemes
+            // since they typically follow lexicographic order (A74101, A74302, A75101, etc.)
+            return string.Compare(account, startAccount, StringComparison.OrdinalIgnoreCase) >= 0 &&
+                   string.Compare(account, endAccount, StringComparison.OrdinalIgnoreCase) <= 0;
+        }
+
+        /// <summary>
+        /// Enhanced method to separate range placeholders from regular ones
+        /// </summary>
+        public (List<string> rangePlaceholders, List<string> regularPlaceholders) SeparateRangePlaceholders(List<string> allPlaceholders)
+        {
+            var rangePlaceholders = new List<string>();
+            var regularPlaceholders = new List<string>();
+
+            foreach (var placeholder in allPlaceholders)
+            {
+                if (HasAccountRangePattern(placeholder))
+                {
+                    rangePlaceholders.Add(placeholder);
+                }
+                else
+                {
+                    regularPlaceholders.Add(placeholder);
+                }
+            }
+
+            PXTrace.WriteInformation($"Separated placeholders: {rangePlaceholders.Count} range, {regularPlaceholders.Count} regular");
+            return (rangePlaceholders, regularPlaceholders);
+        }
+        #endregion
+
+        #region Wildcard Placeholder Methods
+        /// <summary>
+        /// Checks if a placeholder follows the wildcard range pattern
+        /// </summary>
+        public bool HasWildcardRangePattern(string placeholder)
+        {
+            string cleanKey = placeholder.Trim('{', '}');
+            // Pattern: A?????:B?????_e_CY or A3????:A4????_c_PY
+            return Regex.IsMatch(cleanKey, @"^[A-Z][A-Z0-9?]+:[A-Z][A-Z0-9?]+_(e|b|c|d)_(CY|PY)$", RegexOptions.IgnoreCase) &&
+                   (cleanKey.Contains('?')); // Must contain at least one wildcard
+        }
+
+        /// <summary>
+        /// Processes wildcard range placeholders and returns their calculated values
+        /// </summary>
+        public Dictionary<string, string> ProcessWildcardRangePlaceholders(
+            List<string> wildcardRangePlaceholders,
+            FinancialApiData currYearData,
+            FinancialApiData prevYearData,
+            FinancialApiData januaryBeginningDataCY,
+            FinancialApiData januaryBeginningDataPY,
+            FinancialApiData cumulativeCYData,
+            FinancialApiData cumulativePYData)
+        {
+            var results = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            PXTrace.WriteInformation($"Processing {wildcardRangePlaceholders.Count} wildcard range placeholders...");
+
+            foreach (var placeholder in wildcardRangePlaceholders)
+            {
+                try
+                {
+                    string cleanKey = placeholder.Trim('{', '}');
+
+                    // Parse the wildcard range placeholder: A3????:A4????_e_CY
+                    var match = Regex.Match(cleanKey, @"^([A-Z][A-Z0-9?]+):([A-Z][A-Z0-9?]+)_(e|b|c|d)_(CY|PY)$", RegexOptions.IgnoreCase);
+
+                    if (!match.Success)
+                    {
+                        PXTrace.WriteWarning($"Invalid wildcard range format: {placeholder}");
+                        results[placeholder] = "0";
+                        continue;
+                    }
+
+                    string startPattern = match.Groups[1].Value;
+                    string endPattern = match.Groups[2].Value;
+                    string balanceTypeCode = match.Groups[3].Value.ToLower();
+                    string yearType = match.Groups[4].Value.ToUpper();
+
+                    // Validate that patterns contain wildcards
+                    if (!startPattern.Contains('?') && !endPattern.Contains('?'))
+                    {
+                        PXTrace.WriteWarning($"No wildcards found in pattern: {placeholder}");
+                        results[placeholder] = "0";
+                        continue;
+                    }
+
+                    // Convert single letter to full balance type
+                    string balanceType = ConvertBalanceTypeCode(balanceTypeCode);
+
+                    // Get the appropriate data source
+                    FinancialApiData dataSource = GetDataSourceForRangeCalculation(balanceType, yearType,
+                        currYearData, prevYearData, januaryBeginningDataCY, januaryBeginningDataPY,
+                        cumulativeCYData, cumulativePYData);
+
+                    // Calculate the sum for accounts in wildcard range
+                    decimal total = CalculateWildcardRangeSum(startPattern, endPattern, balanceType, dataSource);
+
+                    results[placeholder] = total.ToString("#,##0");
+                    PXTrace.WriteInformation($"Wildcard range result: {placeholder} = {total}");
+                }
+                catch (Exception ex)
+                {
+                    PXTrace.WriteError($"Failed to process wildcard range placeholder {placeholder}: {ex.Message}");
+                    results[placeholder] = "0";
+                }
+            }
+
+            return results;
+        }
+
+        /// <summary>
+        /// Expands a wildcard pattern to its min and max values
+        /// </summary>
+        private (string minValue, string maxValue) ExpandWildcardPattern(string pattern)
+        {
+            if (!pattern.Contains('?'))
+            {
+                // No wildcards, return the pattern as both min and max
+                return (pattern, pattern);
+            }
+
+            // Replace ? with 0 for minimum value and 9 for maximum value
+            string minValue = pattern.Replace('?', '0');
+            string maxValue = pattern.Replace('?', '9');
+
+            PXTrace.WriteInformation($"Expanded pattern '{pattern}' to range: {minValue} - {maxValue}");
+
+            return (minValue, maxValue);
+        }
+
+        /// <summary>
+        /// Calculates the sum for all accounts within the specified wildcard range
+        /// </summary>
+        private decimal CalculateWildcardRangeSum(string startPattern, string endPattern, string balanceType, FinancialApiData dataSource)
+        {
+            // Expand wildcard patterns to actual ranges
+            var (startMin, startMax) = ExpandWildcardPattern(startPattern);
+            var (endMin, endMax) = ExpandWildcardPattern(endPattern);
+
+            // Determine the overall range bounds
+            string overallMin = string.Compare(startMin, endMin, StringComparison.OrdinalIgnoreCase) <= 0 ? startMin : endMin;
+            string overallMax = string.Compare(startMax, endMax, StringComparison.OrdinalIgnoreCase) >= 0 ? startMax : endMax;
+
+            decimal total = 0;
+            int processedCount = 0;
+
+            foreach (var kvp in dataSource.AccountData)
+            {
+                string account = kvp.Key;
+
+                // Check if account is within the overall wildcard range
+                if (IsAccountInWildcardRange(account, startPattern, endPattern, overallMin, overallMax))
+                {
+                    var data = kvp.Value;
+
+                    switch (balanceType.ToLower())
+                    {
+                        case "ending":
+                            total += data.EndingBalance;
+                            break;
+                        case "beginning":
+                            total += data.BeginningBalance;
+                            break;
+                        case "credit":
+                            total += data.Credit;
+                            break;
+                        case "debit":
+                            total += data.Debit;
+                            break;
+                    }
+
+                    processedCount++;
+                }
+            }
+
+            PXTrace.WriteInformation($"Wildcard range {startPattern}:{endPattern} processed {processedCount} accounts, {balanceType} total: {total}");
+            return total;
+        }
+
+        /// <summary>
+        /// Determines if an account is within the specified wildcard range
+        /// </summary>
+        private bool IsAccountInWildcardRange(string account, string startPattern, string endPattern, string overallMin, string overallMax)
+        {
+            // First check: Is the account within the overall expanded range?
+            bool inOverallRange = string.Compare(account, overallMin, StringComparison.OrdinalIgnoreCase) >= 0 &&
+                                 string.Compare(account, overallMax, StringComparison.OrdinalIgnoreCase) <= 0;
+
+            if (!inOverallRange)
+            {
+                return false;
+            }
+
+            // Second check: Does the account match either the start or end pattern ranges?
+            bool matchesStartPattern = DoesAccountMatchWildcardPattern(account, startPattern);
+            bool matchesEndPattern = DoesAccountMatchWildcardPattern(account, endPattern);
+
+            // Third check: Is the account between the pattern ranges?
+            var (startMin, startMax) = ExpandWildcardPattern(startPattern);
+            var (endMin, endMax) = ExpandWildcardPattern(endPattern);
+
+            bool betweenPatterns = string.Compare(account, startMax, StringComparison.OrdinalIgnoreCase) > 0 &&
+                                  string.Compare(account, endMin, StringComparison.OrdinalIgnoreCase) < 0;
+
+            return matchesStartPattern || matchesEndPattern || betweenPatterns;
+        }
+
+        /// <summary>
+        /// Checks if an account matches a specific wildcard pattern
+        /// </summary>
+        private bool DoesAccountMatchWildcardPattern(string account, string pattern)
+        {
+            if (account.Length != pattern.Length)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < pattern.Length; i++)
+            {
+                if (pattern[i] != '?' && pattern[i] != account[i])
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Enhanced method to separate all placeholder types
+        /// </summary>
+        public (List<string> wildcardRangePlaceholders, List<string> exactRangePlaceholders, List<string> regularPlaceholders)
+            SeparateAllPlaceholderTypes(List<string> allPlaceholders)
+        {
+            var wildcardRangePlaceholders = new List<string>();
+            var exactRangePlaceholders = new List<string>();
+            var regularPlaceholders = new List<string>();
+
+            foreach (var placeholder in allPlaceholders)
+            {
+                if (HasWildcardRangePattern(placeholder))
+                {
+                    wildcardRangePlaceholders.Add(placeholder);
+                }
+                else if (HasAccountRangePattern(placeholder))
+                {
+                    exactRangePlaceholders.Add(placeholder);
+                }
+                else
+                {
+                    regularPlaceholders.Add(placeholder);
+                }
+            }
+
+            PXTrace.WriteInformation($"Separated placeholders: {wildcardRangePlaceholders.Count} wildcard range, " +
+                                   $"{exactRangePlaceholders.Count} exact range, {regularPlaceholders.Count} regular");
+
+            return (wildcardRangePlaceholders, exactRangePlaceholders, regularPlaceholders);
+        }
+        #endregion
 
         // ✅ Optional: Static cleanup method
         public static void Cleanup()
@@ -805,26 +1234,15 @@ namespace FinancialReport.Services
         }
 
         // Add this main method to FinancialDataService class
-        public Dictionary<string, string> ProcessPrefixPlaceholders(List<string> prefixPlaceholders,string currentYearPeriod,string previousYearPeriod,UserSettings userSettings)
+        public Dictionary<string, string> ProcessPrefixPlaceholders(List<string> prefixPlaceholders, string currentYearPeriod, string previousYearPeriod, UserSettings userSettings)
         {
             var results = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-            // Apply 50 placeholder limit
-            const int MAX_PREFIX_QUERIES = 50;
-            var keysToProcess = prefixPlaceholders.Take(MAX_PREFIX_QUERIES).ToList();
+            // ✅ REMOVED: No more 50-call limit!
+            // Process ALL prefix placeholders without any artificial limits
+            var keysToProcess = prefixPlaceholders; // Process everything
 
-            if (prefixPlaceholders.Count > MAX_PREFIX_QUERIES)
-            {
-                PXTrace.WriteWarning($"Prefix placeholder limit reached. Processing {MAX_PREFIX_QUERIES} out of {prefixPlaceholders.Count} prefix placeholders.");
-
-                // Set remaining keys to 0
-                foreach (var skippedKey in prefixPlaceholders.Skip(MAX_PREFIX_QUERIES))
-                {
-                    results[skippedKey] = "0";
-                }
-            }
-
-            PXTrace.WriteInformation($"Processing {keysToProcess.Count} prefix placeholders...");
+            PXTrace.WriteInformation($"Processing {keysToProcess.Count} prefix placeholders (no limits applied)...");
 
             // Process each prefix placeholder
             foreach (var placeholder in keysToProcess)

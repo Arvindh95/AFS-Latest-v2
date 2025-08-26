@@ -62,9 +62,16 @@ namespace FinancialReport.Services
                 // 3. Extract Placeholders
                 List<string> extractedKeys = _wordTemplateService.ExtractPlaceholderKeys(templatePath);
 
-                
+                // 4. ✅ NEW: Separate ALL placeholder types (wildcard, exact range, regular)
+                var (wildcardRangePlaceholders, exactRangePlaceholders, regularPlaceholders) =
+                    localDataService.SeparateAllPlaceholderTypes(extractedKeys);
 
-                // 4. Set up Parameters
+                PXTrace.WriteInformation($"📊 Extracted {extractedKeys.Count} total placeholders:");
+                PXTrace.WriteInformation($"   🌟 {wildcardRangePlaceholders.Count} wildcard range (A????:B????_e_CY)");
+                PXTrace.WriteInformation($"   🎯 {exactRangePlaceholders.Count} exact range (A74101:A75101_e_CY)");
+                PXTrace.WriteInformation($"   📝 {regularPlaceholders.Count} regular (A74101_CY)");
+
+                // 5. Set up Parameters
                 string currYear = _currentRecord.CurrYear ?? DateTime.Now.ToString("yyyy");
                 string selectedMonth = _currentRecord.FinancialMonth ?? "12";
                 int currYearInt = int.TryParse(currYear, out int parsedYear) ? parsedYear : DateTime.Now.Year;
@@ -72,45 +79,16 @@ namespace FinancialReport.Services
                 string selectedPeriod = $"{selectedMonth}{currYear}";
                 string prevYearPeriod = $"{selectedMonth}{prevYear}";
 
-
-
-                // 5. Fetch all required data from the API in parallel
-                //var dataFetchTasks = new[]
-                //{
-                //    Task.Run(() => localDataService.FetchAllApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, selectedPeriod)),
-                //    Task.Run(() => localDataService.FetchAllApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, prevYearPeriod)),
-                //    Task.Run(() => localDataService.FetchJanuaryBeginningBalance(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, prevYear)),
-                //    Task.Run(() => localDataService.FetchJanuaryBeginningBalance(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, currYear)),
-                //    Task.Run(() => localDataService.FetchRangeApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, $"01{currYear}", selectedPeriod)),
-                //    Task.Run(() => localDataService.FetchRangeApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, $"01{prevYear}", $"12{prevYear}"))
-                //};
-
-                // Wait for all tasks to complete
-                //var results = Task.WhenAll(dataFetchTasks).Result;
-
-                //// Assign results
-                //var currYearData = results[0];
-                //var prevYearData = results[1];
-                //var januaryBeginningDataPY = results[2];
-                //var januaryBeginningDataCY = results[3];
-                //var cumulativeCYData = results[4];
-                //var cumulativePYData = results[5];
-
-                // 6. Enhanced Data Fetching with Optimized Processing
-                var sw = System.Diagnostics.Stopwatch.StartNew();
-                PXTrace.WriteInformation("🚀 Starting hybrid approach: 6 fast API calls + optimized processing");
-                //TraceLogger.Info("🚀 Starting hybrid approach: 6 fast API calls + optimized processing");
-
-                // Your proven fast 6 API calls
+                // 6. Fetch all required data from the API in parallel
                 var dataFetchTasks = new[]
                 {
-                    Task.Run(() => localDataService.FetchAllApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, selectedPeriod)),
-                    Task.Run(() => localDataService.FetchAllApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, prevYearPeriod)),
-                    Task.Run(() => localDataService.FetchJanuaryBeginningBalance(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, prevYear)),
-                    Task.Run(() => localDataService.FetchJanuaryBeginningBalance(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, currYear)),
-                    Task.Run(() => localDataService.FetchRangeApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, $"01{currYear}", selectedPeriod)),
-                    Task.Run(() => localDataService.FetchRangeApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, $"01{prevYear}", $"12{prevYear}"))
-                };
+            Task.Run(() => localDataService.FetchAllApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, selectedPeriod)),
+            Task.Run(() => localDataService.FetchAllApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, prevYearPeriod)),
+            Task.Run(() => localDataService.FetchJanuaryBeginningBalance(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, prevYear)),
+            Task.Run(() => localDataService.FetchJanuaryBeginningBalance(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, currYear)),
+            Task.Run(() => localDataService.FetchRangeApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, $"01{currYear}", selectedPeriod)),
+            Task.Run(() => localDataService.FetchRangeApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, $"01{prevYear}", $"12{prevYear}"))
+        };
 
                 var results = Task.WhenAll(dataFetchTasks).Result;
                 var currYearData = results[0];
@@ -121,9 +99,8 @@ namespace FinancialReport.Services
                 var cumulativePYData = results[5];
 
                 PXTrace.WriteInformation("📊 6 API calls completed - starting optimized placeholder processing");
-                //TraceLogger.Info("📊 6 API calls completed - starting optimized placeholder processing");
 
-                // Set up user settings for analysis
+                // 7. Set up user settings for analysis
                 var userSettings = new UserSettings
                 {
                     Branch = _currentRecord.Branch,
@@ -131,33 +108,58 @@ namespace FinancialReport.Services
                     Ledger = _currentRecord.Ledger
                 };
 
-                // Analyze placeholders to understand what we need (for logging/structure only)
-                var placeholderRequests = localDataService.AnalyzePlaceholders(extractedKeys, selectedPeriod, prevYearPeriod, userSettings);
-
-                // Process all placeholders using the fetched data (no additional API calls)
-                var finalPlaceholders = localDataService.ProcessPlaceholdersFromFetchedData(
-                    placeholderRequests, currYearData, prevYearData, januaryBeginningDataCY,
+                // 8. Process regular placeholders using existing logic
+                var regularPlaceholderRequests = localDataService.AnalyzePlaceholders(regularPlaceholders, selectedPeriod, prevYearPeriod, userSettings);
+                var regularPlaceholderValues = localDataService.ProcessPlaceholdersFromFetchedData(
+                    regularPlaceholderRequests, currYearData, prevYearData, januaryBeginningDataCY,
                     januaryBeginningDataPY, cumulativeCYData, cumulativePYData);
 
-                sw.Stop();
-                PXTrace.WriteInformation($"🎯 Hybrid processing completed in {sw.ElapsedMilliseconds} ms");
-                //TraceLogger.Info($"🎯 Hybrid processing completed in {sw.ElapsedMilliseconds} ms");
+                // 9. Process exact range placeholders
+                var exactRangePlaceholderValues = localDataService.ProcessAccountRangePlaceholders(
+                    exactRangePlaceholders, currYearData, prevYearData, januaryBeginningDataCY,
+                    januaryBeginningDataPY, cumulativeCYData, cumulativePYData);
+
+                // 10. ✅ NEW: Process wildcard range placeholders
+                var wildcardRangePlaceholderValues = localDataService.ProcessWildcardRangePlaceholders(
+                    wildcardRangePlaceholders, currYearData, prevYearData, januaryBeginningDataCY,
+                    januaryBeginningDataPY, cumulativeCYData, cumulativePYData);
+
+                // 11. Combine all placeholder values
+                var finalPlaceholders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+                // Add regular placeholders
+                foreach (var kvp in regularPlaceholderValues)
+                {
+                    finalPlaceholders[kvp.Key] = kvp.Value;
+                }
+
+                // Add exact range placeholders
+                foreach (var kvp in exactRangePlaceholderValues)
+                {
+                    finalPlaceholders[kvp.Key] = kvp.Value;
+                }
+
+                // Add wildcard range placeholders
+                foreach (var kvp in wildcardRangePlaceholderValues)
+                {
+                    finalPlaceholders[kvp.Key] = kvp.Value;
+                }
 
                 // Add year constants
                 finalPlaceholders[Constants.CurrentYearSuffix] = currYear;
                 finalPlaceholders[Constants.PreviousYearSuffix] = prevYear;
 
                 PXTrace.WriteInformation($"📋 Final placeholder count: {finalPlaceholders.Count}");
-                //TraceLogger.Info($"📋 Final placeholder count: {finalPlaceholders.Count}");
+                PXTrace.WriteInformation($"   📝 Regular: {regularPlaceholderValues.Count}");
+                PXTrace.WriteInformation($"   🎯 Exact Range: {exactRangePlaceholderValues.Count}");
+                PXTrace.WriteInformation($"   🌟 Wildcard Range: {wildcardRangePlaceholderValues.Count}");
 
-                PXTrace.WriteInformation("✅ Hybrid system ready for Word template population");
-                //TraceLogger.Info("✅ Hybrid system ready for Word template population");
-                // 7. Populate Word Template
+                // 12. Populate Word Template
                 string outputFileName = $"{_currentRecord.ReportCD}_Generated_{DateTime.Now:yyyyMMdd_HHmmssfff}{extension}";
                 outputPath = Path.Combine(Path.GetTempPath(), outputFileName);
                 _wordTemplateService.PopulateTemplate(templatePath, outputPath, finalPlaceholders);
 
-                // 8. Save Generated File and return its ID
+                // 12. Save Generated File and return its ID
                 byte[] generatedFileContent = File.ReadAllBytes(outputPath);
                 var fileId = _fileService.SaveGeneratedDocument(outputFileName, generatedFileContent, _currentRecord);
 
