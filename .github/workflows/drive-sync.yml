@@ -14,9 +14,12 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Upload to Google Drive
-        uses: gautamkrishnar/action-gdrive@v1.0.0
+      - name: Setup gdrive
+        uses: adityak74/gdrive-action@v1
         with:
           service_account_key: ${{ secrets.GDRIVE_KEY }}
-          folder_id: ${{ secrets.GDRIVE_FOLDER_ID }}
-          source: ./
+
+      - name: Upload to Google Drive
+        run: |
+          gdrive files upload --parent ${{ secrets.GDRIVE_FOLDER_ID }} --recursive .
+
