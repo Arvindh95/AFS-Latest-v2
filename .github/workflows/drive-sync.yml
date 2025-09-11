@@ -1,0 +1,22 @@
+name: Sync Repo to Google Drive
+
+on:
+  push:
+    branches:
+      - Optimization-18082025   # run whenever commits are pushed to main
+  schedule:
+    - cron: '0 * * * *'   # also run once every hour (UTC)
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Upload to Google Drive
+        uses: gautamkrishnar/action-gdrive@v1.0.0
+        with:
+          service_account_key: ${{ secrets.GDRIVE_KEY }}
+          folder_id: ${{ secrets.GDRIVE_FOLDER_ID }}
+          source: ./
