@@ -131,42 +131,80 @@ namespace FinancialReport
                 FLRTFinancialReport dbRecord = PXSelect<FLRTFinancialReport, Where<FLRTFinancialReport.reportID, Equal<Required<FLRTFinancialReport.reportID>>>>
                     .SelectSingleBound(reportGraph, null, reportID);
 
-                try
+                // Timeout protection: 15 minutes maximum for report generation
+                var timeoutCancellation = new System.Threading.CancellationTokenSource();
+                const int timeoutMinutes = 15;
+                timeoutCancellation.CancelAfter(TimeSpan.FromMinutes(timeoutMinutes));
+
+                var timeoutTask = System.Threading.Tasks.Task.Run(() =>
                 {
-                    if (dbRecord == null) throw new PXException(Messages.FailedToRetrieveFile);
-                    if (dbRecord.Noteid == null) throw new PXException(Messages.TemplateHasNoFiles);
-
-                    // ← ADD THE AUTHENTICATION CODE HERE ↓
-                    // Pre-authenticate INSIDE the long operation where async/sync issues are less problematic
-                    PXTrace.WriteInformation("Authenticating...");
-                    authService.AuthenticateAndGetToken();
-                    PXTrace.WriteInformation($"Successfully authenticated for {tenantName}.");
-                    // ← ADD THE AUTHENTICATION CODE HERE ↑
-
-                    // Instantiate and execute the new service
-                    var generationService = new ReportGenerationService(reportGraph, dbRecord, authService);
-                    Guid generatedFileID = generationService.Execute();
-
-                    // Update the record with the successful result
-                    dbRecord.GeneratedFileID = generatedFileID;
-                    dbRecord.Status = ReportStatus.Completed;
-                    reportGraph.FinancialReport.Update(dbRecord);
-                    reportGraph.Actions.PressSave();
-                    PXTrace.WriteInformation("Report generation completed successfully.");
-                }
-                catch (Exception ex)
-                {
-                    PXTrace.WriteError($"Report generation failed: {ex.Message}");
-                    if (dbRecord != null)
+                    try
                     {
-                        dbRecord.Status = ReportStatus.Failed;
+                        if (dbRecord == null) throw new PXException(Messages.FailedToRetrieveFile);
+                        if (dbRecord.Noteid == null) throw new PXException(Messages.TemplateHasNoFiles);
+
+                        // Check for cancellation before starting
+                        timeoutCancellation.Token.ThrowIfCancellationRequested();
+
+                        // Pre-authenticate INSIDE the long operation where async/sync issues are less problematic
+                        PXTrace.WriteInformation("Authenticating...");
+                        authService.AuthenticateAndGetToken();
+                        PXTrace.WriteInformation($"Successfully authenticated for {tenantName}.");
+
+                        // Check for cancellation before generation
+                        timeoutCancellation.Token.ThrowIfCancellationRequested();
+
+                        // Instantiate and execute the new service
+                        var generationService = new ReportGenerationService(reportGraph, dbRecord, authService);
+                        Guid generatedFileID = generationService.Execute();
+
+                        // Check for cancellation before saving
+                        timeoutCancellation.Token.ThrowIfCancellationRequested();
+
+                        // Update the record with the successful result
+                        dbRecord.GeneratedFileID = generatedFileID;
+                        dbRecord.Status = ReportStatus.Completed;
                         reportGraph.FinancialReport.Update(dbRecord);
                         reportGraph.Actions.PressSave();
+                        PXTrace.WriteInformation("Report generation completed successfully.");
                     }
-                }
-                finally
+                    catch (System.OperationCanceledException)
+                    {
+                        PXTrace.WriteError($"Report generation timed out after {timeoutMinutes} minutes");
+                        if (dbRecord != null)
+                        {
+                            dbRecord.Status = ReportStatus.Failed;
+                            reportGraph.FinancialReport.Update(dbRecord);
+                            reportGraph.Actions.PressSave();
+                        }
+                        throw new PXException($"Report generation timed out after {timeoutMinutes} minutes. Please check template complexity or contact support.");
+                    }
+                    catch (Exception ex)
+                    {
+                        PXTrace.WriteError($"Report generation failed: {ex.ToString()}");
+                        if (dbRecord != null)
+                        {
+                            dbRecord.Status = ReportStatus.Failed;
+                            reportGraph.FinancialReport.Update(dbRecord);
+                            reportGraph.Actions.PressSave();
+                        }
+                        throw;
+                    }
+                    finally
+                    {
+                        authService?.Logout();
+                        timeoutCancellation?.Dispose();
+                    }
+                }, timeoutCancellation.Token);
+
+                try
                 {
-                    authService?.Logout();
+                    timeoutTask.Wait();
+                }
+                catch (System.AggregateException aex)
+                {
+                    // Unwrap AggregateException and throw the actual exception
+                    throw aex.InnerException ?? aex;
                 }
             });
 

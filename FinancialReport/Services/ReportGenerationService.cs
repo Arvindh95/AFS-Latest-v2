@@ -69,6 +69,14 @@ namespace FinancialReport.Services
                 // 3. Extract Placeholders
                 List<string> extractedKeys = _wordTemplateService.ExtractPlaceholderKeys(templatePath);
 
+                // 3a. Validate placeholder count to prevent abuse and performance issues
+                if (extractedKeys.Count > Constants.MaxPlaceholdersPerTemplate)
+                {
+                    throw new PXException(string.Format(Messages.TooManyPlaceholders,
+                        extractedKeys.Count,
+                        Constants.MaxPlaceholdersPerTemplate));
+                }
+
                 // 4. ✅ NEW: Separate ALL placeholder types (wildcard, exact range, regular)
                 var (wildcardRangePlaceholders, exactRangePlaceholders, regularPlaceholders) =
                     localDataService.SeparateAllPlaceholderTypes(extractedKeys);
@@ -178,7 +186,7 @@ namespace FinancialReport.Services
             catch (Exception ex)
             {
                 totalStopwatch.Stop();
-                PXTrace.WriteError($"Report generation failed after {totalStopwatch.ElapsedMilliseconds} ms: {ex.Message}");
+                PXTrace.WriteError($"Report generation failed after {totalStopwatch.ElapsedMilliseconds} ms for Report '{_currentRecord.ReportCD}' (ID: {_currentRecord.ReportID}): {ex.ToString()}");
                 throw;
             }
             finally
@@ -193,7 +201,7 @@ namespace FinancialReport.Services
                     }
                     catch (Exception ex)
                     {
-                        PXTrace.WriteWarning($"Failed to cleanup template file: {ex.Message}");
+                        PXTrace.WriteWarning($"Failed to cleanup template file '{Path.GetFileName(templatePath)}': {ex.ToString()}");
                     }
                 }
 
@@ -206,7 +214,7 @@ namespace FinancialReport.Services
                     }
                     catch (Exception ex)
                     {
-                        PXTrace.WriteWarning($"Failed to cleanup output file: {ex.Message}");
+                        PXTrace.WriteWarning($"Failed to cleanup output file '{Path.GetFileName(outputPath)}': {ex.ToString()}");
                     }
                 }
             }

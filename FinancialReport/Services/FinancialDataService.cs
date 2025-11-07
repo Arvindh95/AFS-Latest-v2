@@ -52,16 +52,24 @@ namespace FinancialReport.Services
         // --------------------------------------------------------
         // 1) FetchAllApiData (with URL Fallback Logic)
         // --------------------------------------------------------
+
+        // Synchronous version for backward compatibility
         public FinancialApiData FetchAllApiData(string branch, string organization, string ledger, string period)
         {
-            string accessToken = _authService.AuthenticateAndGetToken();
+            return FetchAllApiDataAsync(branch, organization, ledger, period).Result;
+        }
+
+        // Async version
+        public async Task<FinancialApiData> FetchAllApiDataAsync(string branch, string organization, string ledger, string period)
+        {
+            string accessToken = await _authService.AuthenticateAndGetTokenAsync();
             string dimensionFilter = BuildDimensionFilter(branch, organization);
             string filter = $"FinancialPeriod eq '{period}' and {dimensionFilter}";
 
             var accountData = new Dictionary<string, FinancialPeriodData>();
 
-            SetAuthorizationHeader(accessToken);
-            List<JToken> results = ExecuteFetchWithFallback(_httpClient, filter, ledger);
+            await SetAuthorizationHeaderAsync(accessToken);
+            List<JToken> results = await ExecuteFetchWithFallbackAsync(_httpClient, filter, ledger);
 
             if (results == null)
             {
@@ -246,7 +254,7 @@ namespace FinancialReport.Services
         }
 
 
-        // ✅ Thread-safe method to set authorization header
+        // ✅ Thread-safe method to set authorization header (synchronous version)
         private static void SetAuthorizationHeader(string accessToken)
         {
             _authSemaphore.Wait();
@@ -260,10 +268,32 @@ namespace FinancialReport.Services
             }
         }
 
+        // ✅ Thread-safe method to set authorization header (async version)
+        private static async Task SetAuthorizationHeaderAsync(string accessToken)
+        {
+            await _authSemaphore.WaitAsync();
+            try
+            {
+                _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            }
+            finally
+            {
+                _authSemaphore.Release();
+            }
+        }
+
         /// <summary>
-        /// Executes a fetch operation with fallback logic for both URL format and Ledger filtering.
+        /// Executes a fetch operation with fallback logic for both URL format and Ledger filtering (synchronous).
         /// </summary>
         private List<JToken> ExecuteFetchWithFallback(HttpClient client, string baseFilter, string ledger)
+        {
+            return ExecuteFetchWithFallbackAsync(client, baseFilter, ledger).Result;
+        }
+
+        /// <summary>
+        /// Executes a fetch operation with fallback logic for both URL format and Ledger filtering (async).
+        /// </summary>
+        private async Task<List<JToken>> ExecuteFetchWithFallbackAsync(HttpClient client, string baseFilter, string ledger)
         {
             string modernUrlBase = $"{_baseUrl}/odata/{_tenantName}/TrialBalance";
             string legacyUrlBase = $"{_baseUrl}/t/{_tenantName}/api/odata/gi/TrialBalance";
@@ -272,22 +302,22 @@ namespace FinancialReport.Services
             // Attempt 1: Modern URL with Ledger
             string filterWithLedger = AppendLedgerFilter(baseFilter, ledger);
             PXTrace.WriteInformation($"Attempt 1: Modern URL with Ledger. URL: {modernUrlBase}, Filter: {filterWithLedger}");
-            var results = PaginatedFetch(client, modernUrlBase, filterWithLedger, selectColumns);
+            var results = await PaginatedFetchAsync(client, modernUrlBase, filterWithLedger, selectColumns);
             if (results != null) return results;
 
             // Attempt 2: Modern URL without Ledger
             PXTrace.WriteWarning($"Attempt 1 failed. Retrying with Modern URL without Ledger. URL: {modernUrlBase}, Filter: {baseFilter}");
-            results = PaginatedFetch(client, modernUrlBase, baseFilter, selectColumns);
+            results = await PaginatedFetchAsync(client, modernUrlBase, baseFilter, selectColumns);
             if (results != null) return results;
 
             // Attempt 3: Legacy URL with Ledger
             PXTrace.WriteWarning($"Attempt 2 failed. Retrying with Legacy URL with Ledger. URL: {legacyUrlBase}, Filter: {filterWithLedger}");
-            results = PaginatedFetch(client, legacyUrlBase, filterWithLedger, selectColumns);
+            results = await PaginatedFetchAsync(client, legacyUrlBase, filterWithLedger, selectColumns);
             if (results != null) return results;
 
             // Attempt 4: Legacy URL without Ledger
             PXTrace.WriteWarning($"Attempt 3 failed. Retrying with Legacy URL without Ledger. URL: {legacyUrlBase}, Filter: {baseFilter}");
-            results = PaginatedFetch(client, legacyUrlBase, baseFilter, selectColumns);
+            results = await PaginatedFetchAsync(client, legacyUrlBase, baseFilter, selectColumns);
             if (results != null) return results;
 
             PXTrace.WriteError("All fetch attempts failed.");
@@ -295,9 +325,17 @@ namespace FinancialReport.Services
         }
 
         /// <summary>
-        /// Private helper method to execute a paginated OData fetch operation against a specific URL.
+        /// Private helper method to execute a paginated OData fetch operation against a specific URL (synchronous).
         /// </summary>
         private List<JToken> PaginatedFetch(HttpClient client, string baseUrl, string filter, string selectColumns)
+        {
+            return PaginatedFetchAsync(client, baseUrl, filter, selectColumns).Result;
+        }
+
+        /// <summary>
+        /// Private helper method to execute a paginated OData fetch operation against a specific URL (async).
+        /// </summary>
+        private async Task<List<JToken>> PaginatedFetchAsync(HttpClient client, string baseUrl, string filter, string selectColumns)
         {
             var allResults = new List<JToken>();
             int pageSize = 5000;
@@ -310,11 +348,11 @@ namespace FinancialReport.Services
                 HttpResponseMessage response;
                 try
                 {
-                    response = client.GetAsync(pagedUrl).Result;
+                    response = await client.GetAsync(pagedUrl);
                 }
                 catch (Exception ex)
                 {
-                    PXTrace.WriteError($"HTTP request to {pagedUrl} failed: {ex.Message}");
+                    PXTrace.WriteError($"HTTP request to {pagedUrl} failed: {ex.ToString()}");
                     return null; // Return null to indicate failure
                 }
 
@@ -325,7 +363,7 @@ namespace FinancialReport.Services
                     return null; // Return null to indicate failure, triggering the next fallback.
                 }
 
-                string jsonResponse = response.Content.ReadAsStringAsync().Result;
+                string jsonResponse = await response.Content.ReadAsStringAsync();
 
                 if (string.IsNullOrWhiteSpace(jsonResponse) || !jsonResponse.TrimStart().StartsWith("{"))
                 {
@@ -648,7 +686,7 @@ namespace FinancialReport.Services
                 }
                 catch (Exception ex)
                 {
-                    PXTrace.WriteError($"Failed to process range placeholder {placeholder}: {ex.Message}");
+                    PXTrace.WriteError($"Failed to process range placeholder '{placeholder}': {ex.ToString()}");
                     results[placeholder] = "0";
                 }
             }
@@ -914,7 +952,7 @@ namespace FinancialReport.Services
                 }
                 catch (Exception ex)
                 {
-                    PXTrace.WriteError($"Failed to process wildcard range placeholder {placeholder}: {ex.Message}");
+                    PXTrace.WriteError($"Failed to process wildcard range placeholder '{placeholder}': {ex.ToString()}");
                     results[placeholder] = "0";
                 }
             }
@@ -1345,8 +1383,6 @@ namespace FinancialReport.Services
         {
             var requests = new List<PlaceholderRequest>();
 
-            //TraceLogger.Info($"=== ANALYZING {placeholderKeys.Count} PLACEHOLDERS ===");
-
             // Group placeholders by type and period
             var simpleAccountsCY = new List<string>();
             var simpleAccountsPY = new List<string>();
@@ -1370,7 +1406,6 @@ namespace FinancialReport.Services
                 if (HasPrefixPattern(placeholder))
                 {
                     otherPlaceholders.Add(placeholder);
-                    //TraceLogger.Info($"✅ Prefix placeholder: {placeholder}");
                 }
                 // Simple account: A39101_CY
                 else if (Regex.IsMatch(cleanKey, @"^[A-Z]\d+_(CY|PY)$"))
@@ -1379,7 +1414,6 @@ namespace FinancialReport.Services
                         simpleAccountsCY.Add(placeholder);
                     else
                         simpleAccountsPY.Add(placeholder);
-                    //TraceLogger.Info($"✅ Simple account: {placeholder}");
                 }
                 // Sum prefix: Sum3_B69_CY, Sum1_B_CY
                 else if (Regex.IsMatch(cleanKey, @"^Sum\d+_[A-Z]\d*_(CY|PY)$"))
@@ -1388,7 +1422,6 @@ namespace FinancialReport.Services
                         sumPrefixesCY.Add(placeholder);
                     else
                         sumPrefixesPY.Add(placeholder);
-                    //TraceLogger.Info($"✅ Sum prefix: {placeholder}");
                 }
                 // Debit/Credit Sum: DebitSum3_B53_CY, CreditSum3_B53_CY
                 else if (Regex.IsMatch(cleanKey, @"^(Debit|Credit)Sum\d+_[A-Z]\d*_(CY|PY)$"))
@@ -1397,7 +1430,6 @@ namespace FinancialReport.Services
                         debitCreditSumsCY.Add(placeholder);
                     else
                         debitCreditSumsPY.Add(placeholder);
-                    //TraceLogger.Info($"✅ Debit/Credit sum: {placeholder}");
                 }
                 // Beginning Sum: BegSum3_A11_CY
                 else if (Regex.IsMatch(cleanKey, @"^BegSum\d+_[A-Z]\d*_(CY|PY)$"))
@@ -1406,7 +1438,6 @@ namespace FinancialReport.Services
                         begSumsCY.Add(placeholder);
                     else
                         begSumsPY.Add(placeholder);
-                    //TraceLogger.Info($"✅ Beginning sum: {placeholder}");
                 }
                 // January balance: A34101_Jan1_PY
                 else if (Regex.IsMatch(cleanKey, @"^[A-Z]\d+_Jan1_(CY|PY)$"))
@@ -1415,7 +1446,6 @@ namespace FinancialReport.Services
                         janBalancesCY.Add(placeholder);
                     else
                         janBalancesPY.Add(placeholder);
-                    //TraceLogger.Info($"✅ January balance: {placeholder}");
                 }
                 // Specific balance type: A34101_debit_CY, A34101_credit_PY
                 else if (Regex.IsMatch(cleanKey, @"^[A-Z]\d+_(debit|credit)_(CY|PY)$"))
@@ -1424,12 +1454,10 @@ namespace FinancialReport.Services
                         specificBalancesCY.Add(placeholder);
                     else
                         specificBalancesPY.Add(placeholder);
-                    //TraceLogger.Info($"✅ Specific balance: {placeholder}");
                 }
                 else
                 {
                     otherPlaceholders.Add(placeholder);
-                    //TraceLogger.Info($"❓ Other: {placeholder}");
                 }
             }
 
@@ -1451,7 +1479,6 @@ namespace FinancialReport.Services
             }
 
             // Build API requests for simple accounts
-            //TraceLogger.Info($"🚀 Processing {simpleAccountsCY.Count} simple account CY placeholders");
             foreach (var placeholder in simpleAccountsCY)
             {
                 string account = placeholder.Trim('{', '}').Replace("_CY", "");
@@ -1459,7 +1486,6 @@ namespace FinancialReport.Services
                 AddToGroup(apiCall, placeholder, currentYearPeriod);
             }
 
-            //TraceLogger.Info($"🚀 Processing {simpleAccountsPY.Count} simple account PY placeholders");
             foreach (var placeholder in simpleAccountsPY)
             {
                 string account = placeholder.Trim('{', '}').Replace("_PY", "");
@@ -1468,7 +1494,6 @@ namespace FinancialReport.Services
             }
 
             // Build API requests for sum prefixes
-           //TraceLogger.Info($"🚀 Processing {sumPrefixesCY.Count} sum prefix CY placeholders");
             foreach (var placeholder in sumPrefixesCY)
             {
                 string cleanKey = placeholder.Trim('{', '}');
@@ -1482,7 +1507,6 @@ namespace FinancialReport.Services
                 }
             }
 
-            //TraceLogger.Info($"🚀 Processing {sumPrefixesPY.Count} sum prefix PY placeholders");
             foreach (var placeholder in sumPrefixesPY)
             {
                 string cleanKey = placeholder.Trim('{', '}');
@@ -1497,7 +1521,6 @@ namespace FinancialReport.Services
             }
 
             // Build API requests for Debit/Credit Sums
-            //TraceLogger.Info($"🚀 Processing {debitCreditSumsCY.Count} debit/credit sum CY placeholders");
             foreach (var placeholder in debitCreditSumsCY)
             {
                 string cleanKey = placeholder.Trim('{', '}');
@@ -1511,7 +1534,6 @@ namespace FinancialReport.Services
                 }
             }
 
-            //TraceLogger.Info($"🚀 Processing {debitCreditSumsPY.Count} debit/credit sum PY placeholders");
             foreach (var placeholder in debitCreditSumsPY)
             {
                 string cleanKey = placeholder.Trim('{', '}');
@@ -1526,7 +1548,6 @@ namespace FinancialReport.Services
             }
 
             // Build API requests for Beginning Sums
-            //TraceLogger.Info($"🚀 Processing {begSumsCY.Count} beginning sum CY placeholders");
             foreach (var placeholder in begSumsCY)
             {
                 string cleanKey = placeholder.Trim('{', '}');
@@ -1540,7 +1561,6 @@ namespace FinancialReport.Services
                 }
             }
 
-            //TraceLogger.Info($"🚀 Processing {begSumsPY.Count} beginning sum PY placeholders");
             foreach (var placeholder in begSumsPY)
             {
                 string cleanKey = placeholder.Trim('{', '}');
@@ -1555,7 +1575,6 @@ namespace FinancialReport.Services
             }
 
             // Build API requests for January balances
-            //TraceLogger.Info($"🚀 Processing {janBalancesCY.Count} January balance CY placeholders");
             foreach (var placeholder in janBalancesCY)
             {
                 string account = placeholder.Trim('{', '}').Replace("_Jan1_CY", "");
@@ -1563,7 +1582,6 @@ namespace FinancialReport.Services
                 AddToGroup(apiCall, placeholder, $"01{currentYearPeriod.Substring(2)}");
             }
 
-            //TraceLogger.Info($"🚀 Processing {janBalancesPY.Count} January balance PY placeholders");
             foreach (var placeholder in janBalancesPY)
             {
                 string account = placeholder.Trim('{', '}').Replace("_Jan1_PY", "");
@@ -1572,7 +1590,6 @@ namespace FinancialReport.Services
             }
 
             // Build API requests for Specific balances
-            //TraceLogger.Info($"🚀 Processing {specificBalancesCY.Count} specific balance CY placeholders");
             foreach (var placeholder in specificBalancesCY)
             {
                 string cleanKey = placeholder.Trim('{', '}');
@@ -1585,7 +1602,6 @@ namespace FinancialReport.Services
                 }
             }
 
-            //TraceLogger.Info($"🚀 Processing {specificBalancesPY.Count} specific balance PY placeholders");
             foreach (var placeholder in specificBalancesPY)
             {
                 string cleanKey = placeholder.Trim('{', '}');
@@ -1601,42 +1617,6 @@ namespace FinancialReport.Services
             // Convert grouped calls to final request list
             requests.AddRange(apiCallGroups.Values);
 
-            // Enhanced logging at the end
-            //TraceLogger.Info($"🎯 DEDUPLICATION COMPLETE:");
-            //TraceLogger.Info($"📊 Total unique API calls: {apiCallGroups.Count}");
-            //TraceLogger.Info($"📋 Examples of grouped calls:");
-
-            int logCount = 0;
-            int groupedExamples = 0;
-
-            foreach (var group in apiCallGroups.Values)
-            {
-                if (logCount < 15) // Show first 15 calls
-                {
-                    string placeholderList = string.Join(", ", group.Placeholders);
-                    //TraceLogger.Info($"📞 {group.ApiCall} → [{placeholderList}]");
-                    logCount++;
-                }
-
-                // Count calls with multiple placeholders
-                if (group.Placeholders.Count > 1 && groupedExamples < 5)
-                {
-                    string placeholderList = string.Join(", ", group.Placeholders);
-                    //TraceLogger.Info($"🔗 GROUPED: {group.ApiCall} → [{placeholderList}]");
-                    groupedExamples++;
-                }
-            }
-
-            //if (apiCallGroups.Count > 15)
-            //{
-            //    TraceLogger.Info($"📝 ... and {apiCallGroups.Count - 15} more unique API calls");
-            //}
-
-            //TraceLogger.Info($"🚀 OPTIMIZATION ACHIEVED: {354 - apiCallGroups.Count} duplicate API calls eliminated!");
-
-
-
-            //TraceLogger.Info($"=== BUILT {requests.Count} API REQUESTS ===");
             return requests;
 
 
@@ -1732,7 +1712,7 @@ namespace FinancialReport.Services
                 }
                 catch (Exception ex)
                 {
-                    PXTrace.WriteError($"❌ API call failed: {request.ApiCall} - {ex.Message}");
+                    PXTrace.WriteError($"❌ API call failed for filter '{request.ApiCall}': {ex.ToString()}");
                     lock (apiResults)
                     {
                         apiResults[request.ApiCall] = new List<JToken>();
@@ -1775,7 +1755,6 @@ namespace FinancialReport.Services
             var sw = System.Diagnostics.Stopwatch.StartNew();
 
             PXTrace.WriteInformation($"🔄 Processing {placeholderRequests.Sum(r => r.Placeholders.Count)} placeholders from fetched data...");
-            //TraceLogger.Info($"🔄 Processing {placeholderRequests.Sum(r => r.Placeholders.Count)} placeholders from fetched data...");
 
             // Process each placeholder request
             foreach (var request in placeholderRequests)
@@ -1790,7 +1769,6 @@ namespace FinancialReport.Services
 
             sw.Stop();
             PXTrace.WriteInformation($"✅ Placeholder processing completed in {sw.ElapsedMilliseconds}ms");
-            //TraceLogger.Info($"✅ Placeholder processing completed in {sw.ElapsedMilliseconds}ms");
 
             return results;
         }

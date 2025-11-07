@@ -76,5 +76,6 @@ namespace FinancialReport
         // ==================================================
         public const string TenantNameMustBeUnique = "Tenant Name must be unique.";
         public const string FailedToSaveMessage = "Failed to save: {0}";
+        public const string TooManyPlaceholders = "Template contains {0} placeholders. Maximum allowed is {1}. Please simplify your template or split it into multiple reports.";
     }
 }
