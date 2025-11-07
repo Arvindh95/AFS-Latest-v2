@@ -43,15 +43,22 @@ namespace FinancialReport.Services
                 using (WordprocessingDocument doc = WordprocessingDocument.Open(outputPath, true))
                 {
                     var mainPart = doc.MainDocumentPart;
-                    ProcessDocumentPart(mainPart, normalizedData);
+                    if (mainPart != null)
+                    {
+                        ProcessDocumentPart(mainPart, normalizedData);
 
-                    foreach (var headerPart in mainPart.HeaderParts)
-                        ProcessDocumentPart(headerPart, normalizedData);
+                        foreach (var headerPart in mainPart.HeaderParts)
+                            ProcessDocumentPart(headerPart, normalizedData);
 
-                    foreach (var footerPart in mainPart.FooterParts)
-                        ProcessDocumentPart(footerPart, normalizedData);
+                        foreach (var footerPart in mainPart.FooterParts)
+                            ProcessDocumentPart(footerPart, normalizedData);
 
-                    EnsureUpdateFieldsOnOpen(mainPart);
+                        EnsureUpdateFieldsOnOpen(mainPart);
+                    }
+                    else
+                    {
+                        throw new PXException(Messages.WordDocumentMainPartNull);
+                    }
                 }
             }
             catch (Exception ex)
@@ -102,13 +109,17 @@ namespace FinancialReport.Services
             {
                 using (WordprocessingDocument doc = WordprocessingDocument.Open(templatePath, false))
                 {
-                    ExtractPlaceholdersFromPart(doc.MainDocumentPart, placeholders);
+                    var mainPart = doc.MainDocumentPart;
+                    if (mainPart != null)
+                    {
+                        ExtractPlaceholdersFromPart(mainPart, placeholders);
 
-                    foreach (var headerPart in doc.MainDocumentPart.HeaderParts)
-                        ExtractPlaceholdersFromPart(headerPart, placeholders);
+                        foreach (var headerPart in mainPart.HeaderParts)
+                            ExtractPlaceholdersFromPart(headerPart, placeholders);
 
-                    foreach (var footerPart in doc.MainDocumentPart.FooterParts)
-                        ExtractPlaceholdersFromPart(footerPart, placeholders);
+                        foreach (var footerPart in mainPart.FooterParts)
+                            ExtractPlaceholdersFromPart(footerPart, placeholders);
+                    }
                 }
             }
             catch (Exception ex)

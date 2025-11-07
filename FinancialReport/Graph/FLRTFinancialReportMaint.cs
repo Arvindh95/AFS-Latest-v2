@@ -14,7 +14,7 @@ namespace FinancialReport
     public class FLRTFinancialReportMaint : PXGraph<FLRTFinancialReportMaint>
     {
         #region DAC View
-        public SelectFrom<FLRTFinancialReport>.View FinancialReport;
+        public SelectFrom<FLRTFinancialReport>.View FinancialReport = null!; // Initialized by PXGraph framework
         #endregion
 
         #region Events
@@ -44,7 +44,14 @@ namespace FinancialReport
             PXUIFieldAttribute.SetEnabled(cache, row, !anyInProgress);
             GenerateReport.SetEnabled(!anyInProgress);
             DownloadReport.SetEnabled(!anyInProgress);
+        }
 
+        protected void FLRTFinancialReport_RowPersisting(PXCache cache, PXRowPersistingEventArgs e)
+        {
+            var row = (FLRTFinancialReport)e.Row;
+            if (row == null) return;
+
+            // Update file ID fields before persisting if needed
             if (row.Noteid != null)
             {
                 using (new PXConnectionScope())
@@ -63,8 +70,6 @@ namespace FinancialReport
                         {
                             cache.SetValue<FLRTFinancialReport.uploadedFileIDDisplay>(row, fileIdString);
                             cache.SetValueExt<FLRTFinancialReport.uploadedFileID>(row, file.FileID);
-                            cache.MarkUpdated(row);
-                            cache.IsDirty = true;
                         }
                     }
                 }
@@ -75,7 +80,7 @@ namespace FinancialReport
         {
             // Acuminator disable once PX1043 SavingChangesInEventHandlers [Justification]
             this.Actions.PressSave();
-            FinancialReport.Current = null;
+            FinancialReport.Current = null!; // Clear current record in Acumatica framework
             FinancialReport.Cache.Clear();
             FinancialReport.Cache.ClearQueryCache();
             FinancialReport.View.Clear();
@@ -83,10 +88,10 @@ namespace FinancialReport
         #endregion
 
         #region Actions
-        public PXSave<FLRTFinancialReport> Save;
-        public PXCancel<FLRTFinancialReport> Cancel;
-        public PXAction<FLRTFinancialReport> GenerateReport;
-        public PXAction<FLRTFinancialReport> DownloadReport;
+        public PXSave<FLRTFinancialReport> Save = null!; // Initialized by PXGraph framework
+        public PXCancel<FLRTFinancialReport> Cancel = null!; // Initialized by PXGraph framework
+        public PXAction<FLRTFinancialReport> GenerateReport = null!; // Initialized by PXGraph framework
+        public PXAction<FLRTFinancialReport> DownloadReport = null!; // Initialized by PXGraph framework
 
         [PXButton(CommitChanges = false)]
         [PXUIField(DisplayName = "Generate Report")]
@@ -177,7 +182,7 @@ namespace FinancialReport
                             reportGraph.FinancialReport.Update(dbRecord);
                             reportGraph.Actions.PressSave();
                         }
-                        throw new PXException($"Report generation timed out after {timeoutMinutes} minutes. Please check template complexity or contact support.");
+                        throw new PXException(Messages.ReportGenerationTimeout, timeoutMinutes);
                     }
                     catch (Exception ex)
                     {

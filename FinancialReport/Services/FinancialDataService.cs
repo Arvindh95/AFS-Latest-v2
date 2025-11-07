@@ -81,15 +81,16 @@ namespace FinancialReport.Services
                 string accountId = item["Account"]?.ToString();
                 if (string.IsNullOrEmpty(accountId)) continue;
 
-                if (!accountData.ContainsKey(accountId))
+                // At this point, accountId is guaranteed to be non-null and non-empty
+                if (!accountData.ContainsKey(accountId!))
                 {
-                    accountData[accountId] = new FinancialPeriodData();
+                    accountData[accountId!] = new FinancialPeriodData();
                 }
 
-                accountData[accountId].BeginningBalance += item["BeginningBalance"]?.ToObject<decimal>() ?? 0;
-                accountData[accountId].EndingBalance += item["EndingBalance"]?.ToObject<decimal>() ?? 0;
-                accountData[accountId].Debit += item["Debit"]?.ToObject<decimal>() ?? 0;
-                accountData[accountId].Credit += item["Credit"]?.ToObject<decimal>() ?? 0;
+                accountData[accountId!].BeginningBalance += item["BeginningBalance"]?.ToObject<decimal>() ?? 0;
+                accountData[accountId!].EndingBalance += item["EndingBalance"]?.ToObject<decimal>() ?? 0;
+                accountData[accountId!].Debit += item["Debit"]?.ToObject<decimal>() ?? 0;
+                accountData[accountId!].Credit += item["Credit"]?.ToObject<decimal>() ?? 0;
             }
 
             return new FinancialApiData { AccountData = accountData };
@@ -120,12 +121,15 @@ namespace FinancialReport.Services
                 string accountId = item["Account"]?.ToString();
                 decimal beginningBalance = item["BeginningBalance"]?.ToObject<decimal>() ?? 0;
 
-                if (!apiData.AccountData.ContainsKey(accountId))
+                if (string.IsNullOrEmpty(accountId)) continue;
+
+                // At this point, accountId is guaranteed to be non-null and non-empty
+                if (!apiData.AccountData.ContainsKey(accountId!))
                 {
-                    apiData.AccountData[accountId] = new FinancialPeriodData();
+                    apiData.AccountData[accountId!] = new FinancialPeriodData();
                 }
-                apiData.AccountData[accountId].BeginningBalance += beginningBalance;
-                apiData.AccountData[accountId].EndingBalance += beginningBalance;
+                apiData.AccountData[accountId!].BeginningBalance += beginningBalance;
+                apiData.AccountData[accountId!].EndingBalance += beginningBalance;
             }
 
             return apiData;
@@ -157,14 +161,17 @@ namespace FinancialReport.Services
                 decimal credit = item["Credit"]?.ToObject<decimal>() ?? 0;
                 decimal endingBalance = item["EndingBalance"]?.ToObject<decimal>() ?? 0;
 
-                if (!cumulativeDict.ContainsKey(accountId))
+                if (string.IsNullOrEmpty(accountId)) continue;
+
+                // At this point, accountId is guaranteed to be non-null and non-empty
+                if (!cumulativeDict.ContainsKey(accountId!))
                 {
-                    cumulativeDict[accountId] = new FinancialPeriodData();
+                    cumulativeDict[accountId!] = new FinancialPeriodData();
                 }
 
-                cumulativeDict[accountId].Debit += debit;
-                cumulativeDict[accountId].Credit += credit;
-                cumulativeDict[accountId].EndingBalance += endingBalance;
+                cumulativeDict[accountId!].Debit += debit;
+                cumulativeDict[accountId!].Credit += credit;
+                cumulativeDict[accountId!].EndingBalance += endingBalance;
             }
 
             var apiData = new FinancialApiData();
@@ -197,6 +204,8 @@ namespace FinancialReport.Services
             foreach (var item in results)
             {
                 string accountId = item["Account"]?.ToString()?.Trim();
+                if (string.IsNullOrEmpty(accountId)) continue;
+
                 string subaccountId = item["Subaccount"]?.ToString()?.Trim() ?? "N/A";
                 string branchId = item["BranchID"]?.ToString()?.Trim() ?? branch;
                 string orgId = item["OrganizationID"]?.ToString()?.Trim() ?? organization;
@@ -1245,6 +1254,7 @@ namespace FinancialReport.Services
             try
             {
                 string cleanKey = placeholder.Trim('{', '}');
+
                 var parts = cleanKey.Split('_');
 
                 if (parts.Length < 2)
@@ -1274,9 +1284,9 @@ namespace FinancialReport.Services
                     BalanceType = "ending", // Default balance type
 
                     // Set defaults from user settings or "1"
-                    Branch = !string.IsNullOrEmpty(userSettings?.Branch) ? userSettings.Branch : "1",
-                    Organization = !string.IsNullOrEmpty(userSettings?.Organization) ? userSettings.Organization : "1",
-                    Ledger = !string.IsNullOrEmpty(userSettings?.Ledger) ? userSettings.Ledger : "1",
+                    Branch = !string.IsNullOrEmpty(userSettings?.Branch) ? userSettings!.Branch : "1",
+                    Organization = !string.IsNullOrEmpty(userSettings?.Organization) ? userSettings!.Organization : "1",
+                    Ledger = !string.IsNullOrEmpty(userSettings?.Ledger) ? userSettings!.Ledger : "1",
                     Subaccount = "1" // Always default to "1"
                 };
 
@@ -1497,6 +1507,7 @@ namespace FinancialReport.Services
             foreach (var placeholder in sumPrefixesCY)
             {
                 string cleanKey = placeholder.Trim('{', '}');
+
                 var match = Regex.Match(cleanKey, @"^Sum(\d+)_([A-Z]\d*)_(CY|PY)$");
                 if (match.Success)
                 {
@@ -1510,6 +1521,7 @@ namespace FinancialReport.Services
             foreach (var placeholder in sumPrefixesPY)
             {
                 string cleanKey = placeholder.Trim('{', '}');
+
                 var match = Regex.Match(cleanKey, @"^Sum(\d+)_([A-Z]\d*)_(CY|PY)$");
                 if (match.Success)
                 {
@@ -1524,6 +1536,7 @@ namespace FinancialReport.Services
             foreach (var placeholder in debitCreditSumsCY)
             {
                 string cleanKey = placeholder.Trim('{', '}');
+
                 var match = Regex.Match(cleanKey, @"^(Debit|Credit)Sum(\d+)_([A-Z]\d*)_(CY|PY)$");
                 if (match.Success)
                 {
@@ -1537,6 +1550,7 @@ namespace FinancialReport.Services
             foreach (var placeholder in debitCreditSumsPY)
             {
                 string cleanKey = placeholder.Trim('{', '}');
+
                 var match = Regex.Match(cleanKey, @"^(Debit|Credit)Sum(\d+)_([A-Z]\d*)_(CY|PY)$");
                 if (match.Success)
                 {
@@ -1551,6 +1565,7 @@ namespace FinancialReport.Services
             foreach (var placeholder in begSumsCY)
             {
                 string cleanKey = placeholder.Trim('{', '}');
+
                 var match = Regex.Match(cleanKey, @"^BegSum(\d+)_([A-Z]\d*)_(CY|PY)$");
                 if (match.Success)
                 {
@@ -1564,6 +1579,7 @@ namespace FinancialReport.Services
             foreach (var placeholder in begSumsPY)
             {
                 string cleanKey = placeholder.Trim('{', '}');
+
                 var match = Regex.Match(cleanKey, @"^BegSum(\d+)_([A-Z]\d*)_(CY|PY)$");
                 if (match.Success)
                 {
@@ -1593,6 +1609,7 @@ namespace FinancialReport.Services
             foreach (var placeholder in specificBalancesCY)
             {
                 string cleanKey = placeholder.Trim('{', '}');
+
                 var match = Regex.Match(cleanKey, @"^([A-Z]\d+)_(debit|credit)_(CY|PY)$");
                 if (match.Success)
                 {
@@ -1605,6 +1622,7 @@ namespace FinancialReport.Services
             foreach (var placeholder in specificBalancesPY)
             {
                 string cleanKey = placeholder.Trim('{', '}');
+
                 var match = Regex.Match(cleanKey, @"^([A-Z]\d+)_(debit|credit)_(CY|PY)$");
                 if (match.Success)
                 {
@@ -1920,16 +1938,16 @@ namespace FinancialReport.Services
 
     public class PlaceholderRequest
     {
-        public string ApiCall { get; set; }
+        public string ApiCall { get; set; } = string.Empty;
         public List<string> Placeholders { get; set; } = new List<string>();
-        public string Period { get; set; }
+        public string Period { get; set; } = string.Empty;
     }
 
     public class UserSettings
     {
-        public string Branch { get; set; }
-        public string Organization { get; set; }
-        public string Ledger { get; set; }
+        public string Branch { get; set; } = string.Empty;
+        public string Organization { get; set; } = string.Empty;
+        public string Ledger { get; set; } = string.Empty;
     }
 
 
@@ -1955,14 +1973,14 @@ namespace FinancialReport.Services
 
     public class PrefixPlaceholderInfo
     {
-        public string OriginalPlaceholder { get; set; }
-        public string Account { get; set; }
-        public string Subaccount { get; set; }
-        public string Branch { get; set; }
-        public string Ledger { get; set; }
-        public string Organization { get; set; }
-        public string YearType { get; set; } // "CY" or "PY"
-        public string Period { get; set; }   // "122024" or "122023"
+        public string OriginalPlaceholder { get; set; } = string.Empty;
+        public string Account { get; set; } = string.Empty;
+        public string Subaccount { get; set; } = string.Empty;
+        public string Branch { get; set; } = string.Empty;
+        public string Ledger { get; set; } = string.Empty;
+        public string Organization { get; set; } = string.Empty;
+        public string YearType { get; set; } = string.Empty; // "CY" or "PY"
+        public string Period { get; set; } = string.Empty;   // "122024" or "122023"
         public string BalanceType { get; set; } = "ending";
     }
 

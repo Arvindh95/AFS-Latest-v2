@@ -69,14 +69,6 @@ namespace FinancialReport.Services
                 // 3. Extract Placeholders
                 List<string> extractedKeys = _wordTemplateService.ExtractPlaceholderKeys(templatePath);
 
-                // 3a. Validate placeholder count to prevent abuse and performance issues
-                if (extractedKeys.Count > Constants.MaxPlaceholdersPerTemplate)
-                {
-                    throw new PXException(string.Format(Messages.TooManyPlaceholders,
-                        extractedKeys.Count,
-                        Constants.MaxPlaceholdersPerTemplate));
-                }
-
                 // 4. ✅ NEW: Separate ALL placeholder types (wildcard, exact range, regular)
                 var (wildcardRangePlaceholders, exactRangePlaceholders, regularPlaceholders) =
                     localDataService.SeparateAllPlaceholderTypes(extractedKeys);
