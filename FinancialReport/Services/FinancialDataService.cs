@@ -748,13 +748,72 @@ namespace FinancialReport.Services
 
         /// <summary>
         /// Determines if an account is within the specified range (inclusive)
+        /// Uses smart comparison that handles both alphabetic and numeric portions correctly
         /// </summary>
         private bool IsAccountInRange(string account, string startAccount, string endAccount)
         {
-            // Simple string comparison works for most account numbering schemes
-            // since they typically follow lexicographic order (A74101, A74302, A75101, etc.)
-            return string.Compare(account, startAccount, StringComparison.OrdinalIgnoreCase) >= 0 &&
-                   string.Compare(account, endAccount, StringComparison.OrdinalIgnoreCase) <= 0;
+            // Use smart alphanumeric comparison instead of simple lexicographic comparison
+            // This correctly handles cases like A100 < A1000 (numeric) vs A100 > A1000 (lexicographic)
+            return CompareAccountCodes(account, startAccount) >= 0 &&
+                   CompareAccountCodes(account, endAccount) <= 0;
+        }
+
+        /// <summary>
+        /// Compares two account codes intelligently, treating numeric portions as numbers
+        /// Examples:
+        ///   A100 < A200 (correct)
+        ///   A100 < A1000 (correct - treats 100 and 1000 as numbers)
+        ///   A2 < A10 (correct - treats 2 and 10 as numbers)
+        ///   ABC100DEF200 < ABC100DEF1000 (correct - handles multiple numeric portions)
+        /// </summary>
+        private int CompareAccountCodes(string account1, string account2)
+        {
+            if (string.IsNullOrEmpty(account1) && string.IsNullOrEmpty(account2)) return 0;
+            if (string.IsNullOrEmpty(account1)) return -1;
+            if (string.IsNullOrEmpty(account2)) return 1;
+
+            int i = 0, j = 0;
+
+            while (i < account1.Length && j < account2.Length)
+            {
+                // Check if both current characters are digits
+                if (char.IsDigit(account1[i]) && char.IsDigit(account2[j]))
+                {
+                    // Extract full numeric portions
+                    long num1 = 0;
+                    while (i < account1.Length && char.IsDigit(account1[i]))
+                    {
+                        num1 = num1 * 10 + (account1[i] - '0');
+                        i++;
+                    }
+
+                    long num2 = 0;
+                    while (j < account2.Length && char.IsDigit(account2[j]))
+                    {
+                        num2 = num2 * 10 + (account2[j] - '0');
+                        j++;
+                    }
+
+                    // Compare numeric portions
+                    if (num1 != num2)
+                        return num1.CompareTo(num2);
+                }
+                else
+                {
+                    // Compare characters (case-insensitive)
+                    int charComparison = char.ToUpperInvariant(account1[i])
+                        .CompareTo(char.ToUpperInvariant(account2[j]));
+
+                    if (charComparison != 0)
+                        return charComparison;
+
+                    i++;
+                    j++;
+                }
+            }
+
+            // If we've exhausted one string, the shorter one comes first
+            return account1.Length.CompareTo(account2.Length);
         }
 
         /// <summary>

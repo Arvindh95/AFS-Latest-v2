@@ -74,7 +74,9 @@ namespace FinancialReport.Services
 
             var paragraphs = part.RootElement.Descendants<Paragraph>().ToList();
 
-            Parallel.ForEach(paragraphs, paragraph =>
+            // Use sequential processing instead of parallel to avoid OpenXML thread-safety issues
+            // OpenXML documents are NOT thread-safe and parallel modification can cause corruption
+            foreach (var paragraph in paragraphs)
             {
                 try
                 {
@@ -86,7 +88,7 @@ namespace FinancialReport.Services
                     PXTrace.WriteError($"Error processing paragraph: {ex.Message}");
                     //TraceLogger.Error($"Error processing paragraph: {ex.Message}");
                 }
-            });
+            }
         }
 
         public List<string> ExtractPlaceholderKeys(string templatePath)

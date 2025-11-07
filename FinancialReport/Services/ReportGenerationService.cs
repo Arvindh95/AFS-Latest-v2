@@ -55,6 +55,13 @@ namespace FinancialReport.Services
                 if (templateFileContent == null || templateFileContent.Length == 0)
                     throw new PXException(Messages.TemplateFileIsEmpty);
 
+                // Validate originalFileName is not null before using it
+                if (string.IsNullOrWhiteSpace(originalFileName))
+                {
+                    PXTrace.WriteError("Original file name is null or empty");
+                    throw new PXException(Messages.TemplateFileIsEmpty);
+                }
+
                 string extension = Path.GetExtension(originalFileName) ?? ".docx";
                 templatePath = Path.Combine(Path.GetTempPath(), $"{_currentRecord.ReportCD}_Template{extension}");
                 File.WriteAllBytes(templatePath, templateFileContent);
