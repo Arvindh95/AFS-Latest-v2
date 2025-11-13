@@ -70,6 +70,7 @@ namespace FinancialReport
         // CONFIGURATION & SYSTEM MESSAGES
         // ==================================================
         public const string MissingConfig = "Missing Config. Check Web Configurations";
+        public const string UnselectedResetStatus = "Please select a report to reset.";
 
         // ==================================================
         // NEW CONSTANTS (Add these)

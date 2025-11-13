@@ -92,6 +92,7 @@ namespace FinancialReport
         public PXCancel<FLRTFinancialReport> Cancel = null!; // Initialized by PXGraph framework
         public PXAction<FLRTFinancialReport> GenerateReport = null!; // Initialized by PXGraph framework
         public PXAction<FLRTFinancialReport> DownloadReport = null!; // Initialized by PXGraph framework
+        public PXAction<FLRTFinancialReport> ResetStatus = null!; // Initialized by PXGraph framework
 
         [PXButton(CommitChanges = false)]
         [PXUIField(DisplayName = "Generate Report")]
@@ -133,23 +134,27 @@ namespace FinancialReport
             PXLongOperation.StartOperation(this, () =>
             {
                 var reportGraph = PXGraph.CreateInstance<FLRTFinancialReportMaint>();
-                FLRTFinancialReport dbRecord = PXSelect<FLRTFinancialReport, Where<FLRTFinancialReport.reportID, Equal<Required<FLRTFinancialReport.reportID>>>>
-                    .SelectSingleBound(reportGraph, null, reportID);
+                FLRTFinancialReport dbRecord = null;
 
-                // Timeout protection: 15 minutes maximum for report generation
-                var timeoutCancellation = new System.Threading.CancellationTokenSource();
-                const int timeoutMinutes = 15;
-                timeoutCancellation.CancelAfter(TimeSpan.FromMinutes(timeoutMinutes));
-
-                var timeoutTask = System.Threading.Tasks.Task.Run(() =>
+                try
                 {
-                    try
-                    {
-                        if (dbRecord == null) throw new PXException(Messages.FailedToRetrieveFile);
-                        if (dbRecord.Noteid == null) throw new PXException(Messages.TemplateHasNoFiles);
+                    dbRecord = PXSelect<FLRTFinancialReport, Where<FLRTFinancialReport.reportID, Equal<Required<FLRTFinancialReport.reportID>>>>
+                        .SelectSingleBound(reportGraph, null, reportID);
 
-                        // Check for cancellation before starting
-                        timeoutCancellation.Token.ThrowIfCancellationRequested();
+                    // Timeout protection: 15 minutes maximum for report generation
+                    var timeoutCancellation = new System.Threading.CancellationTokenSource();
+                    const int timeoutMinutes = 15;
+                    timeoutCancellation.CancelAfter(TimeSpan.FromMinutes(timeoutMinutes));
+
+                    var timeoutTask = System.Threading.Tasks.Task.Run(() =>
+                    {
+                        try
+                        {
+                            if (dbRecord == null) throw new PXException(Messages.FailedToRetrieveFile);
+                            if (dbRecord.Noteid == null) throw new PXException(Messages.TemplateHasNoFiles);
+
+                            // Check for cancellation before starting
+                            timeoutCancellation.Token.ThrowIfCancellationRequested();
 
                         // Pre-authenticate INSIDE the long operation where async/sync issues are less problematic
                         PXTrace.WriteInformation("Authenticating...");
@@ -202,14 +207,34 @@ namespace FinancialReport
                     }
                 }, timeoutCancellation.Token);
 
-                try
-                {
-                    timeoutTask.Wait();
+                    try
+                    {
+                        timeoutTask.Wait();
+                    }
+                    catch (System.AggregateException aex)
+                    {
+                        // Unwrap AggregateException and throw the actual exception
+                        throw aex.InnerException ?? aex;
+                    }
                 }
-                catch (System.AggregateException aex)
+                catch (Exception)
                 {
-                    // Unwrap AggregateException and throw the actual exception
-                    throw aex.InnerException ?? aex;
+                    // If ANY unhandled exception occurs (including user cancellation),
+                    // ensure status is set to Failed
+                    if (dbRecord != null && dbRecord.Status == ReportStatus.InProgress)
+                    {
+                        dbRecord.Status = ReportStatus.Failed;
+                        reportGraph.FinancialReport.Update(dbRecord);
+                        try
+                        {
+                            reportGraph.Actions.PressSave();
+                        }
+                        catch
+                        {
+                            // Ignore save errors in cleanup
+                        }
+                    }
+                    throw; // Re-throw to show user the error
                 }
             });
 
@@ -231,6 +256,40 @@ namespace FinancialReport
                 throw new PXException(Messages.NoGeneratedFile);
 
             throw new PXRedirectToFileException(selectedRecord.GeneratedFileID.Value, true);
+        }
+
+        [PXButton(CommitChanges = true)]
+        [PXUIField(DisplayName = "Reset Status", MapEnableRights = PXCacheRights.Update, Visible = true)]
+        protected virtual System.Collections.IEnumerable resetStatus(PXAdapter adapter)
+        {
+            var selectedRecord = FinancialReport.Cache.Cached
+                .Cast<FLRTFinancialReport>()
+                .FirstOrDefault(x => x.Selected == true);
+
+            if (selectedRecord == null)
+            {
+                throw new PXException(Messages.UnselectedResetStatus);
+            }
+
+            string currentStatus = selectedRecord.Status ?? "Unknown";
+            string statusName = currentStatus == ReportStatus.InProgress ? "In Progress" :
+                               currentStatus == ReportStatus.Failed ? "Failed" :
+                               currentStatus == ReportStatus.Completed ? "Completed" : "Pending";
+
+            // Ask for confirmation before resetting
+            if (FinancialReport.Ask("Confirm Reset",
+                $"Reset this report from '{statusName}' to 'Pending'? This will allow regeneration.",
+                MessageButtons.YesNo) == WebDialogResult.Yes)
+            {
+                selectedRecord.Status = ReportStatus.Pending;
+                selectedRecord.GeneratedFileID = null; // Clear the generated file so it doesn't show old data
+                FinancialReport.Update(selectedRecord);
+                Actions.PressSave();
+
+                PXTrace.WriteInformation($"Report {selectedRecord.ReportCD} status reset from {statusName} to Pending.");
+            }
+
+            return adapter.Get();
         }
         #endregion
 
