@@ -352,7 +352,10 @@ namespace FinancialReport.Services
 
             while (true)
             {
-                string pagedUrl = $"{baseUrl}?$filter={filter}&$select={selectColumns}&$top={pageSize}&$skip={skip}";
+                // URL encode the filter and select parameters to handle special characters properly
+                string encodedFilter = Uri.EscapeDataString(filter);
+                string encodedSelect = Uri.EscapeDataString(selectColumns);
+                string pagedUrl = $"{baseUrl}?$filter={encodedFilter}&$select={encodedSelect}&$top={pageSize}&$skip={skip}";
 
                 HttpResponseMessage response;
                 try
@@ -638,8 +641,8 @@ namespace FinancialReport.Services
         public bool HasAccountRangePattern(string placeholder)
         {
             string cleanKey = placeholder.Trim('{', '}');
-            // Pattern: A74101:A75101_e_CY
-            return Regex.IsMatch(cleanKey, @"^[A-Z]\d+:[A-Z]\d+_(e|b|c|d)_(CY|PY)$", RegexOptions.IgnoreCase);
+            // Pattern: A74101:A75101_e_CY or 100-10:200-20_e_CY
+            return Regex.IsMatch(cleanKey, @"^[A-Z0-9\-]+:[A-Z0-9\-]+_(e|b|c|d)_(CY|PY)$", RegexOptions.IgnoreCase);
         }
 
         /// <summary>
@@ -664,8 +667,8 @@ namespace FinancialReport.Services
                 {
                     string cleanKey = placeholder.Trim('{', '}');
 
-                    // Parse the range placeholder: A74101:A75101_e_CY
-                    var match = Regex.Match(cleanKey, @"^([A-Z]\d+):([A-Z]\d+)_(e|b|c|d)_(CY|PY)$", RegexOptions.IgnoreCase);
+                    // Parse the range placeholder: A74101:A75101_e_CY or 100-10:200-20_e_CY
+                    var match = Regex.Match(cleanKey, @"^([A-Z0-9\-]+):([A-Z0-9\-]+)_(e|b|c|d)_(CY|PY)$", RegexOptions.IgnoreCase);
 
                     if (!match.Success)
                     {
@@ -807,11 +810,15 @@ namespace FinancialReport.Services
 
         /// <summary>
         /// Compares two account codes intelligently, treating numeric portions as numbers
+        /// and handling segmented accounts properly.
         /// Examples:
         ///   A100 < A200 (correct)
         ///   A100 < A1000 (correct - treats 100 and 1000 as numbers)
         ///   A2 < A10 (correct - treats 2 and 10 as numbers)
         ///   ABC100DEF200 < ABC100DEF1000 (correct - handles multiple numeric portions)
+        ///   100-09 < 100-10 (correct - handles segmented accounts)
+        ///   100-10 < 100-20 (correct)
+        ///   100-10 < 200-05 (correct - first segment takes precedence)
         /// </summary>
         private int CompareAccountCodes(string account1, string account2)
         {
@@ -819,6 +826,44 @@ namespace FinancialReport.Services
             if (string.IsNullOrEmpty(account1)) return -1;
             if (string.IsNullOrEmpty(account2)) return 1;
 
+            // Check if both accounts are segmented (contain hyphens)
+            bool isSegmented1 = account1.Contains('-');
+            bool isSegmented2 = account2.Contains('-');
+
+            // If both are segmented, compare segment by segment
+            if (isSegmented1 && isSegmented2)
+            {
+                var segments1 = account1.Split('-');
+                var segments2 = account2.Split('-');
+
+                // Compare each segment pair
+                int minSegments = Math.Min(segments1.Length, segments2.Length);
+                for (int s = 0; s < minSegments; s++)
+                {
+                    // Try to parse segments as numbers
+                    bool isNum1 = int.TryParse(segments1[s], out int num1);
+                    bool isNum2 = int.TryParse(segments2[s], out int num2);
+
+                    if (isNum1 && isNum2)
+                    {
+                        // Both are numeric - compare as numbers
+                        if (num1 != num2)
+                            return num1.CompareTo(num2);
+                    }
+                    else
+                    {
+                        // At least one is not numeric - compare as strings
+                        int cmp = string.Compare(segments1[s], segments2[s], StringComparison.OrdinalIgnoreCase);
+                        if (cmp != 0)
+                            return cmp;
+                    }
+                }
+
+                // All compared segments are equal, the one with fewer segments comes first
+                return segments1.Length.CompareTo(segments2.Length);
+            }
+
+            // Fall back to character-by-character comparison for non-segmented or mixed cases
             int i = 0, j = 0;
 
             while (i < account1.Length && j < account2.Length)
@@ -895,8 +940,8 @@ namespace FinancialReport.Services
         public bool HasWildcardRangePattern(string placeholder)
         {
             string cleanKey = placeholder.Trim('{', '}');
-            // Pattern: A?????:B?????_e_CY or A3????:A4????_c_PY
-            return Regex.IsMatch(cleanKey, @"^[A-Z][A-Z0-9?]+:[A-Z][A-Z0-9?]+_(e|b|c|d)_(CY|PY)$", RegexOptions.IgnoreCase) &&
+            // Pattern: A?????:B?????_e_CY or A3????:A4????_c_PY or 10?-??:20?-??_e_CY
+            return Regex.IsMatch(cleanKey, @"^[A-Z0-9\-?]+:[A-Z0-9\-?]+_(e|b|c|d)_(CY|PY)$", RegexOptions.IgnoreCase) &&
                    (cleanKey.Contains('?')); // Must contain at least one wildcard
         }
 
@@ -922,8 +967,8 @@ namespace FinancialReport.Services
                 {
                     string cleanKey = placeholder.Trim('{', '}');
 
-                    // Parse the wildcard range placeholder: A3????:A4????_e_CY
-                    var match = Regex.Match(cleanKey, @"^([A-Z][A-Z0-9?]+):([A-Z][A-Z0-9?]+)_(e|b|c|d)_(CY|PY)$", RegexOptions.IgnoreCase);
+                    // Parse the wildcard range placeholder: A3????:A4????_e_CY or 10?-??:20?-??_e_CY
+                    var match = Regex.Match(cleanKey, @"^([A-Z0-9\-?]+):([A-Z0-9\-?]+)_(e|b|c|d)_(CY|PY)$", RegexOptions.IgnoreCase);
 
                     if (!match.Success)
                     {
@@ -1417,48 +1462,48 @@ namespace FinancialReport.Services
                 {
                     otherPlaceholders.Add(placeholder);
                 }
-                // Simple account: A39101_CY
-                else if (Regex.IsMatch(cleanKey, @"^[A-Z]\d+_(CY|PY)$"))
+                // Simple account: A39101_CY or 100-10_CY
+                else if (Regex.IsMatch(cleanKey, @"^[A-Z0-9\-]+_(CY|PY)$"))
                 {
                     if (cleanKey.EndsWith("_CY"))
                         simpleAccountsCY.Add(placeholder);
                     else
                         simpleAccountsPY.Add(placeholder);
                 }
-                // Sum prefix: Sum3_B69_CY, Sum1_B_CY
-                else if (Regex.IsMatch(cleanKey, @"^Sum\d+_[A-Z]\d*_(CY|PY)$"))
+                // Sum prefix: Sum3_B69_CY, Sum1_B_CY, Sum3_100_CY
+                else if (Regex.IsMatch(cleanKey, @"^Sum\d+_[A-Z0-9\-]*_(CY|PY)$"))
                 {
                     if (cleanKey.EndsWith("_CY"))
                         sumPrefixesCY.Add(placeholder);
                     else
                         sumPrefixesPY.Add(placeholder);
                 }
-                // Debit/Credit Sum: DebitSum3_B53_CY, CreditSum3_B53_CY
-                else if (Regex.IsMatch(cleanKey, @"^(Debit|Credit)Sum\d+_[A-Z]\d*_(CY|PY)$"))
+                // Debit/Credit Sum: DebitSum3_B53_CY, CreditSum3_B53_CY, DebitSum3_100_CY
+                else if (Regex.IsMatch(cleanKey, @"^(Debit|Credit)Sum\d+_[A-Z0-9\-]*_(CY|PY)$"))
                 {
                     if (cleanKey.EndsWith("_CY"))
                         debitCreditSumsCY.Add(placeholder);
                     else
                         debitCreditSumsPY.Add(placeholder);
                 }
-                // Beginning Sum: BegSum3_A11_CY
-                else if (Regex.IsMatch(cleanKey, @"^BegSum\d+_[A-Z]\d*_(CY|PY)$"))
+                // Beginning Sum: BegSum3_A11_CY or BegSum3_100_CY
+                else if (Regex.IsMatch(cleanKey, @"^BegSum\d+_[A-Z0-9\-]*_(CY|PY)$"))
                 {
                     if (cleanKey.EndsWith("_CY"))
                         begSumsCY.Add(placeholder);
                     else
                         begSumsPY.Add(placeholder);
                 }
-                // January balance: A34101_Jan1_PY
-                else if (Regex.IsMatch(cleanKey, @"^[A-Z]\d+_Jan1_(CY|PY)$"))
+                // January balance: A34101_Jan1_PY or 100-10_Jan1_PY
+                else if (Regex.IsMatch(cleanKey, @"^[A-Z0-9\-]+_Jan1_(CY|PY)$"))
                 {
                     if (cleanKey.EndsWith("_CY"))
                         janBalancesCY.Add(placeholder);
                     else
                         janBalancesPY.Add(placeholder);
                 }
-                // Specific balance type: A34101_debit_CY, A34101_credit_PY
-                else if (Regex.IsMatch(cleanKey, @"^[A-Z]\d+_(debit|credit)_(CY|PY)$"))
+                // Specific balance type: A34101_debit_CY, A34101_credit_PY, 100-10_debit_CY
+                else if (Regex.IsMatch(cleanKey, @"^[A-Z0-9\-]+_(debit|credit)_(CY|PY)$"))
                 {
                     if (cleanKey.EndsWith("_CY"))
                         specificBalancesCY.Add(placeholder);
@@ -1508,7 +1553,7 @@ namespace FinancialReport.Services
             {
                 string cleanKey = placeholder.Trim('{', '}');
 
-                var match = Regex.Match(cleanKey, @"^Sum(\d+)_([A-Z]\d*)_(CY|PY)$");
+                var match = Regex.Match(cleanKey, @"^Sum(\d+)_([A-Z0-9\-]*)_(CY|PY)$");
                 if (match.Success)
                 {
                     string prefix = match.Groups[2].Value;
@@ -1522,7 +1567,7 @@ namespace FinancialReport.Services
             {
                 string cleanKey = placeholder.Trim('{', '}');
 
-                var match = Regex.Match(cleanKey, @"^Sum(\d+)_([A-Z]\d*)_(CY|PY)$");
+                var match = Regex.Match(cleanKey, @"^Sum(\d+)_([A-Z0-9\-]*)_(CY|PY)$");
                 if (match.Success)
                 {
                     string prefix = match.Groups[2].Value;
@@ -1537,7 +1582,7 @@ namespace FinancialReport.Services
             {
                 string cleanKey = placeholder.Trim('{', '}');
 
-                var match = Regex.Match(cleanKey, @"^(Debit|Credit)Sum(\d+)_([A-Z]\d*)_(CY|PY)$");
+                var match = Regex.Match(cleanKey, @"^(Debit|Credit)Sum(\d+)_([A-Z0-9\-]*)_(CY|PY)$");
                 if (match.Success)
                 {
                     string prefix = match.Groups[3].Value;
@@ -1551,7 +1596,7 @@ namespace FinancialReport.Services
             {
                 string cleanKey = placeholder.Trim('{', '}');
 
-                var match = Regex.Match(cleanKey, @"^(Debit|Credit)Sum(\d+)_([A-Z]\d*)_(CY|PY)$");
+                var match = Regex.Match(cleanKey, @"^(Debit|Credit)Sum(\d+)_([A-Z0-9\-]*)_(CY|PY)$");
                 if (match.Success)
                 {
                     string prefix = match.Groups[3].Value;
@@ -1566,7 +1611,7 @@ namespace FinancialReport.Services
             {
                 string cleanKey = placeholder.Trim('{', '}');
 
-                var match = Regex.Match(cleanKey, @"^BegSum(\d+)_([A-Z]\d*)_(CY|PY)$");
+                var match = Regex.Match(cleanKey, @"^BegSum(\d+)_([A-Z0-9\-]*)_(CY|PY)$");
                 if (match.Success)
                 {
                     string prefix = match.Groups[2].Value;
@@ -1580,7 +1625,7 @@ namespace FinancialReport.Services
             {
                 string cleanKey = placeholder.Trim('{', '}');
 
-                var match = Regex.Match(cleanKey, @"^BegSum(\d+)_([A-Z]\d*)_(CY|PY)$");
+                var match = Regex.Match(cleanKey, @"^BegSum(\d+)_([A-Z0-9\-]*)_(CY|PY)$");
                 if (match.Success)
                 {
                     string prefix = match.Groups[2].Value;
@@ -1610,7 +1655,7 @@ namespace FinancialReport.Services
             {
                 string cleanKey = placeholder.Trim('{', '}');
 
-                var match = Regex.Match(cleanKey, @"^([A-Z]\d+)_(debit|credit)_(CY|PY)$");
+                var match = Regex.Match(cleanKey, @"^([A-Z0-9\-]+)_(debit|credit)_(CY|PY)$");
                 if (match.Success)
                 {
                     string account = match.Groups[1].Value;
@@ -1623,7 +1668,7 @@ namespace FinancialReport.Services
             {
                 string cleanKey = placeholder.Trim('{', '}');
 
-                var match = Regex.Match(cleanKey, @"^([A-Z]\d+)_(debit|credit)_(CY|PY)$");
+                var match = Regex.Match(cleanKey, @"^([A-Z0-9\-]+)_(debit|credit)_(CY|PY)$");
                 if (match.Success)
                 {
                     string account = match.Groups[1].Value;
@@ -1646,18 +1691,39 @@ namespace FinancialReport.Services
             if (string.IsNullOrEmpty(prefix))
                 return "A"; // fallback
 
+            // Check if this is a segmented account (contains hyphen)
+            // Examples: "100-10" → "100-11", "100-99" → "100-100", "100" → "101"
+            if (prefix.Contains('-'))
+            {
+                // Split by hyphen and increment the last segment
+                var segments = prefix.Split('-');
+                var lastSegment = segments[segments.Length - 1];
+
+                // Check if last segment is numeric
+                if (int.TryParse(lastSegment, out int lastNum))
+                {
+                    // Increment the last segment
+                    segments[segments.Length - 1] = (lastNum + 1).ToString();
+                    return string.Join("-", segments);
+                }
+                else
+                {
+                    // Last segment is not numeric, treat as whole string
+                    // Fall through to regular logic
+                }
+            }
+
             // For single character: B → C, H → I, Z → AA
             if (prefix.Length == 1)
             {
                 char c = prefix[0];
-                if (c == 'Z')
-                    return "AA"; // edge case
+                if (c == 'Z' || c == 'z')
+                    return char.IsUpper(c) ? "AA" : "aa"; // edge case
                 return ((char)(c + 1)).ToString();
             }
 
-            // For multi-character: B69 → B70, B539 → B540, B999 → B1000
+            // For multi-character: B69 → B70, B539 → B540, B999 → B1000, 100 → 101
             char lastChar = prefix[prefix.Length - 1];
-            string basePrefix = prefix.Substring(0, prefix.Length - 1);
 
             if (char.IsDigit(lastChar))
             {
@@ -1677,8 +1743,9 @@ namespace FinancialReport.Services
             else
             {
                 // Last character is a letter
-                if (lastChar == 'Z')
-                    return basePrefix + "AA"; // B → BAA
+                string basePrefix = prefix.Substring(0, prefix.Length - 1);
+                if (lastChar == 'Z' || lastChar == 'z')
+                    return basePrefix + (char.IsUpper(lastChar) ? "AA" : "aa"); // B → BAA
                 return basePrefix + ((char)(lastChar + 1)).ToString();
             }
         }
@@ -1800,8 +1867,8 @@ namespace FinancialReport.Services
 
             try
             {
-                // Simple account: A39101_CY -> EndingBalance
-                if (Regex.IsMatch(cleanKey, @"^[A-Z]\d+_(CY|PY)$"))
+                // Simple account: A39101_CY or 100-10_CY -> EndingBalance
+                if (Regex.IsMatch(cleanKey, @"^[A-Z0-9\-]+_(CY|PY)$"))
                 {
                     var parts = cleanKey.Split('_');
                     string account = parts[0];
@@ -1813,10 +1880,10 @@ namespace FinancialReport.Services
                     return "0";
                 }
 
-                // Sum prefix: Sum3_B69_CY -> EndingBalance sum
-                if (Regex.IsMatch(cleanKey, @"^Sum\d+_([A-Z]\d*)_(CY|PY)$"))
+                // Sum prefix: Sum3_B69_CY or Sum3_100_CY -> EndingBalance sum
+                if (Regex.IsMatch(cleanKey, @"^Sum\d+_([A-Z0-9\-]*)_(CY|PY)$"))
                 {
-                    var match = Regex.Match(cleanKey, @"^Sum(\d+)_([A-Z]\d*)_(CY|PY)$");
+                    var match = Regex.Match(cleanKey, @"^Sum(\d+)_([A-Z0-9\-]*)_(CY|PY)$");
                     int level = int.Parse(match.Groups[1].Value);
                     string prefix = match.Groups[2].Value;
                     string year = match.Groups[3].Value;
@@ -1831,10 +1898,10 @@ namespace FinancialReport.Services
                     return sum.ToString("#,##0");
                 }
 
-                // Debit sum: DebitSum3_B53_CY -> Debit sum from range data
-                if (Regex.IsMatch(cleanKey, @"^DebitSum\d+_([A-Z]\d*)_(CY|PY)$"))
+                // Debit sum: DebitSum3_B53_CY or DebitSum3_100_CY -> Debit sum from range data
+                if (Regex.IsMatch(cleanKey, @"^DebitSum\d+_([A-Z0-9\-]*)_(CY|PY)$"))
                 {
-                    var match = Regex.Match(cleanKey, @"^DebitSum(\d+)_([A-Z]\d*)_(CY|PY)$");
+                    var match = Regex.Match(cleanKey, @"^DebitSum(\d+)_([A-Z0-9\-]*)_(CY|PY)$");
                     int level = int.Parse(match.Groups[1].Value);
                     string prefix = match.Groups[2].Value;
                     string year = match.Groups[3].Value;
@@ -1849,10 +1916,10 @@ namespace FinancialReport.Services
                     return sum.ToString("#,##0");
                 }
 
-                // Credit sum: CreditSum3_B53_CY -> Credit sum from range data
-                if (Regex.IsMatch(cleanKey, @"^CreditSum\d+_([A-Z]\d*)_(CY|PY)$"))
+                // Credit sum: CreditSum3_B53_CY or CreditSum3_100_CY -> Credit sum from range data
+                if (Regex.IsMatch(cleanKey, @"^CreditSum\d+_([A-Z0-9\-]*)_(CY|PY)$"))
                 {
-                    var match = Regex.Match(cleanKey, @"^CreditSum(\d+)_([A-Z]\d*)_(CY|PY)$");
+                    var match = Regex.Match(cleanKey, @"^CreditSum(\d+)_([A-Z0-9\-]*)_(CY|PY)$");
                     int level = int.Parse(match.Groups[1].Value);
                     string prefix = match.Groups[2].Value;
                     string year = match.Groups[3].Value;
@@ -1867,10 +1934,10 @@ namespace FinancialReport.Services
                     return sum.ToString("#,##0");
                 }
 
-                // Beginning sum: BegSum3_A11_CY -> BeginningBalance sum from January data
-                if (Regex.IsMatch(cleanKey, @"^BegSum\d+_([A-Z]\d*)_(CY|PY)$"))
+                // Beginning sum: BegSum3_A11_CY or BegSum3_100_CY -> BeginningBalance sum from January data
+                if (Regex.IsMatch(cleanKey, @"^BegSum\d+_([A-Z0-9\-]*)_(CY|PY)$"))
                 {
-                    var match = Regex.Match(cleanKey, @"^BegSum(\d+)_([A-Z]\d*)_(CY|PY)$");
+                    var match = Regex.Match(cleanKey, @"^BegSum(\d+)_([A-Z0-9\-]*)_(CY|PY)$");
                     int level = int.Parse(match.Groups[1].Value);
                     string prefix = match.Groups[2].Value;
                     string year = match.Groups[3].Value;
@@ -1885,8 +1952,8 @@ namespace FinancialReport.Services
                     return sum.ToString("#,##0");
                 }
 
-                // January balance: A21101_Jan1_CY -> BeginningBalance
-                if (Regex.IsMatch(cleanKey, @"^[A-Z]\d+_Jan1_(CY|PY)$"))
+                // January balance: A21101_Jan1_CY or 100-10_Jan1_CY -> BeginningBalance
+                if (Regex.IsMatch(cleanKey, @"^[A-Z0-9\-]+_Jan1_(CY|PY)$"))
                 {
                     var parts = cleanKey.Split('_');
                     string account = parts[0];
@@ -1898,8 +1965,8 @@ namespace FinancialReport.Services
                     return "0";
                 }
 
-                // Specific balance - debit: A34101_debit_CY -> Sum of all Debit from range
-                if (Regex.IsMatch(cleanKey, @"^[A-Z]\d+_debit_(CY|PY)$"))
+                // Specific balance - debit: A34101_debit_CY or 100-10_debit_CY -> Sum of all Debit from range
+                if (Regex.IsMatch(cleanKey, @"^[A-Z0-9\-]+_debit_(CY|PY)$"))
                 {
                     var parts = cleanKey.Split('_');
                     string account = parts[0];
@@ -1911,8 +1978,8 @@ namespace FinancialReport.Services
                     return "0";
                 }
 
-                // Specific balance - credit: A34101_credit_CY -> Sum of all Credit from range
-                if (Regex.IsMatch(cleanKey, @"^[A-Z]\d+_credit_(CY|PY)$"))
+                // Specific balance - credit: A34101_credit_CY or 100-10_credit_CY -> Sum of all Credit from range
+                if (Regex.IsMatch(cleanKey, @"^[A-Z0-9\-]+_credit_(CY|PY)$"))
                 {
                     var parts = cleanKey.Split('_');
                     string account = parts[0];
