@@ -1,4 +1,5 @@
 ﻿using PX.Data;
+using System.Collections.Generic;
 using System.Text;
 
 namespace FinancialReport.Services
@@ -14,8 +15,24 @@ namespace FinancialReport.Services
 
     public static class CredentialProvider
     {
+        // In-memory cache for credentials (thread-safe dictionary)
+        private static readonly Dictionary<string, AcumaticaCredentials> _credentialCache = new Dictionary<string, AcumaticaCredentials>();
+        private static readonly object _cacheLock = new object();
+
         public static AcumaticaCredentials GetCredentials(string tenant)
         {
+            // Check cache first
+            lock (_cacheLock)
+            {
+                if (_credentialCache.ContainsKey(tenant))
+                {
+                    PXTrace.WriteInformation($"✅ Credentials retrieved from cache for tenant: {tenant}");
+                    return _credentialCache[tenant];
+                }
+            }
+
+            // Not in cache - fetch from database and decrypt
+            PXTrace.WriteInformation($"🔓 Decrypting credentials for tenant: {tenant}");
             PXGraph graph = PXGraph.CreateInstance<PXGraph>();
             try
             {
@@ -58,13 +75,52 @@ namespace FinancialReport.Services
                     BaseURL = record.BaseURL
                 };
 
-                PXTrace.WriteInformation($"Credentials retrieved for tenant {tenant} (CompanyNum {record.CompanyNum}): ClientId={credentials.ClientId}, Username={credentials.Username}");
+                PXTrace.WriteInformation($"Credentials decrypted and cached for tenant {tenant} (CompanyNum {record.CompanyNum}): ClientId={credentials.ClientId}, Username={credentials.Username}");
+
+                // Add to cache
+                lock (_cacheLock)
+                {
+                    if (!_credentialCache.ContainsKey(tenant))
+                    {
+                        _credentialCache[tenant] = credentials;
+                    }
+                }
 
                 return credentials;
             }
             finally
             {
                 graph.Clear();
+            }
+        }
+
+        /// <summary>
+        /// Clears the credential cache. Should be called after report generation completes.
+        /// </summary>
+        public static void ClearCache()
+        {
+            lock (_cacheLock)
+            {
+                int count = _credentialCache.Count;
+                _credentialCache.Clear();
+                if (count > 0)
+                {
+                    PXTrace.WriteInformation($"🧹 Cleared credential cache ({count} tenant(s))");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Clears credentials for a specific tenant from the cache.
+        /// </summary>
+        public static void ClearCache(string tenant)
+        {
+            lock (_cacheLock)
+            {
+                if (_credentialCache.Remove(tenant))
+                {
+                    PXTrace.WriteInformation($"🧹 Cleared cached credentials for tenant: {tenant}");
+                }
             }
         }
     }

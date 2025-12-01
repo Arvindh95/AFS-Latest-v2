@@ -209,6 +209,9 @@ namespace FinancialReport.Services
                         PXTrace.WriteWarning($"Failed to cleanup output file '{Path.GetFileName(outputPath)}': {ex.ToString()}");
                     }
                 }
+
+                // Clear credential cache after report generation completes
+                CredentialProvider.ClearCache();
             }
         }
 
