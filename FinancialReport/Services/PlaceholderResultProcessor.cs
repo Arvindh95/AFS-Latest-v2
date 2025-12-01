@@ -44,57 +44,57 @@ namespace FinancialReport.Services
 
             try
             {
-                // Simple account: A39101_CY -> EndingBalance
-                if (Regex.IsMatch(cleanKey, @"^[A-Z]\d+_(CY|PY)$"))
+                // Simple account: A39101_CY or 100-10_CY -> EndingBalance
+                if (Regex.IsMatch(cleanKey, @"^[A-Z0-9\-]+_(CY|PY)$"))
                 {
                     decimal sum = results.Sum(r => r["EndingBalance"]?.ToObject<decimal>() ?? 0);
                     return sum.ToString("#,##0");
                 }
 
-                // Sum prefix: Sum3_B69_CY -> EndingBalance sum
-                if (Regex.IsMatch(cleanKey, @"^Sum\d+_[A-Z]\d*_(CY|PY)$"))
+                // Sum prefix: Sum3_B69_CY or Sum3_100_CY -> EndingBalance sum
+                if (Regex.IsMatch(cleanKey, @"^Sum\d+_[A-Z0-9\-]*_(CY|PY)$"))
                 {
                     decimal sum = results.Sum(r => r["EndingBalance"]?.ToObject<decimal>() ?? 0);
                     return sum.ToString("#,##0");
                 }
 
-                // Debit sum: DebitSum3_B53_CY -> Debit sum
-                if (Regex.IsMatch(cleanKey, @"^DebitSum\d+_[A-Z]\d*_(CY|PY)$"))
+                // Debit sum: DebitSum3_B53_CY or DebitSum3_100_CY -> Debit sum
+                if (Regex.IsMatch(cleanKey, @"^DebitSum\d+_[A-Z0-9\-]*_(CY|PY)$"))
                 {
                     decimal sum = results.Sum(r => r["Debit"]?.ToObject<decimal>() ?? 0);
                     return sum.ToString("#,##0");
                 }
 
-                // Credit sum: CreditSum3_B53_CY -> Credit sum
-                if (Regex.IsMatch(cleanKey, @"^CreditSum\d+_[A-Z]\d*_(CY|PY)$"))
+                // Credit sum: CreditSum3_B53_CY or CreditSum3_100_CY -> Credit sum
+                if (Regex.IsMatch(cleanKey, @"^CreditSum\d+_[A-Z0-9\-]*_(CY|PY)$"))
                 {
                     decimal sum = results.Sum(r => r["Credit"]?.ToObject<decimal>() ?? 0);
                     return sum.ToString("#,##0");
                 }
 
-                // Beginning sum: BegSum3_A11_CY -> BeginningBalance sum
-                if (Regex.IsMatch(cleanKey, @"^BegSum\d+_[A-Z]\d*_(CY|PY)$"))
+                // Beginning sum: BegSum3_A11_CY or BegSum3_100_CY -> BeginningBalance sum
+                if (Regex.IsMatch(cleanKey, @"^BegSum\d+_[A-Z0-9\-]*_(CY|PY)$"))
                 {
                     decimal sum = results.Sum(r => r["BeginningBalance"]?.ToObject<decimal>() ?? 0);
                     return sum.ToString("#,##0");
                 }
 
-                // January balance: A21101_Jan1_CY -> BeginningBalance
-                if (Regex.IsMatch(cleanKey, @"^[A-Z]\d+_Jan1_(CY|PY)$"))
+                // January balance: A21101_Jan1_CY or 100-10_Jan1_CY -> BeginningBalance
+                if (Regex.IsMatch(cleanKey, @"^[A-Z0-9\-]+_Jan1_(CY|PY)$"))
                 {
                     decimal sum = results.Sum(r => r["BeginningBalance"]?.ToObject<decimal>() ?? 0);
                     return sum.ToString("#,##0");
                 }
 
-                // Specific balance - debit: A34101_debit_CY -> Sum of all Debit
-                if (Regex.IsMatch(cleanKey, @"^[A-Z]\d+_debit_(CY|PY)$"))
+                // Specific balance - debit: A34101_debit_CY or 100-10_debit_CY -> Sum of all Debit
+                if (Regex.IsMatch(cleanKey, @"^[A-Z0-9\-]+_debit_(CY|PY)$"))
                 {
                     decimal sum = results.Sum(r => r["Debit"]?.ToObject<decimal>() ?? 0);
                     return sum.ToString("#,##0");
                 }
 
-                // Specific balance - credit: A34101_credit_CY -> Sum of all Credit
-                if (Regex.IsMatch(cleanKey, @"^[A-Z]\d+_credit_(CY|PY)$"))
+                // Specific balance - credit: A34101_credit_CY or 100-10_credit_CY -> Sum of all Credit
+                if (Regex.IsMatch(cleanKey, @"^[A-Z0-9\-]+_credit_(CY|PY)$"))
                 {
                     decimal sum = results.Sum(r => r["Credit"]?.ToObject<decimal>() ?? 0);
                     return sum.ToString("#,##0");

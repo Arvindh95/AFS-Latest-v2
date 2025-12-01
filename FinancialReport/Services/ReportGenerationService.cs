@@ -55,6 +55,13 @@ namespace FinancialReport.Services
                 if (templateFileContent == null || templateFileContent.Length == 0)
                     throw new PXException(Messages.TemplateFileIsEmpty);
 
+                // Validate originalFileName is not null before using it
+                if (string.IsNullOrWhiteSpace(originalFileName))
+                {
+                    PXTrace.WriteError("Original file name is null or empty");
+                    throw new PXException(Messages.TemplateFileIsEmpty);
+                }
+
                 string extension = Path.GetExtension(originalFileName) ?? ".docx";
                 templatePath = Path.Combine(Path.GetTempPath(), $"{_currentRecord.ReportCD}_Template{extension}");
                 File.WriteAllBytes(templatePath, templateFileContent);
@@ -171,7 +178,7 @@ namespace FinancialReport.Services
             catch (Exception ex)
             {
                 totalStopwatch.Stop();
-                PXTrace.WriteError($"Report generation failed after {totalStopwatch.ElapsedMilliseconds} ms: {ex.Message}");
+                PXTrace.WriteError($"Report generation failed after {totalStopwatch.ElapsedMilliseconds} ms for Report '{_currentRecord.ReportCD}' (ID: {_currentRecord.ReportID}): {ex.ToString()}");
                 throw;
             }
             finally
@@ -186,7 +193,7 @@ namespace FinancialReport.Services
                     }
                     catch (Exception ex)
                     {
-                        PXTrace.WriteWarning($"Failed to cleanup template file: {ex.Message}");
+                        PXTrace.WriteWarning($"Failed to cleanup template file '{Path.GetFileName(templatePath)}': {ex.ToString()}");
                     }
                 }
 
@@ -199,7 +206,7 @@ namespace FinancialReport.Services
                     }
                     catch (Exception ex)
                     {
-                        PXTrace.WriteWarning($"Failed to cleanup output file: {ex.Message}");
+                        PXTrace.WriteWarning($"Failed to cleanup output file '{Path.GetFileName(outputPath)}': {ex.ToString()}");
                     }
                 }
             }

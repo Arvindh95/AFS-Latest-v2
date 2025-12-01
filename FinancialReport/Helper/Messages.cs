@@ -70,11 +70,15 @@ namespace FinancialReport
         // CONFIGURATION & SYSTEM MESSAGES
         // ==================================================
         public const string MissingConfig = "Missing Config. Check Web Configurations";
+        public const string UnselectedResetStatus = "Please select a report to reset.";
 
         // ==================================================
         // NEW CONSTANTS (Add these)
         // ==================================================
         public const string TenantNameMustBeUnique = "Tenant Name must be unique.";
         public const string FailedToSaveMessage = "Failed to save: {0}";
+        public const string TooManyPlaceholders = "Template contains {0} placeholders. Maximum allowed is {1}. Please simplify your template or split it into multiple reports.";
+        public const string ReportGenerationTimeout = "Report generation timed out after {0} minutes. Please check template complexity or contact support.";
+        public const string WordDocumentMainPartNull = "Word document main part is null.";
     }
 }

@@ -34,7 +34,14 @@ namespace FinancialReport.Services
             _password = password;
         }
 
+        // Synchronous version for backward compatibility
         public string AuthenticateAndGetToken()
+        {
+            return AuthenticateAndGetTokenAsync().Result;
+        }
+
+        // Async version
+        public async Task<string> AuthenticateAndGetTokenAsync()
         {
             // reuse still-valid token
             if (!string.IsNullOrEmpty(_accessToken) && _tokenExpiry > DateTime.Now)
@@ -58,7 +65,7 @@ namespace FinancialReport.Services
                 PXTrace.WriteInformation("Attempting refresh...");
                 try
                 {
-                    return RefreshAccessToken(_refreshToken);
+                    return await RefreshAccessTokenAsync(_refreshToken);
                 }
                 catch (PXException ex)
                 {
@@ -70,7 +77,7 @@ namespace FinancialReport.Services
             PXTrace.WriteInformation("Requesting a new access token...");
             string tokenUrl = $"{_baseUrl}/identity/connect/token";
 
-            // disable proxy if that’s blocking you
+            // disable proxy if that's blocking you
             var handler = new HttpClientHandler { UseProxy = false };
             using (var client = new HttpClient(handler) { Timeout = HttpTimeout })
             {
@@ -84,8 +91,8 @@ namespace FinancialReport.Services
                     new KeyValuePair<string,string>("scope",         "api")
                 });
 
-                HttpResponseMessage resp = client.PostAsync(tokenUrl, form).Result;
-                string body = resp.Content.ReadAsStringAsync().Result;
+                HttpResponseMessage resp = await client.PostAsync(tokenUrl, form);
+                string body = await resp.Content.ReadAsStringAsync();
 
                 if (!resp.IsSuccessStatusCode)
                 {
@@ -110,7 +117,7 @@ namespace FinancialReport.Services
             }
         }
 
-        private string RefreshAccessToken(string refreshToken)
+        private async Task<string> RefreshAccessTokenAsync(string refreshToken)
         {
             string url = $"{_baseUrl}/identity/connect/token";
             using (var client = new HttpClient { Timeout = HttpTimeout })
@@ -123,8 +130,8 @@ namespace FinancialReport.Services
                     new KeyValuePair<string,string>("refresh_token", refreshToken)
                 });
 
-                HttpResponseMessage resp = client.PostAsync(url, form).Result;
-                string body = resp.Content.ReadAsStringAsync().Result;
+                HttpResponseMessage resp = await client.PostAsync(url, form);
+                string body = await resp.Content.ReadAsStringAsync();
 
                 if (!resp.IsSuccessStatusCode)
                 {
@@ -152,19 +159,26 @@ namespace FinancialReport.Services
             }
         }
 
+        // Synchronous version for backward compatibility
         public void Logout()
+        {
+            LogoutAsync().Wait();
+        }
+
+        // Async version
+        public async Task LogoutAsync()
         {
             try
             {
                 string url = $"{_baseUrl}/entity/auth/logout";
                 var handler = new HttpClientHandler { UseProxy = false };
-                using (var client = new HttpClient(handler) { Timeout = HttpTimeout }) // ✅ Add this line
+                using (var client = new HttpClient(handler) { Timeout = HttpTimeout })
                 {
                     client.DefaultRequestHeaders.Authorization =
                         new AuthenticationHeaderValue("Bearer", _accessToken);
 
-                    HttpResponseMessage resp = client.PostAsync(url, null).Result;
-                    string body = resp.Content.ReadAsStringAsync().Result;
+                    HttpResponseMessage resp = await client.PostAsync(url, null);
+                    string body = await resp.Content.ReadAsStringAsync();
                     if (resp.IsSuccessStatusCode)
                         PXTrace.WriteInformation("Logged out successfully.");
                     else
@@ -173,7 +187,7 @@ namespace FinancialReport.Services
             }
             catch (Exception ex)
             {
-                PXTrace.WriteError($"Logout exception: {ex.Message}");
+                PXTrace.WriteError($"Logout exception: {ex.ToString()}");
             }
             finally
             {

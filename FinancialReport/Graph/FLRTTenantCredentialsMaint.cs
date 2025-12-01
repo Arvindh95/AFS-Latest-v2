@@ -7,10 +7,10 @@ namespace FinancialReport
 {
     public class FLRTTenantCredentialsMaint : PXGraph<FLRTTenantCredentialsMaint>
     {
-        public PXSave<FLRTTenantCredentials> Save;
-        public PXCancel<FLRTTenantCredentials> Cancel;
+        public PXSave<FLRTTenantCredentials> Save = null!; // Initialized by PXGraph framework
+        public PXCancel<FLRTTenantCredentials> Cancel = null!; // Initialized by PXGraph framework
 
-        public SelectFrom<FLRTTenantCredentials>.View TenantCredentials;
+        public SelectFrom<FLRTTenantCredentials>.View TenantCredentials = null!; // Initialized by PXGraph framework
 
         public FLRTTenantCredentialsMaint()
         {
@@ -64,12 +64,12 @@ namespace FinancialReport
             // Validate required fields
             if (row.CompanyNum == null)
             {
-                cache.RaiseExceptionHandling<FLRTTenantCredentials.companyNum>(row, null, new PXSetPropertyException(Messages.CompanyNumRequired, PXErrorLevel.Error));
+                cache.RaiseExceptionHandling<FLRTTenantCredentials.companyNum>(row, null, new PXSetPropertyException<FLRTTenantCredentials.companyNum>(Messages.CompanyNumRequired, PXErrorLevel.Error));
                 throw new PXException(Messages.CompanyNumRequired);
             }
             if (string.IsNullOrEmpty(row.TenantName))
             {
-                cache.RaiseExceptionHandling<FLRTTenantCredentials.tenantName>(row, null, new PXSetPropertyException(Messages.TenantNameRequired, PXErrorLevel.Error));
+                cache.RaiseExceptionHandling<FLRTTenantCredentials.tenantName>(row, null, new PXSetPropertyException<FLRTTenantCredentials.tenantName>(Messages.TenantNameRequired, PXErrorLevel.Error));
                 throw new PXException(Messages.TenantNameRequired);
             }
 
@@ -81,7 +81,7 @@ namespace FinancialReport
 
             if (existing != null)
             {
-                cache.RaiseExceptionHandling<FLRTTenantCredentials.tenantName>(row, row.TenantName, new PXSetPropertyException(Messages.TenantNameMustBeUnique, PXErrorLevel.Error));
+                cache.RaiseExceptionHandling<FLRTTenantCredentials.tenantName>(row, row.TenantName, new PXSetPropertyException<FLRTTenantCredentials.tenantName>(Messages.TenantNameMustBeUnique, PXErrorLevel.Error));
                 throw new PXException(Messages.TenantNameMustBeUnique);
             }
         }

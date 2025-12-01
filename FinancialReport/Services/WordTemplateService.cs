@@ -1,19 +1,14 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Configuration;
 using System.IO;
 using System.Linq;
-using System.Net.Http;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Threading.Tasks;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
-//using FinancialReport.Helper;
-using Newtonsoft.Json.Linq;
-using Newtonsoft.Json;
 using PX.Data;
-using System.Configuration;
 
 
 namespace FinancialReport.Services
@@ -40,7 +35,6 @@ namespace FinancialReport.Services
                     if (!normalizedData.ContainsKey(key))
                     {
                         normalizedData[key] = "0";
-                        //TraceLogger.Info($"Placeholder defaulted: {key} = 0");
                     }
                 }
 
@@ -49,21 +43,27 @@ namespace FinancialReport.Services
                 using (WordprocessingDocument doc = WordprocessingDocument.Open(outputPath, true))
                 {
                     var mainPart = doc.MainDocumentPart;
-                    ProcessDocumentPart(mainPart, normalizedData);
+                    if (mainPart != null)
+                    {
+                        ProcessDocumentPart(mainPart, normalizedData);
 
-                    foreach (var headerPart in mainPart.HeaderParts)
-                        ProcessDocumentPart(headerPart, normalizedData);
+                        foreach (var headerPart in mainPart.HeaderParts)
+                            ProcessDocumentPart(headerPart, normalizedData);
 
-                    foreach (var footerPart in mainPart.FooterParts)
-                        ProcessDocumentPart(footerPart, normalizedData);
+                        foreach (var footerPart in mainPart.FooterParts)
+                            ProcessDocumentPart(footerPart, normalizedData);
 
-                    EnsureUpdateFieldsOnOpen(mainPart);
+                        EnsureUpdateFieldsOnOpen(mainPart);
+                    }
+                    else
+                    {
+                        throw new PXException(Messages.WordDocumentMainPartNull);
+                    }
                 }
             }
             catch (Exception ex)
             {
-                PXTrace.WriteError($"Error processing template: {ex.Message}");
-                //TraceLogger.Error($"Error processing template: {ex.Message}");
+                PXTrace.WriteError($"Error processing Word template '{Path.GetFileName(templatePath)}': {ex.ToString()}");
                 throw;
             }
         }
@@ -74,7 +74,9 @@ namespace FinancialReport.Services
 
             var paragraphs = part.RootElement.Descendants<Paragraph>().ToList();
 
-            Parallel.ForEach(paragraphs, paragraph =>
+            // Use sequential processing instead of parallel to avoid OpenXML thread-safety issues
+            // OpenXML documents are NOT thread-safe and parallel modification can cause corruption
+            foreach (var paragraph in paragraphs)
             {
                 try
                 {
@@ -83,10 +85,9 @@ namespace FinancialReport.Services
                 }
                 catch (Exception ex)
                 {
-                    PXTrace.WriteError($"Error processing paragraph: {ex.Message}");
-                    //TraceLogger.Error($"Error processing paragraph: {ex.Message}");
+                    PXTrace.WriteError($"Error processing paragraph in Word document: {ex.ToString()}");
                 }
-            });
+            }
         }
 
         public List<string> ExtractPlaceholderKeys(string templatePath)
@@ -98,10 +99,6 @@ namespace FinancialReport.Services
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            //TraceLogger.Info($"Extracted {keys.Count} placeholder keys from template:");
-            //foreach (var key in keys)
-            //    TraceLogger.Info($" - {key}");
-
             return keys;
         }
 
@@ -112,19 +109,22 @@ namespace FinancialReport.Services
             {
                 using (WordprocessingDocument doc = WordprocessingDocument.Open(templatePath, false))
                 {
-                    ExtractPlaceholdersFromPart(doc.MainDocumentPart, placeholders);
+                    var mainPart = doc.MainDocumentPart;
+                    if (mainPart != null)
+                    {
+                        ExtractPlaceholdersFromPart(mainPart, placeholders);
 
-                    foreach (var headerPart in doc.MainDocumentPart.HeaderParts)
-                        ExtractPlaceholdersFromPart(headerPart, placeholders);
+                        foreach (var headerPart in mainPart.HeaderParts)
+                            ExtractPlaceholdersFromPart(headerPart, placeholders);
 
-                    foreach (var footerPart in doc.MainDocumentPart.FooterParts)
-                        ExtractPlaceholdersFromPart(footerPart, placeholders);
+                        foreach (var footerPart in mainPart.FooterParts)
+                            ExtractPlaceholdersFromPart(footerPart, placeholders);
+                    }
                 }
             }
             catch (Exception ex)
             {
-                PXTrace.WriteError($"Error extracting placeholders: {ex.Message}");
-                //TraceLogger.Error($"Error extracting placeholders: {ex.Message}");
+                PXTrace.WriteError($"Error extracting placeholders from template '{templatePath}': {ex.ToString()}");
             }
             return placeholders;
         }
@@ -155,27 +155,6 @@ namespace FinancialReport.Services
                 ExtractTextRecursive(child, sb);
         }
 
-        public void SaveExtractedPlaceholdersToTxt(string templatePath, string outputTxtPath)
-        {
-
-            // Disabled: placeholder logging to .txt is not required
-            //try
-            //{
-            //    var placeholders = ExtractPlaceholders(templatePath)
-            //        .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
-            //        .ToList();
-
-            //    File.WriteAllLines(outputTxtPath, placeholders);
-
-            //    //TraceLogger.Info($"✅ Placeholders saved to: {outputTxtPath} ({placeholders.Count} entries)");
-            //}
-            //catch (Exception ex)
-            //{
-            //    PXTrace.WriteError($"❌ Failed to save placeholders: {ex.Message}");
-            //    //TraceLogger.Error($"❌ Failed to save placeholders: {ex.Message}");
-            //    throw;
-            //}
-        }
 
         private void ReplacePlaceholdersInRuns(Paragraph paragraph, Dictionary<string, string> data)
         {
@@ -279,13 +258,5 @@ namespace FinancialReport.Services
             return ConfigurationManager.AppSettings[key]
                 ?? throw new PXException(Messages.MissingConfig);
         }
-
-
-
-
-
-
-
-
     }
 }
