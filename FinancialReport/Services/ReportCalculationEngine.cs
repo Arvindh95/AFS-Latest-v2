@@ -118,9 +118,22 @@ namespace FinancialReport.Services
 
         private decimal CalculateAccountLine(FLRTReportLineItem line, FinancialApiData data)
         {
-            if (data?.AccountData == null) return 0m;
+            if (data == null) return 0m;
             if (string.IsNullOrWhiteSpace(line.AccountFrom) || string.IsNullOrWhiteSpace(line.AccountTo))
                 return 0m;
+
+            // When any per-line dimension filter is set, use the raw DetailRows so we can
+            // match on Subaccount / BranchID / OrganizationID per row.
+            bool hasFilter = !string.IsNullOrWhiteSpace(line.SubaccountFilter)
+                          || !string.IsNullOrWhiteSpace(line.BranchFilter)
+                          || !string.IsNullOrWhiteSpace(line.OrganizationFilter)
+                          || !string.IsNullOrWhiteSpace(line.LedgerFilter);
+
+            if (hasFilter && data.DetailRows != null && data.DetailRows.Count > 0)
+                return CalculateAccountLineFromDetail(line, data.DetailRows);
+
+            // ── Default path: aggregated AccountData (same as before) ──
+            if (data.AccountData == null) return 0m;
 
             decimal total = 0m;
             int matched = 0;
@@ -156,6 +169,63 @@ namespace FinancialReport.Services
 
             if (matched > 0)
                 PXTrace.WriteInformation($"    Account range {line.AccountFrom}:{line.AccountTo} matched {matched} accounts → {total:#,##0.##}");
+
+            return total;
+        }
+
+        /// <summary>
+        /// Filtered variant of account calculation — iterates the per-row DetailRows
+        /// and applies optional Subaccount / Branch / Organization filters.
+        /// </summary>
+        private decimal CalculateAccountLineFromDetail(FLRTReportLineItem line, List<FinancialPeriodData> detailRows)
+        {
+            decimal total = 0m;
+            int matched = 0;
+
+            foreach (var row in detailRows)
+            {
+                if (!IsAccountInRange(row.Account, line.AccountFrom, line.AccountTo))
+                    continue;
+
+                if (!string.IsNullOrWhiteSpace(line.AccountTypeFilter)
+                    && !string.Equals(row.AccountType, line.AccountTypeFilter, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (!string.IsNullOrWhiteSpace(line.SubaccountFilter)
+                    && !string.Equals(row.Subaccount, line.SubaccountFilter, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (!string.IsNullOrWhiteSpace(line.BranchFilter)
+                    && !string.Equals(row.BranchID, line.BranchFilter, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (!string.IsNullOrWhiteSpace(line.OrganizationFilter)
+                    && !string.Equals(row.OrganizationID, line.OrganizationFilter, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (!string.IsNullOrWhiteSpace(line.LedgerFilter)
+                    && !string.Equals(row.Ledger, line.LedgerFilter, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                decimal rawValue      = GetBalanceByType(row, line.BalanceType);
+                decimal signCorrected = ApplyAccountTypeSign(rawValue, row.AccountType);
+                decimal finalValue    = line.SignRule == FLRTReportLineItem.SignRuleValue.Flip
+                                        ? signCorrected * -1
+                                        : signCorrected;
+
+                total += finalValue;
+                matched++;
+            }
+
+            PXTrace.WriteInformation($"    Account range {line.AccountFrom}:{line.AccountTo} [filtered] matched {matched} of {detailRows.Count} detail rows → {total:#,##0.##}");
+            if (matched == 0)
+            {
+                // Log filter values and a sample of what's in the data for debugging
+                PXTrace.WriteWarning($"    Filters: Sub='{line.SubaccountFilter}' Branch='{line.BranchFilter}' Org='{line.OrganizationFilter}' Ledger='{line.LedgerFilter}'");
+                var inRange = detailRows.Where(r => IsAccountInRange(r.Account, line.AccountFrom, line.AccountTo)).Take(3).ToList();
+                foreach (var r in inRange)
+                    PXTrace.WriteWarning($"    Sample row: Acct={r.Account} Sub='{r.Subaccount}' Branch='{r.BranchID}' Org='{r.OrganizationID}' Ledger='{r.Ledger}' EndBal={r.EndingBalance}");
+            }
 
             return total;
         }

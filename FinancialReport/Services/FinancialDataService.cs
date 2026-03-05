@@ -69,6 +69,7 @@ namespace FinancialReport.Services
             string filter = $"FinancialPeriod eq '{period}' and {dimensionFilter}";
 
             var accountData = new Dictionary<string, FinancialPeriodData>();
+            var detailRows  = new List<FinancialPeriodData>();
 
             await SetAuthorizationHeaderAsync(accessToken);
             List<JToken> results = await ExecuteFetchWithFallbackAsync(_httpClient, filter, ledger);
@@ -78,27 +79,72 @@ namespace FinancialReport.Services
                 throw new PXException(Messages.FailedToFetchOData);
             }
 
+            // Diagnostic: log the JSON property names from the first OData row
+            if (results.Count > 0 && results[0] is JObject firstObj)
+            {
+                var propNames = firstObj.Properties().Select(p => p.Name).ToList();
+                PXTrace.WriteInformation($"OData columns ({propNames.Count}): {string.Join(", ", propNames)}");
+            }
+
             foreach (var item in results)
             {
                 string accountId = item[_columnMapping.AccountColumn]?.ToString();
                 if (string.IsNullOrEmpty(accountId)) continue;
 
+                string subaccount  = item[_columnMapping.SubaccountColumn]?.ToString()?.Trim()   ?? string.Empty;
+                string branchId    = item[_columnMapping.BranchColumn]?.ToString()?.Trim()      ?? string.Empty;
+                string orgId       = item[_columnMapping.OrganizationColumn]?.ToString()?.Trim() ?? string.Empty;
+                string ledgerId    = item[_columnMapping.LedgerColumn]?.ToString()?.Trim()      ?? string.Empty;
+                string accountType = item[_columnMapping.TypeColumn]?.ToString() ?? string.Empty;
+                decimal begBal  = item[_columnMapping.BeginningBalCol]?.ToObject<decimal>() ?? 0;
+                decimal endBal  = item[_columnMapping.EndingBalCol]?.ToObject<decimal>()    ?? 0;
+                decimal debit   = item[_columnMapping.DebitColumn]?.ToObject<decimal>()     ?? 0;
+                decimal credit  = item[_columnMapping.CreditColumn]?.ToObject<decimal>()    ?? 0;
+
+                // Aggregated AccountData (existing behaviour — unchanged)
                 if (!accountData.ContainsKey(accountId!))
                 {
                     accountData[accountId!] = new FinancialPeriodData
                     {
-                        Account = accountId,
-                        AccountType = item[_columnMapping.TypeColumn]?.ToString() ?? string.Empty
+                        Account     = accountId,
+                        AccountType = accountType
                     };
                 }
+                accountData[accountId!].BeginningBalance += begBal;
+                accountData[accountId!].EndingBalance    += endBal;
+                accountData[accountId!].Debit            += debit;
+                accountData[accountId!].Credit           += credit;
 
-                accountData[accountId!].BeginningBalance += item[_columnMapping.BeginningBalCol]?.ToObject<decimal>() ?? 0;
-                accountData[accountId!].EndingBalance    += item[_columnMapping.EndingBalCol]?.ToObject<decimal>() ?? 0;
-                accountData[accountId!].Debit            += item[_columnMapping.DebitColumn]?.ToObject<decimal>() ?? 0;
-                accountData[accountId!].Credit           += item[_columnMapping.CreditColumn]?.ToObject<decimal>() ?? 0;
+                // Per-row detail — used when a line item has dimension filters
+                detailRows.Add(new FinancialPeriodData
+                {
+                    Account        = accountId,
+                    Subaccount     = subaccount,
+                    AccountType    = accountType,
+                    BranchID       = branchId,
+                    OrganizationID = orgId,
+                    Ledger         = ledgerId,
+                    BeginningBalance = begBal,
+                    EndingBalance    = endBal,
+                    Debit            = debit,
+                    Credit           = credit
+                });
             }
 
-            return new FinancialApiData { AccountData = accountData };
+            // Diagnostic: log DetailRows summary for troubleshooting dimension filters
+            PXTrace.WriteInformation($"FetchAllApiData: {accountData.Count} aggregated accounts, {detailRows.Count} detail rows.");
+            if (detailRows.Count > 0)
+            {
+                var first = detailRows[0];
+                PXTrace.WriteInformation($"  First detail row: Account={first.Account}, Sub={first.Subaccount}, Branch={first.BranchID}, Org={first.OrganizationID}, Ledger={first.Ledger}, EndBal={first.EndingBalance}");
+
+                // Log distinct subaccount values for the first account
+                var sampleAccount = detailRows[0].Account;
+                var subs = detailRows.Where(r => r.Account == sampleAccount).Select(r => r.Subaccount).Distinct().ToList();
+                PXTrace.WriteInformation($"  Subaccounts for {sampleAccount}: [{string.Join(", ", subs)}]");
+            }
+
+            return new FinancialApiData { AccountData = accountData, DetailRows = detailRows };
         }
 
         // --------------------------------------------------------
@@ -209,9 +255,9 @@ namespace FinancialReport.Services
                 string accountId = item[_columnMapping.AccountColumn]?.ToString()?.Trim();
                 if (string.IsNullOrEmpty(accountId)) continue;
 
-                string subaccountId = item["Subaccount"]?.ToString()?.Trim() ?? "N/A";
-                string branchId = item["BranchID"]?.ToString()?.Trim() ?? branch;
-                string orgId = item["OrganizationID"]?.ToString()?.Trim() ?? organization;
+                string subaccountId = item[_columnMapping.SubaccountColumn]?.ToString()?.Trim() ?? "N/A";
+                string branchId = item[_columnMapping.BranchColumn]?.ToString()?.Trim() ?? branch;
+                string orgId = item[_columnMapping.OrganizationColumn]?.ToString()?.Trim() ?? organization;
                 string compositeKey = $"{accountId}-{subaccountId}-{branchId}-{orgId}-{period}-{ledger}";
 
                 var data = new FinancialPeriodData
@@ -2083,6 +2129,12 @@ namespace FinancialReport.Services
         /// Used by ReportCalculationEngine for sign normalization.
         /// </summary>
         public string AccountType { get; set; }
+        /// <summary>BranchID from the GI row. Populated in DetailRows; empty in aggregated AccountData.</summary>
+        public string BranchID { get; set; }
+        /// <summary>OrganizationID from the GI row. Populated in DetailRows; empty in aggregated AccountData.</summary>
+        public string OrganizationID { get; set; }
+        /// <summary>Ledger from the GI row. Populated in DetailRows; empty in aggregated AccountData.</summary>
+        public string Ledger { get; set; }
         public decimal BeginningBalance { get; set; }
         public decimal EndingBalance { get; set; }
         public decimal Debit { get; set; }
@@ -2093,8 +2145,14 @@ namespace FinancialReport.Services
     {
         public Dictionary<string, FinancialPeriodData> AccountData { get; set; } = new Dictionary<string, FinancialPeriodData>();
 
-        // 🔥 New: Optional composite key-level data
+        // Composite key-level data (used for FetchCompositeKeyData)
         public Dictionary<string, FinancialPeriodData> CompositeKeyData { get; set; } = new Dictionary<string, FinancialPeriodData>();
+
+        /// <summary>
+        /// Raw per-row detail data (one entry per GI row) including Subaccount, BranchID, OrganizationID.
+        /// Used by ReportCalculationEngine when a line item has per-line dimension filters set.
+        /// </summary>
+        public List<FinancialPeriodData> DetailRows { get; set; } = new List<FinancialPeriodData>();
     }
 
     public class PrefixPlaceholderInfo

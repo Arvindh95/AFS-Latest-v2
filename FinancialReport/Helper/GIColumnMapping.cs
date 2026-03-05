@@ -14,6 +14,12 @@ namespace FinancialReport.Helper
         public string DebitColumn     { get; set; } = "Debit";
         public string CreditColumn    { get; set; } = "Credit";
 
+        // Dimension columns used for per-line filtering
+        public string SubaccountColumn   { get; set; } = "Subaccount";
+        public string BranchColumn       { get; set; } = "BranchID";
+        public string OrganizationColumn { get; set; } = "OrganizationID";
+        public string LedgerColumn       { get; set; } = "Ledger";
+
         /// <summary>
         /// Builds the OData $select clause from mapped column names.
         /// </summary>
@@ -22,7 +28,8 @@ namespace FinancialReport.Helper
             return string.Join(",", new[]
             {
                 AccountColumn, TypeColumn, BeginningBalCol,
-                EndingBalCol, DebitColumn, CreditColumn, "Movement"
+                EndingBalCol, DebitColumn, CreditColumn, "Movement",
+                SubaccountColumn, BranchColumn, OrganizationColumn, LedgerColumn
             });
         }
 

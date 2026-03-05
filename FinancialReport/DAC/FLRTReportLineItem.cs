@@ -1,6 +1,8 @@
 using System;
 using PX.Data;
 using PX.Data.BQL.Fluent;
+using PX.Objects.GL;
+using PX.Objects.GL.DAC;
 
 namespace FinancialReport
 {
@@ -182,6 +184,67 @@ namespace FinancialReport
         [PXUIField(DisplayName = "Visible in Report")]
         public virtual bool? IsVisible { get; set; }
         public abstract class isVisible : PX.Data.BQL.BqlBool.Field<isVisible> { }
+        #endregion
+
+        #region SubaccountFilter
+        /// <summary>
+        /// Optional. When set, only rows whose Subaccount exactly matches this value are included.
+        /// Leave blank to include all subaccounts (default behaviour).
+        /// Example: "000-000"
+        /// Only applied when LineType = ACCOUNT.
+        /// </summary>
+        [PXDBString(30, IsUnicode = true)]
+        [PXUIField(DisplayName = "Subaccount Filter")]
+        public virtual string SubaccountFilter { get; set; }
+        public abstract class subaccountFilter : PX.Data.BQL.BqlString.Field<subaccountFilter> { }
+        #endregion
+
+        #region BranchFilter
+        /// <summary>
+        /// Optional. When set, only rows whose BranchID exactly matches this value are included.
+        /// Leave blank to include all branches. Only applied when LineType = ACCOUNT.
+        /// </summary>
+        [PXDBString(30, IsUnicode = true)]
+        [PXUIField(DisplayName = "Branch Filter")]
+        [PXSelector(typeof(Search<Branch.branchCD>),
+            typeof(Branch.branchCD),
+            typeof(Branch.acctName),
+            SubstituteKey = typeof(Branch.branchCD),
+            ValidateValue = false)]
+        public virtual string BranchFilter { get; set; }
+        public abstract class branchFilter : PX.Data.BQL.BqlString.Field<branchFilter> { }
+        #endregion
+
+        #region OrganizationFilter
+        /// <summary>
+        /// Optional. When set, only rows whose OrganizationID exactly matches this value are included.
+        /// Leave blank to include all organizations. Only applied when LineType = ACCOUNT.
+        /// </summary>
+        [PXDBString(30, IsUnicode = true)]
+        [PXUIField(DisplayName = "Organization Filter")]
+        [PXSelector(typeof(Search<Organization.organizationCD>),
+            typeof(Organization.organizationCD),
+            typeof(Organization.organizationName),
+            SubstituteKey = typeof(Organization.organizationCD),
+            ValidateValue = false)]
+        public virtual string OrganizationFilter { get; set; }
+        public abstract class organizationFilter : PX.Data.BQL.BqlString.Field<organizationFilter> { }
+        #endregion
+
+        #region LedgerFilter
+        /// <summary>
+        /// Optional. When set, only rows whose LedgerID matches this value are included.
+        /// Leave blank to include all ledgers. Only applied when LineType = ACCOUNT.
+        /// </summary>
+        [PXDBString(20, IsUnicode = true)]
+        [PXUIField(DisplayName = "Ledger Filter")]
+        [PXSelector(typeof(Search<Ledger.ledgerCD>),
+            typeof(Ledger.ledgerCD),
+            typeof(Ledger.descr),
+            SubstituteKey = typeof(Ledger.ledgerCD),
+            ValidateValue = false)]
+        public virtual string LedgerFilter { get; set; }
+        public abstract class ledgerFilter : PX.Data.BQL.BqlString.Field<ledgerFilter> { }
         #endregion
 
         #region NoteID
