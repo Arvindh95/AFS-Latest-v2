@@ -146,6 +146,26 @@ namespace FinancialReport
     public abstract class financialMonth : PX.Data.BQL.BqlString.Field<financialMonth> { }
     #endregion
 
+    #region DefinitionID
+    /// <summary>
+    /// Links this report record to a Report Definition (Balance Sheet, P&L, etc.).
+    /// When set, the ReportCalculationEngine is used instead of raw placeholder matching.
+    /// Leave blank to use the legacy account-code placeholder approach.
+    /// </summary>
+    [PXDBInt]
+    [PXUIField(DisplayName = "Report Definition")]
+    [PXSelector(
+        typeof(Search<FLRTReportDefinition.definitionID>),
+        typeof(FLRTReportDefinition.definitionCD),
+        typeof(FLRTReportDefinition.description),
+        typeof(FLRTReportDefinition.reportType),
+        SubstituteKey = typeof(FLRTReportDefinition.definitionCD),
+        DescriptionField = typeof(FLRTReportDefinition.description)
+    )]
+    public virtual int? DefinitionID { get; set; }
+    public abstract class definitionID : PX.Data.BQL.BqlInt.Field<definitionID> { }
+    #endregion
+
     #region GeneratedFileID
     [PXDBGuid]
     [PXUIField(DisplayName = "Generated File ID", Visible = false)]

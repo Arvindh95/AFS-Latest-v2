@@ -73,12 +73,34 @@ namespace FinancialReport
         public const string UnselectedResetStatus = "Please select a report to reset.";
 
         // ==================================================
-        // NEW CONSTANTS (Add these)
+        // EXISTING CONSTANTS
         // ==================================================
         public const string TenantNameMustBeUnique = "Tenant Name must be unique.";
         public const string FailedToSaveMessage = "Failed to save: {0}";
         public const string TooManyPlaceholders = "Template contains {0} placeholders. Maximum allowed is {1}. Please simplify your template or split it into multiple reports.";
         public const string ReportGenerationTimeout = "Report generation timed out after {0} minutes. Please check template complexity or contact support.";
         public const string WordDocumentMainPartNull = "Word document main part is null.";
+
+        // ==================================================
+        // REPORT DEFINITION MESSAGES
+        // ==================================================
+        public const string DefinitionCodeRequired = "Definition Code is required.";
+        public const string DefinitionCodeMustBeUnique = "Definition Code must be unique.";
+        public const string LineCodeRequired = "Line Code is required.";
+        public const string LineCodeMustBeUnique = "Line Code must be unique within the same definition.";
+        public const string AccountFromRequired = "Account From is required for Account Range line types.";
+        public const string AccountToRequired = "Account To is required for Account Range line types.";
+        public const string FormulaRequired = "Formula is required for Calculated line types.";
+        public const string ConfirmCopyDefinition = "Copy this Report Definition and all its line items?";
+        public const string NoDefinitionLineItems = "Report Definition has no line items configured. Please set up line items in the Report Definition screen.";
+        public const string FormulaEvaluationFailed = "Formula evaluation failed for line '{0}': {1}";
+        public const string UnknownFormulaLineCode = "Formula references unknown Line Code '{0}'. Ensure it is defined with a lower Sort Order.";
+
+        // ==================================================
+        // GI & COLUMN MAPPING MESSAGES
+        // ==================================================
+        public const string GINameRequired = "Generic Inquiry Name is required to detect columns.";
+        public const string NoColumnsDetected = "No columns were detected from the specified Generic Inquiry. Verify the GI name and that it returns data.";
+        public const string FailedToDetectColumns = "Failed to detect columns from GI '{0}': {1}";
     }
 }

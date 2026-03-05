@@ -21,6 +21,7 @@ namespace FinancialReport.Services
         private readonly string _baseUrl;
         private readonly string _tenantName;
         private readonly AuthService _authService;
+        private readonly GIColumnMapping _columnMapping;
 
         // ✅ Static HttpClient shared across all instances and methods
         private static readonly HttpClient _httpClient = new HttpClient(new HttpClientHandler
@@ -41,12 +42,13 @@ namespace FinancialReport.Services
             _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         }
 
-        public FinancialDataService(AuthService authService, string tenantName)
+        public FinancialDataService(AuthService authService, string tenantName, GIColumnMapping columnMapping = null)
         {
             AcumaticaCredentials credentials = CredentialProvider.GetCredentials(tenantName);
             _authService = authService ?? throw new ArgumentNullException(nameof(authService));
-            _tenantName = tenantName ?? throw new ArgumentNullException(nameof(tenantName)); 
+            _tenantName = tenantName ?? throw new ArgumentNullException(nameof(tenantName));
             _baseUrl = credentials.BaseURL ?? throw new ArgumentNullException(nameof(credentials.BaseURL));
+            _columnMapping = columnMapping ?? new GIColumnMapping();
         }
 
         // --------------------------------------------------------
@@ -78,19 +80,22 @@ namespace FinancialReport.Services
 
             foreach (var item in results)
             {
-                string accountId = item["Account"]?.ToString();
+                string accountId = item[_columnMapping.AccountColumn]?.ToString();
                 if (string.IsNullOrEmpty(accountId)) continue;
 
-                // At this point, accountId is guaranteed to be non-null and non-empty
                 if (!accountData.ContainsKey(accountId!))
                 {
-                    accountData[accountId!] = new FinancialPeriodData();
+                    accountData[accountId!] = new FinancialPeriodData
+                    {
+                        Account = accountId,
+                        AccountType = item[_columnMapping.TypeColumn]?.ToString() ?? string.Empty
+                    };
                 }
 
-                accountData[accountId!].BeginningBalance += item["BeginningBalance"]?.ToObject<decimal>() ?? 0;
-                accountData[accountId!].EndingBalance += item["EndingBalance"]?.ToObject<decimal>() ?? 0;
-                accountData[accountId!].Debit += item["Debit"]?.ToObject<decimal>() ?? 0;
-                accountData[accountId!].Credit += item["Credit"]?.ToObject<decimal>() ?? 0;
+                accountData[accountId!].BeginningBalance += item[_columnMapping.BeginningBalCol]?.ToObject<decimal>() ?? 0;
+                accountData[accountId!].EndingBalance    += item[_columnMapping.EndingBalCol]?.ToObject<decimal>() ?? 0;
+                accountData[accountId!].Debit            += item[_columnMapping.DebitColumn]?.ToObject<decimal>() ?? 0;
+                accountData[accountId!].Credit           += item[_columnMapping.CreditColumn]?.ToObject<decimal>() ?? 0;
             }
 
             return new FinancialApiData { AccountData = accountData };
@@ -118,12 +123,11 @@ namespace FinancialReport.Services
 
             foreach (var item in results)
             {
-                string accountId = item["Account"]?.ToString();
-                decimal beginningBalance = item["BeginningBalance"]?.ToObject<decimal>() ?? 0;
+                string accountId = item[_columnMapping.AccountColumn]?.ToString();
+                decimal beginningBalance = item[_columnMapping.BeginningBalCol]?.ToObject<decimal>() ?? 0;
 
                 if (string.IsNullOrEmpty(accountId)) continue;
 
-                // At this point, accountId is guaranteed to be non-null and non-empty
                 if (!apiData.AccountData.ContainsKey(accountId!))
                 {
                     apiData.AccountData[accountId!] = new FinancialPeriodData();
@@ -156,14 +160,13 @@ namespace FinancialReport.Services
 
             foreach (var item in results)
             {
-                string accountId = item["Account"]?.ToString();
-                decimal debit = item["Debit"]?.ToObject<decimal>() ?? 0;
-                decimal credit = item["Credit"]?.ToObject<decimal>() ?? 0;
-                decimal endingBalance = item["EndingBalance"]?.ToObject<decimal>() ?? 0;
+                string accountId = item[_columnMapping.AccountColumn]?.ToString();
+                decimal debit = item[_columnMapping.DebitColumn]?.ToObject<decimal>() ?? 0;
+                decimal credit = item[_columnMapping.CreditColumn]?.ToObject<decimal>() ?? 0;
+                decimal endingBalance = item[_columnMapping.EndingBalCol]?.ToObject<decimal>() ?? 0;
 
                 if (string.IsNullOrEmpty(accountId)) continue;
 
-                // At this point, accountId is guaranteed to be non-null and non-empty
                 if (!cumulativeDict.ContainsKey(accountId!))
                 {
                     cumulativeDict[accountId!] = new FinancialPeriodData();
@@ -203,7 +206,7 @@ namespace FinancialReport.Services
 
             foreach (var item in results)
             {
-                string accountId = item["Account"]?.ToString()?.Trim();
+                string accountId = item[_columnMapping.AccountColumn]?.ToString()?.Trim();
                 if (string.IsNullOrEmpty(accountId)) continue;
 
                 string subaccountId = item["Subaccount"]?.ToString()?.Trim() ?? "N/A";
@@ -215,10 +218,10 @@ namespace FinancialReport.Services
                 {
                     Account = accountId,
                     Subaccount = subaccountId,
-                    BeginningBalance = item["BeginningBalance"]?.ToObject<decimal>() ?? 0,
-                    EndingBalance = item["EndingBalance"]?.ToObject<decimal>() ?? 0,
-                    Debit = item["Debit"]?.ToObject<decimal>() ?? 0,
-                    Credit = item["Credit"]?.ToObject<decimal>() ?? 0,
+                    BeginningBalance = item[_columnMapping.BeginningBalCol]?.ToObject<decimal>() ?? 0,
+                    EndingBalance = item[_columnMapping.EndingBalCol]?.ToObject<decimal>() ?? 0,
+                    Debit = item[_columnMapping.DebitColumn]?.ToObject<decimal>() ?? 0,
+                    Credit = item[_columnMapping.CreditColumn]?.ToObject<decimal>() ?? 0,
                 };
 
                 compositeData[compositeKey] = data;
@@ -259,7 +262,7 @@ namespace FinancialReport.Services
                 return 0m;
             }
 
-            return results.FirstOrDefault()?["EndingBalance"]?.ToObject<decimal>() ?? 0m;
+            return results.FirstOrDefault()?[_columnMapping.EndingBalCol]?.ToObject<decimal>() ?? 0m;
         }
 
 
@@ -304,9 +307,10 @@ namespace FinancialReport.Services
         /// </summary>
         private async Task<List<JToken>> ExecuteFetchWithFallbackAsync(HttpClient client, string baseFilter, string ledger)
         {
-            string modernUrlBase = $"{_baseUrl}/odata/{_tenantName}/TrialBalance";
-            string legacyUrlBase = $"{_baseUrl}/t/{_tenantName}/api/odata/gi/TrialBalance";
-            string selectColumns = "Account,BeginningBalance,EndingBalance,Debit,Credit";
+            string giName = _columnMapping.GIName;
+            string modernUrlBase = $"{_baseUrl}/odata/{_tenantName}/{giName}";
+            string legacyUrlBase = $"{_baseUrl}/t/{_tenantName}/api/odata/gi/{giName}";
+            string selectColumns = _columnMapping.BuildSelectColumns();
 
             // Attempt 1: Modern URL with Ledger
             string filterWithLedger = AppendLedgerFilter(baseFilter, ledger);
@@ -433,6 +437,55 @@ namespace FinancialReport.Services
                 : baseFilter;
         }
 
+        /// <summary>
+        /// Fetches column names from a GI by retrieving a single row and inspecting JSON properties.
+        /// Used by the "Detect Columns" action on the Report Definition screen.
+        /// </summary>
+        public List<string> FetchGIColumns(string giName)
+        {
+            string accessToken = _authService.AuthenticateAndGetToken();
+            SetAuthorizationHeader(accessToken);
+
+            string modernUrl = $"{_baseUrl}/odata/{_tenantName}/{giName}?$top=1";
+            string legacyUrl = $"{_baseUrl}/t/{_tenantName}/api/odata/gi/{giName}?$top=1";
+
+            var columns = TryFetchColumnsFromUrl(modernUrl);
+            if (columns != null && columns.Count > 0) return columns;
+
+            columns = TryFetchColumnsFromUrl(legacyUrl);
+            if (columns != null && columns.Count > 0) return columns;
+
+            return new List<string>();
+        }
+
+        private List<string> TryFetchColumnsFromUrl(string url)
+        {
+            try
+            {
+                var response = _httpClient.GetAsync(url).Result;
+                if (!response.IsSuccessStatusCode) return null;
+
+                string json = response.Content.ReadAsStringAsync().Result;
+                if (string.IsNullOrWhiteSpace(json)) return null;
+
+                JObject parsed = JObject.Parse(json);
+                var values = parsed["value"] as JArray;
+                if (values == null || values.Count == 0) return null;
+
+                var firstRecord = values[0] as JObject;
+                if (firstRecord == null) return null;
+
+                return firstRecord.Properties()
+                    .Select(p => p.Name)
+                    .Where(n => !n.StartsWith("@") && !n.Contains("odata"))
+                    .ToList();
+            }
+            catch (Exception ex)
+            {
+                PXTrace.WriteWarning($"Failed to fetch GI columns from {url}: {ex.Message}");
+                return null;
+            }
+        }
 
         public Dictionary<string, string> BuildPlaceholderMapFromKeys(List<string> placeholderKeys, Dictionary<string, FinancialPeriodData> cyData, Dictionary<string, FinancialPeriodData> pyData)
         {
@@ -2024,6 +2077,12 @@ namespace FinancialReport.Services
     {
         public string Account { get; set; }
         public string Subaccount { get; set; }
+        /// <summary>
+        /// Account type from the TrialBalance GI "Type" column.
+        /// Values: Asset, Liability, Expense, Income, Equity
+        /// Used by ReportCalculationEngine for sign normalization.
+        /// </summary>
+        public string AccountType { get; set; }
         public decimal BeginningBalance { get; set; }
         public decimal EndingBalance { get; set; }
         public decimal Debit { get; set; }

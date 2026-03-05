@@ -6,6 +6,8 @@ using System.Threading.Tasks;
 using System.Text.RegularExpressions;
 using FinancialReport.Helper;
 using PX.Data;
+using PX.Data.BQL;
+using PX.Data.BQL.Fluent;
 
 namespace FinancialReport.Services
 {
@@ -48,7 +50,27 @@ namespace FinancialReport.Services
                 // 1. Get Tenant Name for the data service
                 int? companyID = _graph.GetCompanyIDFromDB(_currentRecord.ReportID);
                 string tenantName = _graph.MapCompanyIDToTenantName(companyID);
-                var localDataService = new FinancialDataService(_authService, tenantName);
+
+                // 1b. Load Report Definition for GI/column/rounding config (if linked)
+                GIColumnMapping columnMapping = null;
+                RoundingSettings roundingSettings = null;
+
+                if (_currentRecord.DefinitionID != null)
+                {
+                    var reportDef = SelectFrom<FLRTReportDefinition>
+                        .Where<FLRTReportDefinition.definitionID.IsEqual<@P.AsInt>>
+                        .View.Select(_graph, _currentRecord.DefinitionID)
+                        .TopFirst;
+
+                    if (reportDef != null)
+                    {
+                        columnMapping = GIColumnMapping.FromDefinition(reportDef);
+                        roundingSettings = RoundingSettings.FromDefinition(reportDef);
+                        PXTrace.WriteInformation($"Report Definition '{reportDef.DefinitionCD}': GI={columnMapping.GIName}, Rounding={roundingSettings.RoundingLevel}/{roundingSettings.DecimalPlaces}dp");
+                    }
+                }
+
+                var localDataService = new FinancialDataService(_authService, tenantName, columnMapping);
 
                 // 2. Get Template File
                 var (templateFileContent, originalFileName) = _fileService.GetFileContentAndName(_currentRecord.Noteid, _currentRecord);
@@ -134,22 +156,43 @@ namespace FinancialReport.Services
                 // 11. Combine all placeholder values
                 var finalPlaceholders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-                // Add regular placeholders
+                // ── NEW: If a Report Definition is linked, run the calculation engine first.
+                // The engine produces sign-corrected, pre-calculated values for every report
+                // line (ACCOUNT, SUBTOTAL, CALCULATED) keyed as LINECODE_CY / LINECODE_PY.
+                // Engine values take priority — they are the "right" answer.
+                if (_currentRecord.DefinitionID != null)
+                {
+                    PXTrace.WriteInformation($"Report Definition ID {_currentRecord.DefinitionID} found — running ReportCalculationEngine.");
+                    var engine = new ReportCalculationEngine(_graph, roundingSettings);
+                    var enginePlaceholders = engine.Calculate(
+                        _currentRecord.DefinitionID.Value,
+                        currYearData,
+                        prevYearData);
+
+                    foreach (var kvp in enginePlaceholders)
+                        finalPlaceholders[kvp.Key] = kvp.Value;
+
+                    PXTrace.WriteInformation($"ReportCalculationEngine produced {enginePlaceholders.Count} placeholders.");
+                }
+
+                // ── LEGACY: Raw account-code placeholders for anything not covered by the definition.
+                // Preserves backward compatibility with existing templates that use {{A10100_CY}} syntax.
                 foreach (var kvp in regularPlaceholderValues)
                 {
-                    finalPlaceholders[kvp.Key] = kvp.Value;
+                    if (!finalPlaceholders.ContainsKey(kvp.Key))
+                        finalPlaceholders[kvp.Key] = kvp.Value;
                 }
 
-                // Add exact range placeholders
                 foreach (var kvp in exactRangePlaceholderValues)
                 {
-                    finalPlaceholders[kvp.Key] = kvp.Value;
+                    if (!finalPlaceholders.ContainsKey(kvp.Key))
+                        finalPlaceholders[kvp.Key] = kvp.Value;
                 }
 
-                // Add wildcard range placeholders
                 foreach (var kvp in wildcardRangePlaceholderValues)
                 {
-                    finalPlaceholders[kvp.Key] = kvp.Value;
+                    if (!finalPlaceholders.ContainsKey(kvp.Key))
+                        finalPlaceholders[kvp.Key] = kvp.Value;
                 }
 
                 // Add year constants

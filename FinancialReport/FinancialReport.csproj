@@ -74,6 +74,7 @@
     <Compile Include="DAC\GLHistoryEnqFilter.cs" />
     <Compile Include="Graph\FLRTTenantCredentialsMaint.cs" />
     <Compile Include="DAC\FLRTTenantCredentials.cs" />
+    <Compile Include="DAC\Test.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Services\AuthService.cs" />
     <Compile Include="Services\CredentialProvider.cs" />
@@ -82,6 +83,14 @@
     <Compile Include="Services\PlaceholderResultProcessor.cs" />
     <Compile Include="Services\ReportGenerationService.cs" />
     <Compile Include="Services\WordTemplateService.cs" />
+    <Compile Include="DAC\FLRTReportDefinition.cs" />
+    <Compile Include="DAC\FLRTReportLineItem.cs" />
+    <Compile Include="Graph\FLRTReportDefinitionMaint.cs" />
+    <Compile Include="Services\ReportCalculationEngine.cs" />
+    <Compile Include="Services\TraceLogger.cs" />
+    <Compile Include="Helper\GIColumnMapping.cs" />
+    <Compile Include="Helper\GIColumnSelectorAttribute.cs" />
+    <Compile Include="Helper\RoundingSettings.cs" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="DocumentFormat.OpenXml">
