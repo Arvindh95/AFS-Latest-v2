@@ -54,7 +54,7 @@ namespace FinancialReport
             {
                 e.Cache.RaiseExceptionHandling<FLRTReportDefinitionLink.definitionID>(
                     e.Row, e.Row.DefinitionID,
-                    new PXSetPropertyException(Messages.DefinitionRequired, PXErrorLevel.Error));
+                    new PXSetPropertyException(Messages.DefinitionRequired, PXErrorLevel.Error, e.Row));
                 return;
             }
 
@@ -76,7 +76,7 @@ namespace FinancialReport
                 {
                     e.Cache.RaiseExceptionHandling<FLRTReportDefinitionLink.definitionID>(
                         e.Row, e.Row.DefinitionID,
-                        new PXSetPropertyException(Messages.DuplicatePrefixInReport, PXErrorLevel.Error, def.DefinitionPrefix));
+                        new PXSetPropertyException(Messages.DuplicatePrefixInReport, PXErrorLevel.Error, e.Row, def.DefinitionPrefix));
                     return;
                 }
             }
@@ -128,8 +128,8 @@ namespace FinancialReport
 #endregion
 
         #region Actions
-        public PXSave<FLRTFinancialReport> Save = null!; // Initialized by PXGraph framework
-        public PXCancel<FLRTFinancialReport> Cancel = null!; // Initialized by PXGraph framework
+        public new PXSave<FLRTFinancialReport> Save = null!; // Initialized by PXGraph framework
+        public new PXCancel<FLRTFinancialReport> Cancel = null!; // Initialized by PXGraph framework
         public PXAction<FLRTFinancialReport> GenerateReport = null!; // Initialized by PXGraph framework
         public PXAction<FLRTFinancialReport> DownloadReport = null!; // Initialized by PXGraph framework
         public PXAction<FLRTFinancialReport> ResetStatus = null!; // Initialized by PXGraph framework

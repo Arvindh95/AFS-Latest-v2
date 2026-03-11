@@ -33,9 +33,7 @@ namespace FinancialReport.Services
                     string key = placeholderWithBraces.Trim('{', '}');
 
                     if (!normalizedData.ContainsKey(key))
-                    {
                         normalizedData[key] = "0";
-                    }
                 }
 
                 File.Copy(templatePath, outputPath, true);
@@ -63,7 +61,7 @@ namespace FinancialReport.Services
             }
             catch (Exception ex)
             {
-                PXTrace.WriteError($"Error processing Word template '{Path.GetFileName(templatePath)}': {ex.ToString()}");
+                PXTrace.WriteError($"Error processing Word template '{Path.GetFileName(templatePath)}': {ex.Message}");
                 throw;
             }
         }
@@ -85,7 +83,7 @@ namespace FinancialReport.Services
                 }
                 catch (Exception ex)
                 {
-                    PXTrace.WriteError($"Error processing paragraph in Word document: {ex.ToString()}");
+                    PXTrace.WriteError($"Error processing paragraph in Word document: {ex.Message}");
                 }
             }
         }
@@ -124,7 +122,7 @@ namespace FinancialReport.Services
             }
             catch (Exception ex)
             {
-                PXTrace.WriteError($"Error extracting placeholders from template '{templatePath}': {ex.ToString()}");
+                PXTrace.WriteError($"Error extracting placeholders from template '{templatePath}': {ex.Message}");
             }
             return placeholders;
         }

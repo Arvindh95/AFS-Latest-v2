@@ -1,5 +1,11 @@
 # Financial Report Module - User Manual v2
 
+**Version:** 2.1
+**Last Updated:** March 2026
+**Module:** FinancialReport (Acumatica ERP Customization)
+
+---
+
 ## Table of Contents
 
 1. [Overview](#1-overview)
@@ -9,16 +15,18 @@
 5. [Creating a Report Definition](#5-creating-a-report-definition)
 6. [Configuring Line Items](#6-configuring-line-items)
 7. [Line Types Explained](#7-line-types-explained)
-8. [Dimension Filters (Per-Line)](#8-dimension-filters-per-line)
-9. [Rounding & Formatting](#9-rounding--formatting)
-10. [Creating a Word Template](#10-creating-a-word-template)
-11. [Generating a Report](#11-generating-a-report)
-12. [Legacy Mode vs Definition Mode](#12-legacy-mode-vs-definition-mode)
-13. [Copy Definition](#13-copy-definition)
-14. [Reset Status](#14-reset-status)
-15. [Worked Examples](#15-worked-examples)
-16. [Troubleshooting](#16-troubleshooting)
-17. [Technical Reference](#17-technical-reference)
+8. [Balance Types Explained](#8-balance-types-explained)
+9. [Dimension Filters (Per-Line)](#9-dimension-filters-per-line)
+10. [Rounding & Formatting](#10-rounding--formatting)
+11. [Multi-Definition Reports](#11-multi-definition-reports)
+12. [Creating a Word Template](#12-creating-a-word-template)
+13. [Generating a Report](#13-generating-a-report)
+14. [Legacy Mode vs Definition Mode](#14-legacy-mode-vs-definition-mode)
+15. [Copy Definition](#15-copy-definition)
+16. [Reset Status](#16-reset-status)
+17. [Worked Examples](#17-worked-examples)
+18. [Troubleshooting](#18-troubleshooting)
+19. [Technical Reference](#19-technical-reference)
 
 ---
 
@@ -27,11 +35,11 @@
 The Financial Report Module is a customization for Acumatica ERP that automates the generation of financial statements (Balance Sheet, Profit & Loss, Cash Flow, Changes in Equity, and custom reports) by:
 
 1. Fetching GL data from a configurable Generic Inquiry (GI) via OData API
-2. Calculating line values using a configurable report definition
+2. Calculating line values using one or more configurable report definitions
 3. Populating a Microsoft Word template with calculated values
 4. Saving the generated document back to Acumatica
 
-The module eliminates manual financial statement preparation and supports multi-company, multi-branch, and multi-period reporting.
+The module supports multi-company, multi-branch, multi-period, and **multi-definition** reporting. A single Word template can include placeholders from multiple definitions (e.g., Balance Sheet and P&L in one document), with full cross-definition formula support.
 
 ---
 
@@ -39,29 +47,29 @@ The module eliminates manual financial statement preparation and supports multi-
 
 ```
 +---------------------------+
-|  FR101000                 |   Main screen: select template, year, period,
-|  Financial Report         |   branch/org/ledger, link a definition,
-|  Generation               |   click Generate, Reset Status
+|  FR101000                 |   Main screen: upload template, select year/period/
+|  Financial Report         |   branch/org/ledger, link definitions (tab), generate
 +---------------------------+
             |
             v
 +---------------------------+
-|  ReportGenerationService  |   Orchestrator: fetches data, runs engine,
-|  (Services/)              |   populates Word template, saves file
+|  ReportGenerationService  |   Orchestrator: pre-scans template, fetches data
+|  (Services/)              |   conditionally, runs engine, fills Word template
 +---------------------------+
      |              |
      v              v
 +-----------+  +-----------------------+
 | Financial |  | ReportCalculation     |
 | DataSvc   |  | Engine                |
-| (OData)   |  | (Definition-based)    |
+| (OData)   |  | (Multi-Definition)    |
 +-----------+  +-----------------------+
      |              |
      v              v
 +-----------+  +-----------------------+
 | GI via    |  | FLRTReportDefinition  |
 | OData API |  | FLRTReportLineItem    |
-+-----------+  | (FR101002)            |
++-----------+  | FLRTReportDefLink     |
+               | (FR101002 + FR101000) |
                +-----------------------+
 ```
 
@@ -69,17 +77,16 @@ The module eliminates manual financial statement preparation and supports multi-
 
 | Component | Purpose |
 |---|---|
-| **FR101000** | Main report generation screen (select template, generate, download, reset status) |
-| **FR101002** | Report Definition maintenance (define line items, GI mapping, rounding, copy definitions) |
-| **ReportGenerationService** | Orchestrates the end-to-end report generation process |
-| **FinancialDataService** | Fetches GL data from the GI via OData API |
-| **ReportCalculationEngine** | Processes line items and produces placeholder values |
-| **WordTemplateService** | Extracts placeholders from and populates Word templates |
+| **FR101000** | Main screen — upload template, link definitions, generate, download, reset status |
+| **FR101002** | Report Definition maintenance — GI mapping, prefix, line items, rounding, copy |
+| **ReportGenerationService** | Orchestrates end-to-end report generation |
+| **FinancialDataService** | Fetches GL data from GI via OData API with conditional parallel calls |
+| **ReportCalculationEngine** | Multi-definition engine — topological sort across all definitions |
+| **WordTemplateService** | Extracts placeholders from and fills Word templates |
 | **GIColumnMapping** | Maps GI column names to expected data fields |
 | **RoundingSettings** | Carries rounding configuration to the engine |
-| **AuthService** | Handles OAuth2 authentication with the Acumatica API |
-| **CredentialProvider** | Retrieves and caches encrypted tenant credentials |
-| **TraceLogger** | Writes diagnostic information to the Acumatica Trace log |
+| **AuthService** | Thread-safe OAuth2 authentication with token caching and refresh |
+| **CredentialProvider** | Retrieves and caches RSA-decrypted tenant credentials |
 
 ---
 
@@ -88,16 +95,29 @@ The module eliminates manual financial statement preparation and supports multi-
 ### FR101000 - Financial Report Generation
 
 The main screen where you:
-- Upload a Word template (`.docx`)
+- Attach a Word template (`.docx` with `FRTemplate` in the filename)
 - Select the reporting year, month, branch, organization, and ledger
-- Optionally link a Report Definition
-- Click **Generate** to produce the report
-- Click **Download** to get the generated file
-- Click **Reset Status** to recover a stuck or failed report back to Pending
+- Link one or more Report Definitions via the **Report Definitions** tab
+- Click **Generate Report** to produce the document
+- Click **Download Report** to retrieve the generated file
+- Click **Reset Status** to recover a stuck or failed report to Pending
+
+#### Report Definitions Tab
+
+The tab at the bottom of FR101000 shows the grid of definitions linked to this report:
+
+| Column | Description |
+|---|---|
+| **Definition** | Selector to choose a Report Definition (by Definition Code) |
+| **Prefix** | Read-only — shows the prefix of the selected definition (e.g., `BS`) |
+| **Display Order** | Controls grid row order only — does not affect calculation order |
+
+You can link multiple definitions to a single report. Each definition's placeholders will be prefixed in the Word template (e.g., `{{BS_CASH_CY}}`, `{{PL_REVENUE_CY}}`).
 
 ### FR101002 - Report Definition
 
 The configuration screen where you define:
+- The **Definition Prefix** (2–10 alphanumeric characters, globally unique)
 - The GI data source and column mapping
 - Report line items (account ranges, subtotals, formulas)
 - Rounding and formatting settings
@@ -108,27 +128,28 @@ The configuration screen where you define:
 
 ## 4. Setting Up API Credentials
 
-Before the module can fetch GL data, you need API credentials configured in the **Tenant Credentials** screen.
+Before the module can fetch GL data, configure credentials in the **Tenant Credentials** screen (FR101001 or accessible via the setup menu).
 
 ### Required Fields
 
 | Field | Description | Example |
 |---|---|---|
-| **Company Number** | Unique integer linking reports to credentials | `1` |
-| **Tenant Name** | The Acumatica tenant/company name (must be unique) | `MyCompany` |
-| **Base URL** | The Acumatica instance URL (no trailing slash) | `https://mycompany.acumatica.com` |
-| **Client ID** | OAuth2 client ID (RSA encrypted at rest) | `xxxxxxxx-xxxx-xxxx-xxxx` |
-| **Client Secret** | OAuth2 client secret (RSA encrypted at rest) | `(your secret)` |
-| **Username** | API user account (RSA encrypted at rest) | `admin@MyCompany` |
-| **Password** | API user password (RSA encrypted at rest) | `(your password)` |
+| **Company Number** | Integer linking reports to credentials | `1` |
+| **Tenant Name** | Acumatica tenant/company name (must be unique) | `MyCompany` |
+| **Base URL** | Acumatica instance URL (no trailing slash) | `https://mycompany.acumatica.com` |
+| **Client ID** | OAuth2 client ID (RSA-encrypted at rest) | `xxxxxxxx-xxxx-xxxx-xxxx` |
+| **Client Secret** | OAuth2 client secret (RSA-encrypted at rest) | `(your secret)` |
+| **Username** | API user account (RSA-encrypted at rest) | `admin@MyCompany` |
+| **Password** | API user password (RSA-encrypted at rest) | `(your password)` |
 
 ### Important Notes
-- All sensitive fields (Username, Password, Client ID, Client Secret) are RSA-encrypted when saved
-- The API user must have permissions to access the Generic Inquiry via OData
+
+- All sensitive fields are RSA-encrypted when saved — never stored in plaintext
+- The API user must have OData access to the Generic Inquiry
 - The GI must be published and accessible via the OData endpoint
-- Use a dedicated API user (not a regular user account) for reliability
-- Company Number must be unique across all tenant records
-- Tenant Name must be unique across all tenant records
+- Use a dedicated API user (not a personal account) for reliability
+- Company Number and Tenant Name must each be unique across all credential records
+- In production, the Base URL must use **HTTPS** — HTTP sends credentials unencrypted
 
 ---
 
@@ -140,18 +161,19 @@ Navigate to **FR101002 - Report Definition**.
 
 | Field | Description | Example |
 |---|---|---|
-| **Definition Code** | Unique identifier for this definition (immutable after save) | `BS_2024` |
+| **Definition Code** | Unique identifier (up to 30 chars, immutable after first save) | `BS_2024` |
+| **Definition Prefix** | 2–10 alphanumeric characters, globally unique — used in template placeholders | `BS` |
 | **Report Type** | Type of financial statement | Balance Sheet, Profit & Loss, Cash Flow, Changes in Equity, Custom |
 | **Description** | Friendly description (up to 255 characters) | `Balance Sheet FY2024` |
-| **Active** | Whether this definition can be used | Checked |
+| **Active** | Whether this definition is available for use | Checked |
+
+> **Definition Prefix is critical.** Every Word template placeholder for this definition will start with this prefix: `{{BS_LINECODE_CY}}`. Choose short, meaningful prefixes. Prefixes are validated to be alphanumeric only (no underscores or spaces).
 
 ### Step 2: Configure the Data Source
 
-The **Data Source** section tells the module which GI to query and which columns to read.
-
 | Field | Default | Description |
 |---|---|---|
-| **Generic Inquiry Name** | `TrialBalance` | Name of the GI to query via OData (selectable from published GIs) |
+| **Generic Inquiry Name** | `TrialBalance` | Name of the GI to query via OData |
 | **Account Column** | `Account` | Column containing the GL account code |
 | **Account Type Column** | `Type` | Column containing the account type (A/L/E/I/Q) |
 | **Beginning Balance Column** | `BeginningBalance` | Column for beginning balance |
@@ -162,19 +184,19 @@ The **Data Source** section tells the module which GI to query and which columns
 #### Using Detect Columns
 
 1. Enter the **Generic Inquiry Name** (e.g. `TrialBalance`)
-2. Click the **Detect Columns** button in the toolbar
-3. The system connects to the API, fetches column metadata from the GI, and auto-maps column names using case-insensitive matching
+2. Click **Detect Columns** in the toolbar
+3. The module connects to the API, fetches column metadata from the GI, and auto-maps column names using case-insensitive matching
 4. Review and adjust the mapped columns if needed
 5. Click **Save**
 
-The auto-mapping logic searches for columns by name:
-- Account: looks for "Account" (excluding "Sub" matches)
-- Type: looks for "Type" or "AccountType"
-- Beginning Balance: looks for "BeginningBalance", "Beginning", or "BegBal"
-- Ending Balance: looks for "EndingBalance", "Ending", or "YtdBalance"
-- Debit/Credit: looks for "Debit" and "Credit"
+Auto-mapping rules:
+- **Account**: looks for "Account" (excludes "Sub" matches)
+- **Type**: looks for "Type" or "AccountType"
+- **Beginning Balance**: looks for "BeginningBalance", "Beginning", or "BegBal"
+- **Ending Balance**: looks for "EndingBalance", "Ending", or "YtdBalance"
+- **Debit / Credit**: looks for "Debit" and "Credit"
 
-> **Note:** The Detect Columns button is only enabled when a GI Name is entered. Tenant Credentials must be configured first.
+> Detect Columns requires Tenant Credentials to be configured first.
 
 ### Step 3: Configure Formatting
 
@@ -183,60 +205,57 @@ The auto-mapping logic searches for columns by name:
 | **Rounding Level** | Units, Thousands, Millions | Scale factor for displayed values |
 | **Decimal Places** | 0, 1, 2 | Number of decimal places after rounding |
 
-**Examples:**
-- Units + 0 decimals: `1,808,344`
-- Thousands + 0 decimals: `1,808`
-- Thousands + 1 decimal: `1,808.3`
-- Millions + 2 decimals: `1.81`
-
 ---
 
 ## 6. Configuring Line Items
 
-Line items define what the report calculates. Each line produces two Word template placeholders: `{{LINECODE_CY}}` (current year) and `{{LINECODE_PY}}` (prior year).
+Line items define what the report calculates. Each line produces up to three Word template placeholders per linked report:
+- `{{PREFIX_LINECODE_CY}}` — Current Year value
+- `{{PREFIX_LINECODE_PY}}` — Prior Year value
+- `{{PREFIX_LINECODE_PM}}` — Previous Month value (only if the template contains `_PM` placeholders)
 
 ### Line Item Fields
 
 | Field | Description |
 |---|---|
-| **Sort Order** | Processing sequence (lower = first). Order matters because subtotals and formulas depend on earlier lines. |
-| **Line Code** | Unique identifier used in Word template placeholders (up to 100 characters). Use UPPER_CASE with underscores. |
-| **Description** | Human-readable description (up to 255 characters, for your reference only) |
-| **Line Type** | How this line's value is calculated (see Section 7) |
-| **Account From** | Start of GL account range (inclusive, up to 50 characters) |
-| **Account To** | End of GL account range (inclusive, up to 50 characters) |
-| **Account Type Filter** | Restrict to specific account type: Asset (A), Liability (L), Expense (E), Income (I), Equity (Q), or All |
-| **Balance Type** | Which balance to use: Ending, Beginning, Debit, Credit, Movement |
-| **Sign Rule** | As-Is or Flip Sign (multiply by -1) |
-| **Group / Parent Line** | Links this line to a Subtotal parent |
-| **Formula** | Mathematical expression for Calculated lines (up to 500 characters) |
-| **Visible in Report** | If unchecked, value is calculated but placeholder resolves to empty |
-| **Subaccount Filter** | Optional exact-match filter on subaccount code |
-| **Branch Filter** | Optional exact-match filter on branch (selectable from Acumatica branches) |
-| **Organization Filter** | Optional exact-match filter on organization (selectable from Acumatica organizations) |
-| **Ledger Filter** | Optional exact-match filter on ledger (selectable from Acumatica ledgers) |
+| **Sort Order** | Processing sequence — lower numbers are processed first. Critical because subtotals and formulas depend on earlier lines. |
+| **Line Code** | Unique identifier within the definition, used in Word template placeholders (up to 100 chars). Convention: `UPPER_CASE_WITH_UNDERSCORES`. |
+| **Description** | Human-readable label (up to 255 chars) — for reference only, not in output |
+| **Line Type** | How the value is calculated (Account Range, Subtotal, Calculated, Heading) |
+| **Account From** | Start of GL account range (inclusive, up to 50 chars) |
+| **Account To** | End of GL account range (inclusive, up to 50 chars) |
+| **Account Type Filter** | Restrict to account type: Asset (A), Liability (L), Expense (E), Income (I), Equity (Q), or All |
+| **Balance Type** | Which balance figure to use (see Section 8) |
+| **Sign Rule** | As-Is or Flip Sign (multiply by −1) |
+| **Parent Line Code** | Links this line as a child of a Subtotal line |
+| **Formula** | Mathematical expression for Calculated lines (up to 500 chars) |
+| **Visible in Report** | If unchecked, value is calculated but placeholder renders as empty string |
+| **Subaccount Filter** | Optional exact-match filter on subaccount code (up to 30 chars) |
+| **Branch Filter** | Optional exact-match filter on branch |
+| **Organization Filter** | Optional exact-match filter on organization |
+| **Ledger Filter** | Optional exact-match filter on ledger |
 
 ### Field Availability by Line Type
 
 | Field | Account Range | Subtotal | Calculated | Heading |
 |---|---|---|---|---|
-| Account From / To | Yes | - | - | - |
-| Account Type Filter | Yes | - | - | - |
-| Balance Type | Yes | - | - | - |
-| Sign Rule | Yes | - | - | - |
-| Parent Line Code | Yes | Yes | - | - |
-| Formula | - | - | Yes | - |
-| Visible | Yes | Yes | Yes | - |
-| Dimension Filters | Yes | - | - | - |
+| Account From / To | Yes | — | — | — |
+| Account Type Filter | Yes | — | — | — |
+| Balance Type | Yes | — | — | — |
+| Sign Rule | Yes | — | — | — |
+| Parent Line Code | Yes | Yes | — | — |
+| Formula | — | — | Yes | — |
+| Visible | Yes | Yes | Yes | — |
+| Dimension Filters | Yes | — | — | — |
 
-When you change the Line Type, irrelevant fields are automatically cleared and disabled.
+Changing the Line Type automatically clears and disables irrelevant fields.
 
 ### Validation Rules
 
 - **Line Code** is required and must be unique within the same definition
 - **Account From** and **Account To** are required for Account Range lines
 - **Formula** is required for Calculated lines
-- The system validates these rules on save and shows field-level error messages
+- Validation runs on save with field-level error messages
 
 ---
 
@@ -244,152 +263,126 @@ When you change the Line Type, irrelevant fields are automatically cleared and d
 
 ### Account Range
 
-Sums GL account balances within the specified `AccountFrom` to `AccountTo` range.
+Sums GL account balances within the `AccountFrom` to `AccountTo` range.
 
-**How it works:**
-1. Iterates all accounts returned by the GI
-2. Includes only accounts that fall within the `AccountFrom:AccountTo` range (smart alphanumeric comparison that handles segmented account codes like `1000-00`)
-3. Optionally filters by Account Type (Asset, Liability, etc.)
-4. Gets the specified balance type (Ending, Beginning, Debit, Credit, Movement)
-5. Applies automatic sign normalization (credit-normal accounts like Liability/Income/Equity are flipped to positive)
-6. Applies the Sign Rule if set to "Flip"
+**Processing:**
+1. Iterates all accounts returned by the GI for the selected period
+2. Includes only accounts within the range (smart alphanumeric comparison supporting segmented codes like `1000-00`)
+3. Optionally filters by Account Type
+4. Reads the specified Balance Type (see Section 8)
+5. Applies automatic sign normalization (credit-normal accounts — Liability, Income, Equity — are flipped to positive)
+6. Applies Sign Rule if set to Flip
 7. Sums all matching values
-
-**Movement balance type:** When Balance Type is set to "Movement", the engine calculates `Debit - Credit` for each matching account, giving you the net activity for the period.
 
 **Example:**
 ```
 Line Code:    CASH
 Account From: 10100
 Account To:   10199
-Balance Type: Ending Balance
+Balance Type: Ending
 Sign Rule:    As-Is
 ```
-This sums the ending balance of all accounts from 10100 to 10199.
 
 ### Subtotal
 
-Sums all lines that have this line's code as their `Parent Line Code`.
-
-**How it works:**
-1. Finds all lines in the definition where `ParentLineCode = this LineCode`
-2. Sums their already-calculated values
-3. No account range or formula needed
+Sums all lines that have this line's code as their **Parent Line Code**.
 
 **Example:**
 ```
-Sort Order  Line Code         Line Type      Parent Line
-10          CASH              Account Range  CURRENT_ASSETS
-20          RECEIVABLES       Account Range  CURRENT_ASSETS
-30          INVENTORY         Account Range  CURRENT_ASSETS
-40          CURRENT_ASSETS    Subtotal       (blank)
+Sort  Line Code       Type           Parent
+10    CASH            Account Range  CURR_ASSETS
+20    AR              Account Range  CURR_ASSETS
+30    INVENTORY       Account Range  CURR_ASSETS
+40    CURR_ASSETS     Subtotal       (blank)
 ```
-`CURRENT_ASSETS` = `CASH` + `RECEIVABLES` + `INVENTORY`
+`CURR_ASSETS` = `CASH` + `AR` + `INVENTORY`
 
-> **Important:** Child lines (Sort Order 10-30) must be processed BEFORE the Subtotal line (Sort Order 40).
+> Child lines must have a lower Sort Order than the Subtotal line.
 
 ### Calculated
 
-Evaluates a mathematical formula referencing other Line Codes.
+Evaluates a mathematical formula referencing other Line Codes by their code alone (within the same definition) or by `PREFIX_LINECODE` (cross-definition).
 
-**Supported operators:** `+`, `-`, `*`, `/`, `(`, `)`
+**Supported operators:** `+  −  *  /  ( )`
 
-**How it works:**
-1. Parses the Formula expression using a recursive descent parser
-2. Replaces each Line Code reference with its already-calculated value
-3. Evaluates the expression respecting operator precedence (`*` and `/` bind tighter than `+` and `-`)
-4. Supports parentheses for grouping
-5. Supports numeric literals (e.g. `* 100` for percentages)
-6. Supports unary minus (e.g. `-ADJUSTMENTS`)
-7. Division by zero is safely handled (returns 0)
+**Behaviour:**
+- Operator precedence respected (`*` and `/` before `+` and `−`)
+- Division by zero returns 0 (no error)
+- Unknown line codes default to 0 (trace warning logged)
+- Supports unary minus: `−ADJUSTMENTS`
+- Supports numeric literals: `GROSS_PROFIT / TOTAL_REVENUE * 100`
 
 **Examples:**
 ```
-Line Code: NET_INCOME
-Formula:   TOTAL_REVENUE - TOTAL_EXPENSES
-
-Line Code: WORKING_CAPITAL
-Formula:   CURRENT_ASSETS - CURRENT_LIABILITIES
-
-Line Code: GROSS_MARGIN_PCT
-Formula:   GROSS_PROFIT / TOTAL_REVENUE * 100
+NET_INCOME          = TOTAL_REVENUE - TOTAL_EXPENSES
+WORKING_CAPITAL     = CURR_ASSETS - CURR_LIAB
+GROSS_MARGIN_PCT    = GROSS_PROFIT / TOTAL_REVENUE * 100
+CHECK               = BS_TOTAL_ASSETS - BS_LIAB_EQUITY    ← cross-definition
 ```
-
-> **Important:** All referenced Line Codes must have a lower Sort Order (be calculated first). Unknown Line Codes default to 0 with a trace warning.
 
 ### Heading
 
-Display-only line used for section headers in the Word template. No value is calculated. The placeholder resolves to an empty string. The `Visible` flag is automatically set to false for Heading lines.
+Display-only. No value calculated. Placeholder resolves to empty string. Visible flag is automatically false.
 
 ---
 
-## 8. Dimension Filters (Per-Line)
+## 8. Balance Types Explained
 
-Each Account Range line can optionally be restricted to specific dimensions. These filters appear in the line item fields.
+| Balance Type | Description | Data Source |
+|---|---|---|
+| **Ending** | Period ending balance | Selected period data |
+| **Beginning** | Period opening balance (prior period's ending) | Prior-period data (opening rows) |
+| **January Beginning** | Balance as at January 1 of the reporting year | January beginning balance fetch |
+| **Debit** | Year-to-date cumulative debit activity (Jan → selected month) | Range data (cumulative) |
+| **Credit** | Year-to-date cumulative credit activity (Jan → selected month) | Range data (cumulative) |
+| **Movement** | Net period activity = Debit − Credit | Selected period data |
+
+> **Performance note:** Reports that use only Ending balance type will skip the cumulative API calls entirely, making generation faster. Reports with Debit, Credit, or Movement balance types require the full cumulative range fetch.
+
+---
+
+## 9. Dimension Filters (Per-Line)
+
+Each Account Range line can be restricted to specific GL dimensions.
 
 ### Available Filters
 
-| Filter | Type | Description |
-|---|---|---|
-| **Subaccount Filter** | Free text (up to 30 chars) | Exact subaccount code (e.g. `000-000`) |
-| **Branch Filter** | Selector (from Acumatica branches) | Select from Acumatica branches |
-| **Organization Filter** | Selector (from Acumatica organizations) | Select from Acumatica organizations |
-| **Ledger Filter** | Selector (from Acumatica ledgers) | Select from Acumatica ledgers |
+| Filter | Description |
+|---|---|
+| **Subaccount Filter** | Exact subaccount code (e.g. `000-000`) |
+| **Branch Filter** | Selected from Acumatica branches |
+| **Organization Filter** | Selected from Acumatica organizations |
+| **Ledger Filter** | Selected from Acumatica ledgers |
 
 ### How Filters Work
 
 **No filters set (default):**
-- The engine uses the pre-aggregated data (all subaccounts, branches, and organizations summed per account)
-- This is the most common scenario and is the fastest path
+Uses pre-aggregated data (all dimensions summed per account). Fastest path.
 
 **Any filter set:**
-- The engine switches to the per-row detail data (one entry per GI row)
-- Each row is checked against all set filters (AND logic — all must match)
-- Only matching rows contribute to the line's total
-- When zero rows match, the trace log shows the filter values and sample data rows for debugging
-
-### Example Scenario
-
-Your company has 3 branches: HQ, WAREHOUSE, RETAIL. The report-level header has no branch filter (fetches all data). You want CASH to show only for HQ:
-
-```
-Line Code:     CASH
-Account From:  10100
-Account To:    10199
-Branch Filter: HQ          ← only HQ rows included
-```
-
-Lines without a Branch Filter will still include data from all 3 branches.
+Switches to per-row detail data. Each GI row is checked against all set filters (AND logic — all must match). When zero rows match, the trace log shows filter values and sample data rows for debugging.
 
 ### Important Notes
 
-- Filters are only applied to **Account Range** lines (not Subtotal, Calculated, or Heading)
-- All filters use **exact match** (case-insensitive)
-- Multiple filters are combined with AND logic
-- If the report header already filters to a specific branch, setting a different branch in the line filter will return 0 (that branch's data was never fetched)
-- The most useful scenario: leave report-level branch/org blank (fetch everything) and use per-line filters to scope individual lines
+- Only applies to **Account Range** lines
+- All filters use **exact, case-insensitive match**
+- Multiple filters combine with **AND** logic
+- The report header Branch/Organization/Ledger fields filter what data is fetched. Per-line filters filter within what was fetched. If the report header limits to Branch A, setting a per-line filter to Branch B will return 0.
+- **Best practice:** Leave report header branch/organization blank, use per-line filters to scope individual lines
 
 ---
 
-## 9. Rounding & Formatting
+## 10. Rounding & Formatting
 
 ### Rounding Levels
 
-| Level | Divisor | Raw Value | Result |
+| Level | Divisor | Raw Value | Result (0 dp) |
 |---|---|---|---|
 | **Units** | 1 | 1,808,344 | 1,808,344 |
 | **Thousands** | 1,000 | 1,808,344 | 1,808 |
 | **Millions** | 1,000,000 | 1,808,344 | 2 |
 
-Rounding uses `MidpointRounding.AwayFromZero` (standard banker's rounding away from zero).
-
-### Decimal Places
-
-| Decimal Places | Thousands Example |
-|---|---|
-| 0 | 1,808 |
-| 1 | 1,808.3 |
-| 2 | 1,808.34 |
+Rounding uses `MidpointRounding.AwayFromZero`.
 
 ### Number Display Format (Definition Mode)
 
@@ -397,480 +390,542 @@ Rounding uses `MidpointRounding.AwayFromZero` (standard banker's rounding away f
 |---|---|
 | Positive | `1,234,567` |
 | Negative | `(1,234,567)` — accounting bracket notation |
-| Zero | `-` — dash (standard financial statement practice) |
+| Zero | `−` — dash (standard financial statement practice) |
 
 ### Number Display Format (Legacy Mode)
 
 | Value | Display |
 |---|---|
-| All values | `#,##0` format (thousands separator, no decimals) |
+| Positive | `1,234,567` |
+| Negative | `−1,234,567` — minus sign |
 | Zero | `0` |
-| Negative | `-1,234,567` (minus sign) |
 
 ---
 
-## 10. Creating a Word Template
+## 11. Multi-Definition Reports
+
+A single financial report can combine multiple definitions — for example, a Balance Sheet definition (`BS`) and a P&L definition (`PL`) in one Word document.
+
+### How It Works
+
+1. On the **FR101000** screen, open the **Report Definitions** tab
+2. Add one row per definition, selecting the Definition Code from the selector
+3. The **Prefix** column shows the prefix automatically (read-only)
+4. Set Display Order if you want to control grid row sequence (no effect on calculation)
+5. Save the report record
+6. When you click **Generate**, the engine processes all linked definitions together using topological sort
+
+### Definition Prefix
+
+Every Report Definition has a mandatory **Definition Prefix** (2–10 alphanumeric characters, globally unique):
+
+| Definition | Prefix | Example Placeholder |
+|---|---|---|
+| Balance Sheet | `BS` | `{{BS_TOTAL_ASSETS_CY}}` |
+| Profit & Loss | `PL` | `{{PL_NET_INCOME_CY}}` |
+| Cash Flow | `CF` | `{{CF_NET_CASHFLOW_CY}}` |
+
+### Placeholder Format with Prefix
+
+```
+{{PREFIX_LINECODE_CY}}   ← Current Year
+{{PREFIX_LINECODE_PY}}   ← Prior Year
+{{PREFIX_LINECODE_PM}}   ← Previous Month
+```
+
+**Examples:**
+```
+{{BS_CASH_CY}}            Balance Sheet — Cash — Current Year
+{{BS_TOTAL_ASSETS_PY}}    Balance Sheet — Total Assets — Prior Year
+{{PL_NET_INCOME_CY}}      P&L — Net Income — Current Year
+{{PL_REVENUE_PM}}         P&L — Revenue — Previous Month
+{{CY}}                    Current year number (e.g. 2024)
+{{PY}}                    Prior year number (e.g. 2023)
+```
+
+### Cross-Definition Formulas
+
+A Calculated line in one definition can reference lines from another definition using the explicit `PREFIX_LINECODE` syntax:
+
+```
+Definition: PL
+Line Code:  RETAINED_EARNINGS_CHECK
+Formula:    BS_TOTAL_EQUITY - PL_NET_INCOME
+```
+
+This references `TOTAL_EQUITY` from the `BS` definition and `NET_INCOME` from the current `PL` definition. The engine resolves all dependencies via topological sort (Kahn's algorithm) so definitions are calculated in the correct order regardless of which one was added first.
+
+### Calculation Order
+
+Calculation order is determined entirely by dependency analysis — not by Display Order in the grid. If definition B has a formula referencing a line in definition A, then definition A's lines are always calculated first, automatically.
+
+### Previous Month Placeholders
+
+The `_PM` suffix gives the value for the period immediately before the selected financial month:
+
+```
+{{BS_CASH_PM}}     ← Cash balance as at the month before the selected period
+{{PL_REVENUE_PM}}  ← Revenue for the previous month
+```
+
+The system only fetches previous-month data if the template actually contains `_PM` placeholders. If no `_PM` placeholders exist, the API call is skipped entirely.
+
+---
+
+## 12. Creating a Word Template
 
 The Word template is a standard `.docx` file with placeholders that get replaced with calculated values.
 
-### File Naming Requirement
+### File Naming
 
-The template filename **must** contain the text `FRTemplate` (case-sensitive) for the system to recognize it. Example: `BalanceSheet_FRTemplate_2024.docx`
+The filename **must** contain `FRTemplate` (case-sensitive). Examples:
+- `FinancialStatements_FRTemplate_2024.docx`
+- `BS_FRTemplate.docx`
 
 ### Placeholder Format
 
-Placeholders use double curly braces: `{{PLACEHOLDER_NAME}}`
+```
+{{PLACEHOLDER_NAME}}
+```
+Double curly braces, no spaces inside.
 
-### Definition-Mode Placeholders
-
-When a Report Definition is linked, placeholders use Line Codes:
+### Definition-Mode Placeholders (Recommended)
 
 | Placeholder | Description |
 |---|---|
-| `{{CASH_CY}}` | Cash line, Current Year value |
-| `{{CASH_PY}}` | Cash line, Prior Year value |
-| `{{TOTAL_ASSETS_CY}}` | Total Assets, Current Year |
-| `{{NET_INCOME_PY}}` | Net Income, Prior Year |
-| `{{CY}}` | The current year number (e.g. `2024`) |
-| `{{PY}}` | The prior year number (e.g. `2023`) |
+| `{{BS_CASH_CY}}` | BS definition — Cash line — Current Year |
+| `{{BS_CASH_PY}}` | BS definition — Cash line — Prior Year |
+| `{{BS_CASH_PM}}` | BS definition — Cash line — Previous Month |
+| `{{PL_NET_INCOME_CY}}` | P&L definition — Net Income — Current Year |
+| `{{CF_NET_CASHFLOW_PY}}` | Cash Flow — Net Cash Flow — Prior Year |
+| `{{CY}}` | Current year number (e.g. `2024`) |
+| `{{PY}}` | Prior year number (e.g. `2023`) |
 
 ### Legacy-Mode Placeholders
 
-When no Report Definition is linked, placeholders use raw account codes:
+When no definition is linked, placeholders use raw account codes:
 
 | Placeholder | Description |
 |---|---|
 | `{{A10100_CY}}` | Account A10100, Current Year ending balance |
 | `{{A10100_PY}}` | Account A10100, Prior Year ending balance |
-| `{{A10100:A10199_e_CY}}` | Sum of accounts A10100 through A10199, ending balance, CY |
-| `{{A1???:A2???_e_CY}}` | Wildcard range: sum all accounts from A1000-A2999, ending balance, CY |
+| `{{A10100:A10199_e_CY}}` | Sum of accounts A10100 to A10199, ending balance, CY |
+| `{{A1???:A2???_e_CY}}` | Wildcard range: sum A1000–A2999, ending balance, CY |
 | `{{Sum1_A_CY}}` | Sum all accounts starting with "A", CY |
 | `{{DebitSum3_B53_CY}}` | Sum debits for accounts starting with "B53", CY |
-| `{{CreditSum3_B53_CY}}` | Sum credits for accounts starting with "B53", CY |
-| `{{BegSum3_A11_CY}}` | Sum beginning balances for accounts starting with "A11", CY |
-| `{{A12345_sb000123_br001_CY}}` | Account with subaccount and branch dimensional filters |
+| `{{A12345_sb000123_br001_CY}}` | Account with subaccount and branch filters |
 | `{{A12345_btcredit_CY}}` | Account with specific balance type (credit) |
-| `{{A12345_Jan1_CY}}` | January 1 beginning balance |
-| `{{A12345_debit_CY}}` | Cumulative debit activity |
-| `{{A12345_credit_CY}}` | Cumulative credit activity |
 
-### Placeholder Limit
+### Template Design Rules
 
-Templates are limited to a maximum of **1,000 placeholders** to prevent performance issues. If your template exceeds this limit, split it into multiple reports.
-
-### Template Design Tips
-
-1. Create the template in Microsoft Word with normal formatting
-2. Type placeholders directly — do NOT copy/paste from other sources (formatting characters can break matching)
-3. Use uppercase for Line Codes to match exactly
-4. Test with a small template first before building the full report
-5. Placeholders can appear in tables, headers, footers, and body text
-6. Do not split a placeholder across multiple lines in Word
-7. Avoid applying mixed formatting (bold/italic) within a single placeholder
+1. Type placeholders directly in Word — do NOT paste from other sources (hidden formatting breaks matching)
+2. Use exact casing for Line Codes (matching is case-insensitive but consistency avoids mistakes)
+3. Do not split a placeholder across a line break in Word
+4. Do not apply mixed formatting (bold + normal) within one placeholder
+5. Placeholders work in body text, tables, headers, and footers
+6. Maximum **1,000 placeholders** per template — split into multiple reports if needed
+7. Test with a minimal template first before building the full document
 
 ### Example Template Structure
 
 ```
-                    BALANCE SHEET
-                As at December 31, {{CY}}
+              FINANCIAL STATEMENTS
+         For the Year Ended December 31, {{CY}}
+
                                         {{CY}}          {{PY}}
 
-ASSETS
-Current Assets
-  Cash and Cash Equivalents         {{CASH_CY}}     {{CASH_PY}}
-  Accounts Receivable               {{AR_CY}}       {{AR_PY}}
-  Inventory                         {{INV_CY}}      {{INV_PY}}
-Total Current Assets                {{CURR_ASSETS_CY}} {{CURR_ASSETS_PY}}
+BALANCE SHEET
+  Cash and Cash Equivalents     {{BS_CASH_CY}}      {{BS_CASH_PY}}
+  Accounts Receivable           {{BS_AR_CY}}        {{BS_AR_PY}}
+  Total Current Assets          {{BS_CURR_ASSETS_CY}} {{BS_CURR_ASSETS_PY}}
+  Total Assets                  {{BS_TOTAL_ASSETS_CY}} {{BS_TOTAL_ASSETS_PY}}
 
-Non-Current Assets
-  Property, Plant & Equipment       {{PPE_CY}}      {{PPE_PY}}
-Total Non-Current Assets            {{NONCURR_ASSETS_CY}} {{NONCURR_ASSETS_PY}}
-
-TOTAL ASSETS                        {{TOTAL_ASSETS_CY}} {{TOTAL_ASSETS_PY}}
+PROFIT & LOSS
+  Revenue                       {{PL_REVENUE_CY}}   {{PL_REVENUE_PY}}
+  Net Income                    {{PL_NET_INCOME_CY}} {{PL_NET_INCOME_PY}}
 ```
 
 ---
 
-## 11. Generating a Report
+## 13. Generating a Report
 
 ### Step-by-Step
 
 1. Navigate to **FR101000 - Financial Report**
-2. Select or create a report record
-3. Upload a Word template (attach `.docx` file with `FRTemplate` in the filename)
-4. Fill in the header fields:
+2. Create a new report record (or open an existing one)
+3. Attach a Word template (`.docx` with `FRTemplate` in the filename) via the Files panel
+4. Fill in the report header:
 
    | Field | Description |
    |---|---|
-   | **Template Name** | Display name for this report (up to 225 characters) |
+   | **Report Name** | Display name (up to 225 chars) |
    | **Company Number** | Links to tenant credentials |
-   | **Current Year** | The reporting year (selectable from Acumatica financial years) |
-   | **Financial Month** | The period month, defaults to December |
-   | **Branch** | Optional: filter data to a specific branch |
-   | **Organization** | Optional: filter data to a specific organization |
+   | **Current Year** | The reporting year |
+   | **Financial Month** | The period month (defaults to December) |
+   | **Branch** | Optional: pre-filter all data to a specific branch |
+   | **Organization** | Optional: pre-filter all data to a specific organization |
    | **Ledger** | Optional: filter to a specific ledger (e.g. `ACTUAL`) |
-   | **Report Definition** | Optional: link to a Report Definition for structured calculation |
 
-5. Click **Save**
-6. Check the **Select** checkbox for your report
+5. Open the **Report Definitions** tab and add definitions:
+   - Click the **+** button in the grid
+   - Select the Definition Code from the selector
+   - Set Display Order if needed
+   - Repeat for each definition
+6. Click **Save**
 7. Click **Generate Report**
-8. Wait for the status to change to **Ready to Download**
-9. Click **Download Report** to get the generated `.docx` file
+8. Wait for status to change to **Ready to Download**
+9. Click **Download Report** to retrieve the `.docx` file
 
 ### Timeout Protection
 
-Report generation has a built-in **15-minute timeout**. If the process exceeds this limit, it is automatically cancelled and the status is set to Failed. This prevents indefinitely stuck reports.
+Report generation has a built-in **15-minute timeout**. If exceeded, the status is set to Failed and temporary files are cleaned up.
 
 ### What Happens During Generation
 
-1. Template file is extracted and placeholders are identified and categorized into three types:
-   - **Wildcard range** placeholders (e.g. `A????:B????_e_CY`)
-   - **Exact range** placeholders (e.g. `A74101:A75101_e_CY`)
-   - **Regular** placeholders (e.g. `A74101_CY`)
-2. Six parallel API calls fetch GL data:
+1. Template is extracted and all placeholders are identified and categorised:
+   - Wildcard range (`A????:B????_e_CY`)
+   - Exact range (`A74101:A75101_e_CY`)
+   - Regular (`BS_CASH_CY`, `A74101_CY`)
+2. **Pre-scan:** The system examines linked line items to determine which API calls are actually needed:
+   - Debit/Credit/Movement lines → cumulative range calls required
+   - `_PM` placeholders in template → previous-month call required
+   - No filters → detail rows not fetched (faster)
+3. **Parallel API calls** (up to 8, conditionally skipped):
    - Current year period data
    - Prior year period data
-   - January beginning balance (current year)
-   - January beginning balance (prior year)
-   - Cumulative CY data (Jan to selected month)
-   - Cumulative PY data (Jan to Dec prior year)
-3. If a Report Definition is linked:
-   - The ReportCalculationEngine processes all line items in SortOrder
-   - Account Range lines sum GL data within their ranges with sign normalization
-   - Subtotal and Calculated lines derive values from other lines
-   - Rounding and formatting are applied
-   - Engine placeholders take priority over legacy placeholders
-4. Legacy placeholders (raw account codes) fill in anything not covered by the definition
-5. Year constants (`{{CY}}` and `{{PY}}`) are added
-6. All placeholders are replaced in the Word document (headers, footers, body)
-7. The generated file is saved to Acumatica
-8. Temporary files are cleaned up
-9. Credential cache is cleared
+   - January beginning balance — current year
+   - January beginning balance — prior year
+   - Cumulative CY range (Jan → selected month) — *skipped if not needed*
+   - Cumulative PY range (Jan → Dec prior year) — *skipped if not needed*
+   - Previous month data — *skipped if no `_PM` placeholders*
+4. **ReportCalculationEngine** processes all linked definitions in dependency order:
+   - Builds a dependency graph across all definitions
+   - Topological sort ensures correct calculation order for cross-definition formulas
+   - Account Range lines sum GL data with sign normalisation
+   - Subtotal and Calculated lines derive values from earlier lines
+   - Rounding and formatting applied
+5. Legacy placeholders fill any remaining gaps
+6. Year constants (`{{CY}}`, `{{PY}}`) are injected
+7. All placeholders are replaced in the Word document
+8. Generated file is saved to Acumatica and attached to the report record
+9. Temporary files are cleaned up
 
 ---
 
-## 12. Legacy Mode vs Definition Mode
+## 14. Legacy Mode vs Definition Mode
 
-### Legacy Mode (no Report Definition linked)
+### Legacy Mode (no definitions linked)
 
 - Placeholders use raw account codes: `{{A10100_CY}}`
-- Returns the ending balance of that exact account
+- Returns the balance of that exact account or range
 - No sign correction, no rounding, no subtotals
-- Simple and direct — one placeholder per account
 - Supports Sum, DebitSum, CreditSum, BegSum prefix placeholders
 - Supports exact and wildcard range placeholders
 - Supports dimensional filtering via placeholder syntax
-- Best for quick, simple reports
+- Best for quick, ad-hoc reports
 
-### Definition Mode (Report Definition linked)
+### Definition Mode (one or more definitions linked)
 
-- Placeholders use Line Codes: `{{CASH_CY}}`
-- Full calculation engine with account ranges, subtotals, formulas
-- Automatic sign normalization (credit-normal accounts flipped for presentation)
-- Configurable rounding (Units/Thousands/Millions) with decimal places
-- Per-line dimension filters (Subaccount, Branch, Organization, Ledger)
+- Placeholders use `{{PREFIX_LINECODE_CY/PY/PM}}`
+- Full multi-definition engine with cross-definition formulas
+- Automatic sign normalisation
+- Configurable rounding
+- Per-line dimension filters
 - Accounting bracket notation for negatives, dash for zeros
 - Best for formal financial statements
 
 ### Both Modes Together
 
-When a Report Definition is linked, **both systems run**. Definition-mode placeholders take priority. Legacy placeholders fill in anything not covered by the definition. This allows you to use a definition for the main financial statement lines while still referencing individual accounts for notes or schedules.
+When definitions are linked, **both systems run**. Definition placeholders take priority. Legacy placeholders fill anything not covered. This allows using definitions for main financial statement lines while referencing individual accounts for notes or schedules.
 
 ---
 
-## 13. Copy Definition
+## 15. Copy Definition
 
-The **Copy Definition** action on the FR101002 screen duplicates an existing Report Definition along with all its line items.
+Duplicates an existing Report Definition with all its line items.
 
 ### How to Use
 
 1. Open the definition you want to copy in FR101002
 2. Click **Copy Definition** in the toolbar
-3. Confirm the dialog prompt
-4. A new definition is created with:
+3. A new definition is created with:
    - Definition Code = original code + `_COPY`
    - Description = original description + ` (Copy)`
-   - All header settings (GI name, column mapping, rounding) are copied
-   - All line items are duplicated with the same sort order, codes, formulas, and settings
-5. Rename the Definition Code and Description as needed
-6. Modify line items for your variant
-
-This is useful for creating variations of an existing report (e.g. a Balance Sheet with notes, or a branch-specific P&L based on a consolidated template).
+   - All header settings (prefix, GI name, column mapping, rounding) are copied
+   - All line items duplicated with same settings
+4. Rename the Definition Code, Prefix, and Description
+5. Modify line items as needed
 
 ---
 
-## 14. Reset Status
+## 16. Reset Status
 
-The **Reset Status** action on the FR101000 screen allows you to recover a report that is stuck in "In Progress" or "Failed" status.
+Recovers a report that is stuck in "In Progress" or "Failed" status.
 
 ### How to Use
 
-1. Select the report record (check the Select checkbox)
+1. Open the report in FR101000
 2. Click **Reset Status** in the toolbar
-3. Confirm the dialog prompt
-4. The report status is reset to "Pending" (File not Generated)
-5. The previously generated file reference is cleared
-6. You can now edit the report and regenerate
+3. Confirm the prompt
+4. Status resets to "Pending" and the previously generated file reference is cleared
 
 ### When to Use
 
-- A report has been stuck in "In Progress" for an extended period (e.g. after a server restart)
-- A report failed and you want to retry after fixing the underlying issue
-- You want to clear a completed report and start fresh
+- Report stuck "In Progress" after a server restart
+- Report failed and you want to retry after fixing the issue
+- You want to clear a completed report and regenerate
 
-> **Note:** While any report has status "In Progress", all Generate and Download buttons are disabled system-wide. Resetting the stuck report will re-enable these buttons for all reports.
+> While any report has status "In Progress", Generate and Download buttons are disabled system-wide. Resetting the stuck report re-enables them for all reports.
 
 ---
 
-## 15. Worked Examples
+## 17. Worked Examples
 
-### Example 1: Simple Balance Sheet
+### Example 1: Single Balance Sheet
 
-**Report Definition:** `BS` (Balance Sheet)
+**Definition:** `BS` prefix, Balance Sheet
 
-| Sort | Line Code | Type | Account From | Account To | Type Filter | Sign | Parent |
-|---|---|---|---|---|---|---|---|
-| 10 | CASH | Account Range | 10100 | 10199 | All | As-Is | CURR_ASSETS |
-| 20 | AR | Account Range | 11000 | 11999 | All | As-Is | CURR_ASSETS |
-| 30 | INVENTORY | Account Range | 12000 | 12999 | All | As-Is | CURR_ASSETS |
-| 40 | CURR_ASSETS | Subtotal | | | | | TOTAL_ASSETS |
-| 50 | PPE | Account Range | 15000 | 15999 | All | As-Is | NONCURR_ASSETS |
-| 60 | NONCURR_ASSETS | Subtotal | | | | | TOTAL_ASSETS |
-| 70 | TOTAL_ASSETS | Subtotal | | | | | |
-| 80 | AP | Account Range | 20000 | 20999 | All | As-Is | CURR_LIAB |
-| 90 | CURR_LIAB | Subtotal | | | | | TOTAL_LIAB |
-| 100 | LOANS | Account Range | 25000 | 25999 | All | As-Is | NONCURR_LIAB |
-| 110 | NONCURR_LIAB | Subtotal | | | | | TOTAL_LIAB |
-| 120 | TOTAL_LIAB | Subtotal | | | | | |
-| 130 | SHARE_CAPITAL | Account Range | 30000 | 30999 | All | As-Is | TOTAL_EQUITY |
-| 140 | RET_EARNINGS | Account Range | 32000 | 32999 | All | As-Is | TOTAL_EQUITY |
-| 150 | TOTAL_EQUITY | Subtotal | | | | | |
-| 160 | LIAB_EQUITY | Calculated | | | | | |
+| Sort | Line Code | Type | Account From | Account To | Balance Type | Parent |
+|---|---|---|---|---|---|---|
+| 10 | CASH | Account Range | 10100 | 10199 | Ending | CURR_ASSETS |
+| 20 | AR | Account Range | 11000 | 11999 | Ending | CURR_ASSETS |
+| 30 | INVENTORY | Account Range | 12000 | 12999 | Ending | CURR_ASSETS |
+| 40 | CURR_ASSETS | Subtotal | | | | TOTAL_ASSETS |
+| 50 | PPE | Account Range | 15000 | 15999 | Ending | NONCURR_ASSETS |
+| 60 | NONCURR_ASSETS | Subtotal | | | | TOTAL_ASSETS |
+| 70 | TOTAL_ASSETS | Subtotal | | | | |
+| 80 | AP | Account Range | 20000 | 20999 | Ending | CURR_LIAB |
+| 90 | CURR_LIAB | Subtotal | | | | TOTAL_LIAB |
+| 100 | LOANS | Account Range | 25000 | 25999 | Ending | NONCURR_LIAB |
+| 110 | NONCURR_LIAB | Subtotal | | | | TOTAL_LIAB |
+| 120 | TOTAL_LIAB | Subtotal | | | | |
+| 130 | SHARE_CAPITAL | Account Range | 30000 | 30999 | Ending | TOTAL_EQUITY |
+| 140 | RET_EARNINGS | Account Range | 32000 | 32999 | Ending | TOTAL_EQUITY |
+| 150 | TOTAL_EQUITY | Subtotal | | | | |
+| 160 | LIAB_EQUITY | Calculated | | | | |
 
-**Line 160 Formula:** `TOTAL_LIAB + TOTAL_EQUITY`
+Line 160 Formula: `TOTAL_LIAB + TOTAL_EQUITY`
 
-**Verification check:** `TOTAL_ASSETS` should equal `LIAB_EQUITY`
+Template placeholders: `{{BS_TOTAL_ASSETS_CY}}`, `{{BS_LIAB_EQUITY_CY}}` (should balance)
 
-### Example 2: Profit & Loss with Dimension Filters
+---
 
-A multi-branch company wants the P&L to show revenue broken down by branch:
+### Example 2: Combined BS + P&L in One Document
+
+Link two definitions to one report:
+
+| Definition Code | Prefix | Report Type |
+|---|---|---|
+| BS_2024 | BS | Balance Sheet |
+| PL_2024 | PL | Profit & Loss |
+
+Template uses both sets of placeholders:
+```
+BALANCE SHEET
+  Total Assets        {{BS_TOTAL_ASSETS_CY}}   {{BS_TOTAL_ASSETS_PY}}
+
+PROFIT & LOSS
+  Revenue             {{PL_REVENUE_CY}}         {{PL_REVENUE_PY}}
+  Net Income          {{PL_NET_INCOME_CY}}       {{PL_NET_INCOME_PY}}
+```
+
+---
+
+### Example 3: Cross-Definition Formula
+
+The P&L definition calculates retained earnings by referencing the BS definition:
+
+```
+Definition: PL
+Line Code:  RETAINED_CHECK
+Formula:    BS_TOTAL_EQUITY - PL_NET_INCOME
+```
+
+The engine automatically ensures BS lines are calculated before PL lines that reference them.
+
+---
+
+### Example 4: Previous Month Comparison
+
+Track month-over-month movement in the template:
+
+```
+               This Month        Prior Month       Change
+Cash           {{BS_CASH_CY}}   {{BS_CASH_PM}}    ...
+Revenue        {{PL_REVENUE_CY}} {{PL_REVENUE_PM}} ...
+```
+
+The `_PM` data fetches the period immediately before the selected Financial Month.
+
+---
+
+### Example 5: Branch-Specific Revenue Breakdown
+
+Leave report header Branch blank. Use per-line branch filters:
 
 | Sort | Line Code | Type | Account From | Account To | Branch Filter |
 |---|---|---|---|---|---|
-| 10 | REVENUE_HQ | Account Range | 40000 | 49999 | HQ |
-| 20 | REVENUE_RETAIL | Account Range | 40000 | 49999 | RETAIL |
-| 30 | REVENUE_WAREHOUSE | Account Range | 40000 | 49999 | WAREHOUSE |
+| 10 | REV_HQ | Account Range | 40000 | 49999 | HQ |
+| 20 | REV_RETAIL | Account Range | 40000 | 49999 | RETAIL |
+| 30 | REV_WAREHOUSE | Account Range | 40000 | 49999 | WAREHOUSE |
 | 40 | TOTAL_REVENUE | Calculated | | | |
 
-**Line 40 Formula:** `REVENUE_HQ + REVENUE_RETAIL + REVENUE_WAREHOUSE`
-
-> **Note:** The report header must have Branch and Organization left **blank** so all branch data is fetched.
-
-### Example 3: Using Hidden Lines and Percentages
-
-Sometimes you need intermediate calculations that shouldn't appear in the report:
-
-| Sort | Line Code | Type | Formula | Visible |
-|---|---|---|---|---|
-| 10 | REVENUE | Account Range | | Yes |
-| 20 | COGS | Account Range | | Yes |
-| 25 | _GROSS_AMT | Calculated | REVENUE - COGS | **No** |
-| 30 | GROSS_MARGIN | Calculated | _GROSS_AMT / REVENUE * 100 | Yes |
-
-Line `_GROSS_AMT` is calculated and available for formulas, but its placeholder resolves to empty in the Word template. Only `GROSS_MARGIN` (the percentage) appears.
-
-### Example 4: Using Copy Definition for Variants
-
-1. Create a consolidated Balance Sheet definition `BS_CONSOL`
-2. Use **Copy Definition** to create `BS_CONSOL_COPY`
-3. Rename to `BS_HQ` and add Branch Filters to each Account Range line for the HQ branch
-4. Now you have both a consolidated and branch-specific version sharing the same structure
+Formula for line 40: `REV_HQ + REV_RETAIL + REV_WAREHOUSE`
 
 ---
 
-## 16. Troubleshooting
+## 18. Troubleshooting
 
 ### Common Issues
 
 | Problem | Cause | Solution |
 |---|---|---|
-| Placeholder shows `{{CASH_CY}}` in output | Line Code doesn't match | Check Line Code matches exactly (case-insensitive) |
-| Value shows `0` or `-` unexpectedly | Account range doesn't match any accounts | Verify AccountFrom/AccountTo match your chart of accounts |
-| Subtotal shows `0` | Child lines missing ParentLineCode | Set the Parent Line Code on each child line |
-| Formula shows `0` | Referenced Line Code not yet calculated | Ensure referenced lines have a LOWER Sort Order |
-| Detect Columns fails | API credentials not configured | Set up Tenant Credentials first |
-| All values are `0` | API returns no data | Check GI name, period, and that the GI has data in Acumatica |
-| Negative where positive expected | Credit-normal account sign | The engine auto-flips L/I/Q accounts. Use Flip Sign for manual override. |
-| Per-line branch filter returns `0` | Report header scoped to different branch | Leave report header branch blank when using per-line filters |
-| Generate button disabled | Another report is In Progress | Wait for it to complete, or use Reset Status on the stuck report |
-| Report stuck In Progress | Server restart or timeout | Use **Reset Status** to recover the report to Pending |
-| "Template contains X placeholders" error | Too many placeholders | Maximum is 1,000. Simplify or split into multiple reports. |
-| "Report generation timed out" | Very large dataset or slow API | Check template complexity, try during off-hours |
-| Screen doesn't show new fields | Old ASPX cached | Recycle app pool or re-publish the customization |
+| Placeholder shows `{{BS_CASH_CY}}` literally | Line Code or prefix mismatch | Check Definition Prefix and Line Code match exactly |
+| Value shows `0` or `−` unexpectedly | Account range doesn't match chart of accounts | Verify AccountFrom/AccountTo |
+| Subtotal shows `0` | Children missing Parent Line Code | Set Parent Line Code on each child |
+| Formula shows `0` | Referenced line not yet calculated | Lower the Sort Order of referenced lines |
+| Cross-definition formula returns `0` | Wrong prefix in formula | Use `PREFIX_LINECODE` syntax exactly as defined |
+| Detect Columns fails | Credentials not configured | Set up Tenant Credentials first |
+| All values are `0` | API returns no data | Check GI name, period, and that GI has data |
+| Generate button disabled | Another report is In Progress | Wait or use Reset Status on the stuck report |
+| Report stuck In Progress | Server restart or timeout | Use **Reset Status** |
+| Previous Month values all `0` | `_PM` placeholders in template but wrong period | Check Financial Month — PM is the month before |
+| Too many placeholders error | Over 1,000 placeholders | Split into multiple reports |
 
-### Sign Normalization
-
-The engine automatically normalizes signs based on account type:
+### Sign Normalisation
 
 | Account Type | GL Natural Sign | Engine Treatment |
 |---|---|---|
-| Asset (A) | Debit (positive) | Kept as-is |
-| Expense (E) | Debit (positive) | Kept as-is |
+| Asset (A) | Debit positive | Kept as-is |
+| Expense (E) | Debit positive | Kept as-is |
 | Liability (L) | Credit (negative in GL) | Flipped to positive |
 | Income (I) | Credit (negative in GL) | Flipped to positive |
 | Equity (Q) | Credit (negative in GL) | Flipped to positive |
 
-The **Sign Rule** on the line item is an additional override applied AFTER auto-normalization:
-- **As-Is**: No additional change
-- **Flip Sign**: Multiplies by -1 (use when you need to subtract in a subtotal context)
+The **Sign Rule** on the line item is an additional override applied AFTER auto-normalisation.
 
 ### Checking Trace Logs
 
-The module writes detailed trace information during generation. Check the **Acumatica Trace** (System > Management > Trace) for:
-
-- `ReportCalculationEngine: Processing X line items for DefinitionID Y`
-- `[0010] CASH               CY=    50,000  PY=    45,000`
-- `Account range 10100:10199 matched 5 accounts → 50,000`
-- `Account range 10100:10199 [filtered] matched 2 detail rows → 25,000` (when filters are active)
-- Filter values and sample data rows when zero rows match (helps debug dimension filter issues)
-- Placeholder counts by type (regular, exact range, wildcard range)
-- Total generation time in milliseconds
+Check **System > Management > Trace** for:
+- `Multi-definition report: 2 definition(s) linked — prefixes: [BS, PL]`
+- `ReportCalculationEngine: 45 total line items loaded`
+- `API fetch flags — needsDetail=False, needsCumulative=True, needsPM=False`
+- `8 API calls completed (skipped: cumulative=False, PM=True)`
+- `ReportCalculationEngine produced 90 placeholders`
+- `Total report generation completed in 12,450 ms`
 - Authentication and API call status
+- Filter values and sample rows when dimension filter returns 0
 
 ---
 
-## 17. Technical Reference
+## 19. Technical Reference
 
 ### Database Tables
 
 | Table | Purpose |
 |---|---|
-| `FLRTFinancialReport` | Main report records (template, year, period, branch, definition link, status, file IDs) |
-| `FLRTReportDefinition` | Report definition header (GI name, column mapping, rounding, report type) |
-| `FLRTReportLineItem` | Line items within a definition (account ranges, formulas, dimension filters, visibility) |
+| `FLRTFinancialReport` | Main report records (template, year, period, branch, status, file IDs) |
+| `FLRTReportDefinitionLink` | Links one or more definitions to a report (with DisplayOrder) |
+| `FLRTReportDefinition` | Definition header (prefix, GI name, column mapping, rounding, report type) |
+| `FLRTReportLineItem` | Line items within a definition (account ranges, formulas, dimension filters) |
 | `FLRTTenantCredentials` | API credentials per tenant/company (RSA-encrypted sensitive fields) |
 
 ### Screen IDs
 
 | Screen ID | Name | Purpose |
 |---|---|---|
-| FR101000 | Financial Report | Main generation screen (Generate, Download, Reset Status) |
-| FR101002 | Report Definition | Definition & line item configuration (Detect Columns, Copy Definition) |
+| FR101000 | Financial Report | Main generation screen |
+| FR101002 | Report Definition | Definition & line item configuration |
 
 ### Report Status Lifecycle
 
-| Status Constant | Display Name | Description |
+| Status | Display | Description |
 |---|---|---|
-| `File not Generated` | Pending | Initial state, report can be edited and generated |
-| `File Generation In Progress` | In Progress | Background generation running (all buttons disabled system-wide) |
-| `Ready to Download` | Ready to Download | Generation succeeded, file available for download |
+| `File not Generated` | Pending | Initial state — can be edited and generated |
+| `File Generation In Progress` | In Progress | Background generation running |
+| `Ready to Download` | Ready | Generation succeeded, file available |
 | `Failed to Generate File` | Failed | Error occurred during generation |
 
-### GI Column Name Derivation (OData)
+### Placeholder Format Summary
 
-When the module fetches data from a GI via OData, column names are derived as:
-- If the GI column has a **Caption**: `Caption.Replace(" ", "")` (spaces stripped)
-- If no Caption but has a **Field**: `ObjectName_FieldName`
-- Formula columns without captions are skipped
+| Mode | CY | PY | PM |
+|---|---|---|---|
+| Definition | `{{PREFIX_LINECODE_CY}}` | `{{PREFIX_LINECODE_PY}}` | `{{PREFIX_LINECODE_PM}}` |
+| Legacy | `{{ACCOUNT_CY}}` | `{{ACCOUNT_PY}}` | — |
+| Year constants | `{{CY}}` | `{{PY}}` | — |
 
 ### Calculation Engine Processing Order
 
-1. Lines are loaded ordered by `SortOrder ASC`
-2. Heading lines are skipped (no calculation)
-3. Account Range lines are processed first (they read GL data)
-4. Subtotal lines sum their children (children must be processed earlier)
-5. Calculated lines evaluate their formula (referenced lines must be processed earlier)
-6. Values are stored for both CY and PY in separate dictionaries
-7. After all lines are processed, the placeholder map is built
-8. Non-visible lines and Heading lines get empty string placeholders
-9. Rounding is applied during placeholder formatting
+1. All line items across all linked definitions are loaded
+2. A dependency graph is built (cross-definition references detected)
+3. Topological sort (Kahn's algorithm) determines calculation order
+4. Heading lines are skipped
+5. Account Range lines sum GL data (with sign normalisation)
+6. Subtotal lines sum their children (children always processed first due to sort)
+7. Calculated lines evaluate formulas (dependencies always processed first)
+8. Values stored for CY, PY, and PM separately
+9. Non-visible lines get empty-string placeholders
+10. Rounding applied during placeholder formatting
 
-### Account Code Comparison
+### Conditional API Calls
 
-The engine uses a smart alphanumeric comparison for account ranges:
-- Segmented codes (containing `-`) are compared segment by segment
-- Numeric segments are compared numerically (so `2` < `10`)
-- Non-segmented codes use character-by-character comparison with numeric grouping
-- Comparison is case-insensitive
+The engine pre-scans the report before making API calls:
 
-### Formula Syntax
-
-```
-OPERAND: LineCode | NumericLiteral
-OPERATOR: + | - | * | /
-EXPRESSION: OPERAND (OPERATOR OPERAND)*
-GROUPING: ( EXPRESSION )
-UNARY: -OPERAND
-
-Examples:
-  REVENUE - EXPENSES
-  (REVENUE - COGS) / REVENUE * 100
-  TOTAL_LIAB + TOTAL_EQUITY
-  GROSS_PROFIT - OPEX - FINANCE_COSTS
-  -ADJUSTMENTS + NET_INCOME
-```
+| Condition | API calls skipped |
+|---|---|
+| No Debit/Credit/Movement balance types | Cumulative range calls (CY and PY) skipped |
+| No `_PM` placeholders in template | Previous month call skipped |
+| No dimension filters on any line | Detail rows not fetched (memory saving) |
 
 ### API Data Flow
 
 ```
-1. ReportGenerationService reads FLRTFinancialReport record
-2. If DefinitionID is set, loads FLRTReportDefinition
-3. Creates GIColumnMapping from definition (or uses defaults)
-4. Creates RoundingSettings from definition (or uses defaults: Units, 0 decimals)
-5. Creates FinancialDataService with the column mapping
-6. Six parallel API calls to the GI OData endpoint:
+1. Read FLRTFinancialReport + linked FLRTReportDefinitionLinks
+2. Pre-scan line items: determine needsCumulative, needsPM, needsDetail
+3. Create FinancialDataService with GIColumnMapping
+4. Parallel API calls (conditionally):
    a. Current year data (selected period)
    b. Prior year data (same month, prior year)
-   c. January beginning balance - prior year
-   d. January beginning balance - current year
-   e. Cumulative CY data (Jan to selected month)
-   f. Cumulative PY data (Jan to Dec prior year)
-7. Placeholders are categorized: wildcard range, exact range, regular
-8. If DefinitionID is set:
-   - ReportCalculationEngine processes all line items
-   - Engine placeholders (LINECODE_CY/PY) are added first (highest priority)
-9. Legacy placeholders fill remaining gaps:
-   - Regular placeholders processed
-   - Exact range placeholders processed
-   - Wildcard range placeholders processed
-10. Year constants (CY, PY) are added
-11. WordTemplateService populates the template
-12. Generated file saved to Acumatica
-13. Temporary files cleaned up, credential cache cleared
+   c. January beginning balance — current year
+   d. January beginning balance — prior year
+   e. Cumulative CY (Jan → selected month)    [if needsCumulative]
+   f. Cumulative PY (Jan → Dec prior year)    [if needsCumulative]
+   g. Previous month data                      [if needsPM]
+5. ReportCalculationEngine.CalculateAll() across all definitions
+6. Legacy placeholder processing (fills remaining gaps)
+7. Year constants injected
+8. WordTemplateService fills the .docx
+9. File saved to Acumatica, temp files cleaned up
 ```
 
 ### Error Messages Reference
 
 | Message | Cause |
 |---|---|
-| `Please select a template to generate the report.` | No record selected via checkbox |
-| `The selected template does not have any attached files.` | No file attached or filename missing `FRTemplate` |
-| `A report generation process is already running for this template.` | Another report is In Progress |
+| `Please select a template to generate the report.` | No record selected |
+| `The selected template does not have any attached files.` | No file or filename missing `FRTemplate` |
+| `A report generation process is already running.` | Another report In Progress |
 | `Failed to authenticate. Please check credentials.` | Invalid API credentials |
-| `Current Year is not specified for the selected report.` | Missing Current Year field |
-| `No generated file is available for download.` | Report not yet generated or generation failed |
-| `No API credentials found for company` | No tenant credentials for the Company Number |
-| `Tenant mapping not found.` | Company Number doesn't match any tenant |
-| `Template contains X placeholders. Maximum allowed is Y.` | Too many placeholders (limit: 1,000) |
-| `Report generation timed out after X minutes.` | Generation exceeded 15-minute timeout |
-| `Definition Code must be unique.` | Duplicate Definition Code on save |
+| `Current Year is not specified.` | Missing Current Year field |
+| `No generated file is available for download.` | Not yet generated or generation failed |
+| `No API credentials found for company X.` | No tenant credentials for this Company Number |
+| `Definition Prefix is required.` | Prefix field empty on definition |
+| `Definition Prefix must be alphanumeric only.` | Special characters in prefix |
+| `Definition Prefix must be unique.` | Another definition already uses this prefix |
+| `Template contains X placeholders. Maximum is 1,000.` | Too many placeholders |
+| `Report generation timed out after 15 minutes.` | Exceeded timeout |
+| `Definition Code must be unique.` | Duplicate Definition Code |
 | `Line Code must be unique within the same definition.` | Duplicate Line Code in same definition |
-| `Account From is required for Account Range line types.` | Missing Account From on Account Range line |
-| `Formula is required for Calculated line types.` | Missing Formula on Calculated line |
-| `Generic Inquiry Name is required to detect columns.` | Detect Columns clicked without GI Name |
-| `No columns were detected from the specified Generic Inquiry.` | GI returned no data or doesn't exist |
 
-### Customization Package
+### Customization Deployment
 
-The module is deployed as an Acumatica Customization Package. To deploy to a new instance:
-
-1. Export the customization package from the source instance
-2. Import into the target instance via the Customization Projects screen
+1. Export the customization package from source instance
+2. Import into the target instance via Customization Projects
 3. Publish the customization
-4. Run any required SQL scripts to create/alter tables
-5. Configure API credentials for the new tenant
+4. Run SQL scripts from the `/SQL/` folder in order (`01_`, `02_`, `03_`, `04_`, `05_`, `06_`)
+5. Configure API credentials for the tenant
 6. Create or import Report Definitions
 
 ---
 
-*Generated for FinancialReport Module v2.0 — March 2026*
+*Financial Report Module v2.1 — March 2026*

@@ -3,7 +3,7 @@
 
 ---
 
-**Version:** 2.0
+**Version:** 2.1
 **Last Updated:** March 2026
 **For:** Acumatica ERP Users
 
@@ -17,16 +17,17 @@
 4. [Creating a Report Definition](#4-creating-a-report-definition)
 5. [Configuring Line Items](#5-configuring-line-items)
 6. [The Calculation Engine](#6-the-calculation-engine)
-7. [Creating a Word Template](#7-creating-a-word-template)
-8. [Generating a Report](#8-generating-a-report)
-9. [Report Status & Workflow](#9-report-status--workflow)
-10. [Worked Examples](#10-worked-examples)
-11. [Troubleshooting Guide](#11-troubleshooting-guide)
-12. [Best Practices & Tips](#12-best-practices--tips)
-13. [Appendix A: Legacy Placeholder Reference](#13-appendix-a-legacy-placeholder-reference)
-14. [Appendix B: Error Message Reference](#14-appendix-b-error-message-reference)
-15. [Appendix C: Field Reference](#15-appendix-c-field-reference)
-16. [Appendix D: Glossary](#16-appendix-d-glossary)
+7. [Multi-Definition Reports](#7-multi-definition-reports)
+8. [Creating a Word Template](#8-creating-a-word-template)
+9. [Generating a Report](#9-generating-a-report)
+10. [Report Status & Workflow](#10-report-status--workflow)
+11. [Worked Examples](#11-worked-examples)
+12. [Troubleshooting Guide](#12-troubleshooting-guide)
+13. [Best Practices & Tips](#13-best-practices--tips)
+14. [Appendix A: Legacy Placeholder Reference](#14-appendix-a-legacy-placeholder-reference)
+15. [Appendix B: Error Message Reference](#15-appendix-b-error-message-reference)
+16. [Appendix C: Field Reference](#16-appendix-c-field-reference)
+17. [Appendix D: Glossary](#17-appendix-d-glossary)
 
 ---
 
@@ -64,6 +65,9 @@ Report Definition.
 | **Year-over-Year** | Every line produces both `{{CODE_CY}}` and `{{CODE_PY}}` automatically |
 | **Detect Columns** | Auto-map GI column names to definition fields with one click |
 | **Copy Definition** | Duplicate an existing definition with all line items to create variants |
+| **Multi-Definition Reports** | Attach multiple Report Definitions (e.g. Balance Sheet + P&L + Cash Flow) to a single report record. Each definition has its own **Prefix** (e.g. `BS`, `PL`) so placeholders are unambiguous |
+| **Previous Month (`_PM`)** | Monthly comparison placeholders — `{{CODE_PM}}` gives the ending balance for the period immediately before the selected month, enabling month-over-month reporting |
+| **Cross-Definition Formulas** | A formula in one definition can reference a line from another definition using `PREFIX_LINECODE` syntax |
 | **Parallel Data Fetching** | 6 concurrent API calls for CY, PY, beginning balances, and cumulative data |
 | **Timeout Protection** | 15-minute automatic timeout prevents stuck reports |
 | **Reset Status** | Recover stuck or failed reports back to Pending |
@@ -92,8 +96,8 @@ Report Definition.
 
 | Screen | ID | Purpose |
 |---|---|---|
-| **Financial Report** | FR101000 | Create reports, upload templates, generate, download, reset status |
-| **Report Definition** | FR101002 | Define report structure, line items, GI mapping, rounding |
+| **Financial Report** | FR101000 | Create reports, upload templates, link definitions, generate, download, reset status |
+| **Report Definition** | FR101002 | Define report structure, line items, Definition Prefix, GI mapping, rounding |
 | **Tenant Credentials** | — | Configure API credentials (admin only) |
 
 ### 2.2 Recommended Workflow
@@ -110,14 +114,15 @@ Report Designer: Create Report Definition in FR101002
                           │
                           ▼
 Report Designer: Create Word Template (.docx)
-                 ├── Use {{LINECODE_CY}} / {{LINECODE_PY}} placeholders
+                 ├── Single-def: {{LINECODE_CY}} / {{LINECODE_PY}} / {{LINECODE_PM}}
+                 ├── Multi-def:  {{PREFIX_LINECODE_CY}} / {{PREFIX_LINECODE_PY}} / {{PREFIX_LINECODE_PM}}
                  ├── Include {{CY}} / {{PY}} for year labels
                  └── Filename must contain "FRTemplate"
                           │
                           ▼
 Report User:     Create Report Record in FR101000
                  ├── Set Company Number, Year, Month, Branch/Org/Ledger
-                 ├── Link the Report Definition
+                 ├── Open "REPORT DEFINITIONS" tab → add one or more definitions
                  ├── Upload the Word template
                  └── Click Generate Report → Download Report
 ```
@@ -170,9 +175,22 @@ Navigate to **FR101002 - Report Definition**.
 | Field | Description | Example |
 |---|---|---|
 | **Definition Code** | Unique identifier (immutable after first save) | `BS_2024` |
+| **Definition Prefix** | Short prefix used in multi-definition placeholder names (2–10 alphanumeric chars, **globally unique across all definitions**). Once saved and linked to reports, treat this as immutable — changing it would break existing templates. | `BS` |
 | **Report Type** | Balance Sheet, Profit & Loss, Cash Flow, Changes in Equity, or Custom | `Balance Sheet` |
 | **Description** | Friendly description (up to 255 characters) | `Balance Sheet FY2024` |
 | **Active** | Whether this definition can be linked to reports | Checked |
+
+> **Definition Prefix rules:** Must be 2–10 alphanumeric characters (no spaces, no special characters). Must be unique across all definitions in the system — the system validates this on save and blocks duplicates. Examples: `BS`, `PL`, `CF`, `EQ`, `NOTES`.
+
+**How Prefix affects placeholders:**
+
+| Prefix | Line Code | _CY Placeholder | _PY Placeholder | _PM Placeholder |
+|---|---|---|---|---|
+| `BS` | `CASH` | `{{BS_CASH_CY}}` | `{{BS_CASH_PY}}` | `{{BS_CASH_PM}}` |
+| `PL` | `NET_INCOME` | `{{PL_NET_INCOME_CY}}` | `{{PL_NET_INCOME_PY}}` | `{{PL_NET_INCOME_PM}}` |
+| `CF` | `OPER_CASH` | `{{CF_OPER_CASH_CY}}` | `{{CF_OPER_CASH_PY}}` | `{{CF_OPER_CASH_PM}}` |
+
+When only **one** definition is linked to a report, the prefix is still used in placeholders. This ensures templates remain consistent when adding a second definition later.
 
 ### 4.2 Data Source — GI & Column Mapping
 
@@ -249,7 +267,7 @@ To create a variant of an existing definition:
 
 ## 5. Configuring Line Items
 
-Line items are the rows of your report definition. Each line produces two Word template placeholders: `{{LINECODE_CY}}` (current year) and `{{LINECODE_PY}}` (prior year).
+Line items are the rows of your report definition. Each line produces placeholders: `{{PREFIX_LINECODE_CY}}` (current year), `{{PREFIX_LINECODE_PY}}` (prior year), and optionally `{{PREFIX_LINECODE_PM}}` (previous month — only fetched when the template contains at least one `_PM` placeholder).
 
 ### 5.1 Line Item Fields
 
@@ -435,6 +453,9 @@ The **Sign Rule** on the line item is applied *after* normalization:
 | **Debit** | Debit amount for the selected period |
 | **Credit** | Credit amount for the selected period |
 | **Movement** | Net activity: Debit minus Credit |
+| **JanuaryBeginning** | The January 1 opening balance (i.e. the very start of the financial year). Useful for Equity and Cash Flow statements that need the year-opening balance regardless of which month the report runs. Fetched from a separate API call (distinct from the period-beginning balance). |
+
+> **JanuaryBeginning vs Beginning:** `Beginning` returns the opening balance for the *selected period* (e.g. June 1st if the month is June). `JanuaryBeginning` always returns January 1st regardless of the selected month.
 
 ### 6.4 Account Code Comparison
 
@@ -464,13 +485,30 @@ Safety:
   - Division by zero → 0
 ```
 
-### 6.6 Priority: Engine vs Legacy
+### 6.6 Cross-Definition Formula References
 
-When a Report Definition is linked to a report, **both** the engine and legacy placeholder systems run. The engine's placeholders take priority. Legacy placeholders fill in anything not covered by the definition.
+When a report has **multiple definitions** linked (see Section 7), a formula in one definition can reference a line from another definition using the format `PREFIX_LINECODE`:
 
-This means you can use a definition for the main financial statement lines (`{{CASH_CY}}`, `{{TOTAL_ASSETS_CY}}`) while still referencing individual accounts for notes or schedules (`{{A10100_CY}}`).
+```
+# In the PL definition (prefix PL), you can reference a BS line:
+NET_ASSETS_CHANGE = BS_TOTAL_ASSETS - BS_TOTAL_LIAB
 
-### 6.7 Trace Logging
+# In BS definition, referencing its own lines (no prefix needed within same def):
+LIAB_EQUITY = TOTAL_LIAB + TOTAL_EQUITY
+
+# Explicit own-prefix also works:
+LIAB_EQUITY = BS_TOTAL_LIAB + BS_TOTAL_EQUITY
+```
+
+The engine resolves cross-definition references after all definitions are processed in Display Order.
+
+### 6.7 Priority: Engine vs Legacy
+
+When definitions are linked to a report, **both** the engine and legacy placeholder systems run. The engine's placeholders take priority. Legacy placeholders fill in anything not covered by any definition.
+
+This means you can use definitions for the main financial statement lines (`{{BS_CASH_CY}}`, `{{BS_TOTAL_ASSETS_CY}}`) while still referencing individual accounts for notes or schedules (`{{A10100_CY}}`).
+
+### 6.8 Trace Logging
 
 The engine writes detailed trace information during processing:
 
@@ -492,7 +530,105 @@ Check traces at **System > Management > Trace** in Acumatica.
 
 ---
 
-## 7. Creating a Word Template
+## 7. Multi-Definition Reports
+
+A **Multi-Definition Report** combines multiple Report Definitions — for example, a Balance Sheet, a Profit & Loss, and a Cash Flow statement — into a single `.docx` output. Each definition has a short **Prefix** that makes its placeholders unique across the combined template.
+
+### 7.1 Why Use Multi-Definition?
+
+| Scenario | Benefit |
+|---|---|
+| Annual financial pack (BS + P&L + CF in one Word file) | One click generates the entire pack |
+| Monthly management report with multiple statements | Single template, single generate action |
+| Cross-statement formulas (e.g. P&L net income feeds into Equity) | Formula references work across definitions |
+
+### 7.2 Setting Up — FR101000 Report Definitions Tab
+
+In **FR101000 - Financial Report**, the main record has a **REPORT DEFINITIONS** tab (below the header fields).
+
+**To add definitions:**
+
+1. Open or create a report record in FR101000
+2. Click the **REPORT DEFINITIONS** tab
+3. Click **Add Row** (or the Insert button)
+4. Select a **Report Definition** from the dropdown (active definitions only)
+5. Set the **Display Order** (integer, lower = processed first; typically: BS=10, PL=20, CF=30)
+6. Repeat for each definition to include
+7. Click **Save**
+
+| Column | Description |
+|---|---|
+| **Report Definition** | Selector — lists all active definitions |
+| **Description** | Auto-populated from the selected definition |
+| **Display Order** | Controls processing sequence; also order in which definitions contribute to cross-definition formula resolution |
+
+> You can link **any number** of definitions. There is no limit. Each definition is processed independently, then all placeholder maps are merged before the template is filled.
+
+### 7.3 Definition Prefix — Critical Concept
+
+The **Definition Prefix** (set on FR101002) determines the placeholder name in the template.
+
+```
+Prefix: BS  |  Line Code: CASH        →  {{BS_CASH_CY}}, {{BS_CASH_PY}}, {{BS_CASH_PM}}
+Prefix: PL  |  Line Code: NET_INCOME  →  {{PL_NET_INCOME_CY}}, {{PL_NET_INCOME_PY}}
+Prefix: CF  |  Line Code: OPER_CASH   →  {{CF_OPER_CASH_CY}}
+```
+
+**Rules:**
+- Prefix is 2–10 alphanumeric characters (e.g. `BS`, `PL`, `CF`, `NOTES`)
+- Prefix must be globally unique across all definitions
+- Prefix is set once on FR101002 and should not be changed after templates are built
+- All three suffixes (`_CY`, `_PY`, `_PM`) are always available for every line
+
+### 7.4 Previous Month (`_PM`) Placeholders
+
+The `_PM` suffix returns the **ending balance for the period immediately preceding** the selected Financial Month.
+
+| Selected Month | `_PM` Returns |
+|---|---|
+| February (02) | January (01) ending balance |
+| July (07) | June (06) ending balance |
+| January (01) | December (12) of the **prior year** |
+
+**Performance note:** `_PM` data is fetched only when the template actually contains at least one `_PM` placeholder. The engine pre-scans the template before fetching — if there are no `_PM` placeholders, the additional API call is skipped entirely.
+
+**Use case:** Month-over-month comparative columns in management reports:
+
+```
+                            {{CY}}-{{MONTH}}    {{CY}}-{{PREV_MONTH}}
+Cash and Equivalents        {{BS_CASH_CY}}       {{BS_CASH_PM}}
+Accounts Receivable         {{BS_AR_CY}}         {{BS_AR_PM}}
+Total Assets                {{BS_TOTAL_ASSETS_CY}} {{BS_TOTAL_ASSETS_PM}}
+```
+
+### 7.5 Cross-Definition Formula Example
+
+A Cash Flow definition (prefix `CF`) can reference Balance Sheet lines (prefix `BS`):
+
+```
+# In CF definition — formula line NET_ASSETS_CHANGE:
+Formula: BS_TOTAL_ASSETS - BS_PREV_TOTAL_ASSETS
+
+# Or reference P&L net income in the equity reconciliation:
+Formula: PL_NET_INCOME + OPENING_EQUITY
+```
+
+The engine resolves these after all definitions have been calculated, in Display Order.
+
+### 7.6 Common Multi-Definition Setup
+
+| Definition | Prefix | Report Type | Display Order |
+|---|---|---|---|
+| Balance Sheet | `BS` | Balance Sheet | 10 |
+| Profit & Loss | `PL` | Profit & Loss | 20 |
+| Cash Flow | `CF` | Cash Flow | 30 |
+| Changes in Equity | `EQ` | Changes in Equity | 40 |
+
+Each definition is created separately in FR101002, then all four are linked to the same report record in FR101000's Report Definitions tab.
+
+---
+
+## 8. Creating a Word Template
 
 The Word template is a standard `.docx` file with placeholders that the engine replaces with calculated values.
 
@@ -504,90 +640,115 @@ The template filename **must** contain `FRTemplate` (case-sensitive).
 - ✓ `PL_FRTemplate.docx`
 - ✗ `BalanceSheet_Template_2024.docx`
 
-### 7.2 Placeholder Format
+### 8.2 Placeholder Format
 
 Placeholders use double curly braces: `{{PLACEHOLDER_NAME}}`
 
-### 7.3 Definition-Mode Placeholders
+### 8.3 Definition-Mode Placeholders
 
-When a Report Definition is linked, use Line Codes from your definition:
+When Report Definitions are linked, placeholders combine the **Definition Prefix** + **Line Code** + **Year/Period Suffix**:
 
 | Placeholder | Description |
 |---|---|
-| `{{CASH_CY}}` | Cash line, Current Year |
-| `{{CASH_PY}}` | Cash line, Prior Year |
-| `{{TOTAL_ASSETS_CY}}` | Total Assets, Current Year |
-| `{{NET_INCOME_PY}}` | Net Income, Prior Year |
+| `{{BS_CASH_CY}}` | Balance Sheet — Cash line, Current Year |
+| `{{BS_CASH_PY}}` | Balance Sheet — Cash line, Prior Year |
+| `{{BS_CASH_PM}}` | Balance Sheet — Cash line, Previous Month |
+| `{{BS_TOTAL_ASSETS_CY}}` | Balance Sheet — Total Assets, Current Year |
+| `{{PL_NET_INCOME_CY}}` | P&L — Net Income, Current Year |
+| `{{PL_NET_INCOME_PY}}` | P&L — Net Income, Prior Year |
+| `{{CF_OPER_CASH_CY}}` | Cash Flow — Operating Cash, Current Year |
 | `{{CY}}` | Current year number (e.g. `2024`) |
 | `{{PY}}` | Prior year number (e.g. `2023`) |
 
-Every line in your definition automatically produces both `_CY` and `_PY` placeholders.
+Every line in every definition automatically produces `_CY`, `_PY`, and `_PM` placeholders.
 
-### 7.4 Placeholder Rules
+**Format:** `{{PREFIX_LINECODE_SUFFIX}}` where SUFFIX is `CY`, `PY`, or `PM`.
 
-- Always include year suffix: `_CY` or `_PY`
-- Matching is case-insensitive
+### 8.4 Placeholder Rules
+
+- Always include period suffix: `_CY`, `_PY`, or `_PM`
+- Matching is **case-insensitive** — `{{bs_cash_cy}}` works the same as `{{BS_CASH_CY}}`
 - Do not include spaces inside braces
 - Do not split a placeholder across multiple lines in Word
 - Type placeholders directly — do NOT copy/paste from other sources (hidden formatting characters can break matching)
 - Avoid mixed formatting (bold/italic) within a single placeholder
 - Maximum **1,000 placeholders** per template
+- `_PM` placeholders trigger an extra API call — only include them when you actually need previous-month data
 
-### 7.5 Example Template: Balance Sheet
+### 8.5 Example Template: Balance Sheet (Single Definition, Prefix = BS)
 
 ```
                         ABC COMPANY
                         BALANCE SHEET
                     As at December 31, {{CY}}
 
-                                            {{CY}}              {{PY}}
+                                            {{CY}}                  {{PY}}
 ASSETS
 Current Assets
-  Cash and Cash Equivalents             {{CASH_CY}}         {{CASH_PY}}
-  Accounts Receivable                   {{AR_CY}}           {{AR_PY}}
-  Inventory                             {{INV_CY}}          {{INV_PY}}
-Total Current Assets                    {{CURR_ASSETS_CY}}  {{CURR_ASSETS_PY}}
+  Cash and Cash Equivalents             {{BS_CASH_CY}}          {{BS_CASH_PY}}
+  Accounts Receivable                   {{BS_AR_CY}}            {{BS_AR_PY}}
+  Inventory                             {{BS_INV_CY}}           {{BS_INV_PY}}
+Total Current Assets                    {{BS_CURR_ASSETS_CY}}   {{BS_CURR_ASSETS_PY}}
 
 Non-Current Assets
-  Property, Plant & Equipment           {{PPE_CY}}          {{PPE_PY}}
-  Accumulated Depreciation              {{ACCUM_DEPR_CY}}   {{ACCUM_DEPR_PY}}
-Total Non-Current Assets                {{NONCURR_ASSETS_CY}} {{NONCURR_ASSETS_PY}}
+  Property, Plant & Equipment           {{BS_PPE_CY}}           {{BS_PPE_PY}}
+  Accumulated Depreciation              {{BS_ACCUM_DEPR_CY}}    {{BS_ACCUM_DEPR_PY}}
+Total Non-Current Assets                {{BS_NONCURR_ASSETS_CY}} {{BS_NONCURR_ASSETS_PY}}
 
-TOTAL ASSETS                            {{TOTAL_ASSETS_CY}} {{TOTAL_ASSETS_PY}}
+TOTAL ASSETS                            {{BS_TOTAL_ASSETS_CY}}  {{BS_TOTAL_ASSETS_PY}}
 
 LIABILITIES
 Current Liabilities
-  Accounts Payable                      {{AP_CY}}           {{AP_PY}}
-  Accrued Expenses                      {{ACCRUED_CY}}      {{ACCRUED_PY}}
-Total Current Liabilities               {{CURR_LIAB_CY}}    {{CURR_LIAB_PY}}
+  Accounts Payable                      {{BS_AP_CY}}            {{BS_AP_PY}}
+  Accrued Expenses                      {{BS_ACCRUED_CY}}       {{BS_ACCRUED_PY}}
+Total Current Liabilities               {{BS_CURR_LIAB_CY}}     {{BS_CURR_LIAB_PY}}
 
 Non-Current Liabilities
-  Long-Term Loans                       {{LOANS_CY}}        {{LOANS_PY}}
-Total Non-Current Liabilities           {{NONCURR_LIAB_CY}} {{NONCURR_LIAB_PY}}
+  Long-Term Loans                       {{BS_LOANS_CY}}         {{BS_LOANS_PY}}
+Total Non-Current Liabilities           {{BS_NONCURR_LIAB_CY}}  {{BS_NONCURR_LIAB_PY}}
 
-TOTAL LIABILITIES                       {{TOTAL_LIAB_CY}}   {{TOTAL_LIAB_PY}}
+TOTAL LIABILITIES                       {{BS_TOTAL_LIAB_CY}}    {{BS_TOTAL_LIAB_PY}}
 
 EQUITY
-  Share Capital                         {{SHARE_CAP_CY}}    {{SHARE_CAP_PY}}
-  Retained Earnings                     {{RET_EARN_CY}}     {{RET_EARN_PY}}
-TOTAL EQUITY                            {{TOTAL_EQUITY_CY}} {{TOTAL_EQUITY_PY}}
+  Share Capital                         {{BS_SHARE_CAP_CY}}     {{BS_SHARE_CAP_PY}}
+  Retained Earnings                     {{BS_RET_EARN_CY}}      {{BS_RET_EARN_PY}}
+TOTAL EQUITY                            {{BS_TOTAL_EQUITY_CY}}  {{BS_TOTAL_EQUITY_PY}}
 
-TOTAL LIABILITIES & EQUITY              {{LIAB_EQUITY_CY}}  {{LIAB_EQUITY_PY}}
+TOTAL LIABILITIES & EQUITY              {{BS_LIAB_EQUITY_CY}}   {{BS_LIAB_EQUITY_PY}}
 ```
 
-### 7.6 Template Design Tips
+### 8.6 Example Template: Monthly Management Report (Month-over-Month with _PM)
+
+```
+                        ABC COMPANY
+                   MANAGEMENT REPORT — {{MONTH_NAME}} {{CY}}
+
+                           This Month           Last Month
+Cash                       {{BS_CASH_CY}}       {{BS_CASH_PM}}
+Receivables                {{BS_AR_CY}}         {{BS_AR_PM}}
+TOTAL ASSETS               {{BS_TOTAL_ASSETS_CY}} {{BS_TOTAL_ASSETS_PM}}
+
+Revenue                    {{PL_REVENUE_CY}}    {{PL_REVENUE_PM}}
+Expenses                   {{PL_EXPENSES_CY}}   {{PL_EXPENSES_PM}}
+Net Income                 {{PL_NET_INCOME_CY}} {{PL_NET_INCOME_PM}}
+```
+
+This template requires two definitions linked in FR101000: `BS` (Balance Sheet) and `PL` (Profit & Loss).
+
+### 8.7 Template Design Tips
 
 - Use Word tables for clean column alignment in comparative reports
-- Add currency symbols outside the placeholder: `${{CASH_CY}}`
+- Add currency symbols outside the placeholder: `${{BS_CASH_CY}}`
 - Placeholders work in headers, footers, tables, and body text
-- Start with a small test template before building the full report
+- Start with a small test template (3-5 placeholders) before building the full report
 - Use `{{CY}}` and `{{PY}}` in column headers for dynamic year labels
+- Prefix consistency: decide your prefixes early (BS, PL, CF) and never change them after templates are deployed
 
 ---
 
-## 8. Generating a Report
+## 9. Generating a Report
 
-### 8.1 Step-by-Step
+### 9.1 Step-by-Step
 
 1. Navigate to **FR101000 - Financial Report**
 2. Create a new report record (auto-saves on insert)
@@ -602,16 +763,15 @@ TOTAL LIABILITIES & EQUITY              {{LIAB_EQUITY_CY}}  {{LIAB_EQUITY_PY}}
 | **Branch** | No | Filter data to a specific branch |
 | **Organization** | No | Filter data to a specific organization |
 | **Ledger** | No | Filter to a specific ledger (e.g. `ACTUAL`) |
-| **Report Definition** | **Recommended** | Link to a Report Definition for structured calculation |
 
-4. Upload a Word template (filename must contain `FRTemplate`)
-5. Click **Save**
-6. Check the **Select** checkbox for your report
+4. Open the **REPORT DEFINITIONS** tab → add one or more Report Definitions with Display Orders
+5. Upload a Word template (filename must contain `FRTemplate`)
+6. Click **Save**
 7. Click **Generate Report**
 8. Wait for status to change to **Ready to Download** (typically 1-5 minutes)
 9. Click **Download Report**
 
-### 8.2 What Happens During Generation
+### 9.2 What Happens During Generation
 
 ```
 Phase 1: Validation & Setup
@@ -621,24 +781,28 @@ Phase 1: Validation & Setup
 
 Phase 2: Template Analysis
   ├── Extract all placeholders from the Word template
-  └── Categorize: wildcard range, exact range, regular
+  ├── Categorize: wildcard range, exact range, regular, prefix-based
+  └── Detect: needsCumulative, needsPM, needsDetail (skips unused API calls)
 
-Phase 3: Data Fetching (6 parallel API calls)
+Phase 3: Data Fetching (up to 8 parallel API calls, skipping unused types)
   ├── Current year period data
   ├── Prior year period data
   ├── January beginning balance (current year)
   ├── January beginning balance (prior year)
-  ├── Cumulative CY data (Jan → selected month)
-  └── Cumulative PY data (Jan → Dec prior year)
+  ├── Cumulative CY data (Jan → selected month)  [only if template has cumulative placeholders]
+  ├── Cumulative PY data (Jan → Dec prior year)  [only if needed]
+  └── Previous Month data                        [only if template has _PM placeholders]
 
-Phase 4: Calculation Engine (if definition linked)
-  ├── Process all line items in SortOrder
-  ├── Account Range → sum GL data with sign normalization
-  ├── Subtotal → sum child lines
-  ├── Calculated → evaluate formulas
-  └── Build placeholder map with formatted values
+Phase 4: Calculation Engine (for each linked definition, in Display Order)
+  ├── For each definition:
+  │   ├── Process all line items in SortOrder
+  │   ├── Account Range → sum GL data with sign normalization
+  │   ├── Subtotal → sum child lines
+  │   ├── Calculated → evaluate formulas (including cross-definition references)
+  │   └── Build placeholder map: {{PREFIX_CODE_CY}}, {{PREFIX_CODE_PY}}, {{PREFIX_CODE_PM}}
+  └── Merge all definition placeholder maps
 
-Phase 5: Legacy Processing (fills gaps not covered by definition)
+Phase 5: Legacy Processing (fills gaps not covered by any definition)
   ├── Regular placeholders (e.g. {{A10100_CY}})
   ├── Exact range placeholders (e.g. {{A10100:A10199_e_CY}})
   └── Wildcard range placeholders (e.g. {{A????:B????_e_CY}})
@@ -653,15 +817,15 @@ Phase 6: Template Population & Cleanup
 
 **Engine placeholders take priority** over legacy placeholders. If both produce a value for the same key, the engine wins.
 
-### 8.3 Timeout Protection
+### 9.3 Timeout Protection
 
 Report generation has a built-in **15-minute timeout**. If exceeded, the process is automatically cancelled and the status is set to Failed.
 
 ---
 
-## 9. Report Status & Workflow
+## 10. Report Status & Workflow
 
-### 9.1 Status Values
+### 10.1 Status Values
 
 | Status | Display | Meaning |
 |---|---|---|
@@ -670,7 +834,7 @@ Report generation has a built-in **15-minute timeout**. If exceeded, the process
 | `Ready to Download` | Ready | Generation succeeded — download available |
 | `Failed to Generate File` | Failed | Error occurred |
 
-### 9.2 Status Lifecycle
+### 10.2 Status Lifecycle
 
 ```
          ┌──────────────┐
@@ -689,14 +853,14 @@ Report generation has a built-in **15-minute timeout**. If exceeded, the process
       └──────────┘  └────────┘
 ```
 
-### 9.3 System-Wide Generation Lock
+### 10.3 System-Wide Generation Lock
 
 Only **one** report can generate at a time across the entire system. While any report is In Progress:
 - All Generate and Download buttons are disabled for all users
 - All report fields become read-only
 - Other users must wait for completion
 
-### 9.4 Reset Status
+### 10.4 Reset Status
 
 Recovers a stuck or failed report:
 
@@ -711,11 +875,11 @@ Use this when:
 - A report failed and you want to retry
 - You want to clear a completed report and regenerate
 
-### 9.5 Regenerating
+### 10.5 Regenerating
 
 Clicking Generate Report on a previously completed report overwrites the previous file. Download first if you want to keep the old version. The system does not maintain version history.
 
-### 9.6 Expected Generation Times
+### 10.6 Expected Generation Times
 
 | Data Volume | Typical Time |
 |---|---|
@@ -726,9 +890,9 @@ Clicking Generate Report on a previously completed report overwrites the previou
 
 ---
 
-## 10. Worked Examples
+## 11. Worked Examples
 
-### 10.1 Balance Sheet Definition
+### 11.1 Balance Sheet Definition
 
 **Definition Code:** `BS` | **Report Type:** Balance Sheet | **Rounding:** Thousands, 0 decimals
 
@@ -755,9 +919,11 @@ Clicking Generate Report on a previously completed report overwrites the previou
 
 **Verification:** `TOTAL_ASSETS` should equal `LIAB_EQUITY`.
 
-### 10.2 P&L with Branch Dimension Filters
+**Template placeholders:** `{{BS_CASH_CY}}`, `{{BS_TOTAL_ASSETS_CY}}`, `{{BS_LIAB_EQUITY_PY}}`, etc.
 
-A multi-branch company wants revenue broken down by branch.
+### 11.2 P&L with Branch Dimension Filters
+
+A multi-branch company wants revenue broken down by branch. **Definition Prefix: `PL`**
 
 | Sort | Line Code | Type | Account From | Account To | Branch Filter | Parent |
 |---|---|---|---|---|---|---|
@@ -772,9 +938,13 @@ A multi-branch company wants revenue broken down by branch.
 - Line 40: `REV_HQ + REV_RETAIL + REV_WAREHOUSE`
 - Line 60: `TOTAL_REVENUE - COGS`
 
+**Template placeholders:** `{{PL_REV_HQ_CY}}`, `{{PL_TOTAL_REVENUE_CY}}`, `{{PL_GROSS_PROFIT_PY}}`, etc.
+
 > Leave the report header Branch and Organization **blank** so all branch data is fetched.
 
-### 10.3 Hidden Lines for Intermediate Calculations
+### 11.3 Hidden Lines for Intermediate Calculations
+
+**Definition Prefix: `PL`**
 
 | Sort | Line Code | Type | Formula | Visible |
 |---|---|---|---|---|
@@ -783,21 +953,85 @@ A multi-branch company wants revenue broken down by branch.
 | 25 | _GROSS_AMT | Calculated | REVENUE - COGS | **No** |
 | 30 | GROSS_MARGIN_PCT | Calculated | _GROSS_AMT / REVENUE * 100 | Yes |
 
-`_GROSS_AMT` is calculated and available for formulas, but its placeholder resolves to empty in the Word template. Only `GROSS_MARGIN_PCT` appears.
+`_GROSS_AMT` is calculated and available for formulas, but `{{PL__GROSS_AMT_CY}}` resolves to empty in the Word template. Only `{{PL_GROSS_MARGIN_PCT_CY}}` appears.
 
-### 10.4 Using Copy Definition for Variants
+### 11.4 Using Copy Definition for Variants
 
-1. Create a consolidated Balance Sheet definition `BS_CONSOL`
+1. Create a consolidated Balance Sheet definition `BS_CONSOL` (Prefix: `BS`)
 2. Click **Copy Definition** → creates `BS_CONSOL_COPY`
-3. Rename to `BS_HQ`
+3. Rename to `BS_HQ`, update Prefix to `BSHQ`
 4. Add Branch Filter = `HQ` to each Account Range line
 5. Now you have both consolidated and branch-specific versions sharing the same structure
+6. Link both `BS` and `BSHQ` definitions to the same report record to generate both in one file
+
+### 11.5 Full Annual Financial Pack (Multi-Definition)
+
+**Goal:** A single Word document with Balance Sheet + P&L + Cash Flow for the year.
+
+**Step 1: Create three definitions in FR101002**
+
+| Definition Code | Prefix | Report Type |
+|---|---|---|
+| `BS_FY2025` | `BS` | Balance Sheet |
+| `PL_FY2025` | `PL` | Profit & Loss |
+| `CF_FY2025` | `CF` | Cash Flow |
+
+**Step 2: Link all three in FR101000 Report Definitions tab**
+
+| Report Definition | Display Order |
+|---|---|
+| BS_FY2025 | 10 |
+| PL_FY2025 | 20 |
+| CF_FY2025 | 30 |
+
+**Step 3: Build Word template with sections**
+
+```
+======= BALANCE SHEET =======
+Total Assets          {{BS_TOTAL_ASSETS_CY}}    {{BS_TOTAL_ASSETS_PY}}
+Total Liabilities     {{BS_TOTAL_LIAB_CY}}      {{BS_TOTAL_LIAB_PY}}
+Total Equity          {{BS_TOTAL_EQUITY_CY}}    {{BS_TOTAL_EQUITY_PY}}
+
+======= PROFIT & LOSS =======
+Revenue               {{PL_REVENUE_CY}}         {{PL_REVENUE_PY}}
+Expenses              {{PL_EXPENSES_CY}}         {{PL_EXPENSES_PY}}
+Net Income            {{PL_NET_INCOME_CY}}       {{PL_NET_INCOME_PY}}
+
+======= CASH FLOW =======
+Operating Cash        {{CF_OPER_CASH_CY}}        {{CF_OPER_CASH_PY}}
+Investing Cash        {{CF_INVEST_CASH_CY}}      {{CF_INVEST_CASH_PY}}
+Net Cash Movement     {{CF_NET_CASH_CY}}         {{CF_NET_CASH_PY}}
+```
+
+**Step 4: Generate** — one click produces the complete annual pack.
+
+### 11.6 Month-over-Month Report with `_PM` Placeholders
+
+**Goal:** Monthly management report comparing current month to previous month.
+
+**Report Setup in FR101000:**
+- Financial Month: `06` (June 2025)
+- Definitions: `BS` (Balance Sheet), `PL` (P&L)
+
+**Template:**
+
+```
+                     June 2025        May 2025
+Cash                 {{BS_CASH_CY}}   {{BS_CASH_PM}}
+Receivables          {{BS_AR_CY}}     {{BS_AR_PM}}
+Total Assets         {{BS_TOTAL_ASSETS_CY}} {{BS_TOTAL_ASSETS_PM}}
+
+Revenue              {{PL_REVENUE_CY}} {{PL_REVENUE_PM}}
+Net Income           {{PL_NET_INCOME_CY}} {{PL_NET_INCOME_PM}}
+```
+
+`_PM` (Previous Month) returns May 2025 data when the selected month is June 2025. The extra API call for May data is made automatically because the template contains `_PM` placeholders.
 
 ---
 
-## 11. Troubleshooting Guide
+## 12. Troubleshooting Guide
 
-### 11.1 Engine / Definition Issues
+### 12.1 Engine / Definition Issues
 
 | Problem | Cause | Solution |
 |---|---|---|
@@ -813,7 +1047,20 @@ A multi-branch company wants revenue broken down by branch.
 | Per-line filter returns 0 | Filter value doesn't match GI data exactly | Check trace log for sample data rows; verify exact values |
 | Values not rounded | Rounding set to Units | Change Rounding Level to Thousands or Millions in the definition |
 
-### 11.2 Template / Placeholder Issues
+### 12.2 Multi-Definition Issues
+
+| Problem | Cause | Solution |
+|---|---|---|
+| Placeholder `{{BS_CASH_CY}}` not replaced | Definition with Prefix `BS` not linked to this report | Open FR101000 → REPORT DEFINITIONS tab → add the BS definition |
+| Placeholder `{{BS_CASH_CY}}` not replaced | Definition Prefix is different from `BS` | Check the Prefix field in FR101002 for that definition |
+| Two definitions clash — wrong value in template | Two definitions share the same Prefix | Prefix must be globally unique; change one definition's Prefix |
+| Cross-definition formula returns 0 | Referenced definition has higher Display Order | Lower Display Order for the definition whose lines are being referenced |
+| `_PM` placeholders all show 0 | Report Financial Month is January | PM for January = December of the *prior year*; ensure prior year data is posted |
+| `_PM` placeholder not replaced | Template has `_PM` placeholder but no `_PM` data fetched | Check that the template file is saved with the `_PM` placeholder typed correctly |
+| Report Definitions tab is empty | No definitions configured | Go to FR101000 → REPORT DEFINITIONS tab → add definitions |
+| "Duplicate prefix" error on save | Another definition has the same Prefix | Choose a unique Prefix for each definition |
+
+### 12.3 Template / Placeholder Issues
 
 | Problem | Cause | Solution |
 |---|---|---|
@@ -823,7 +1070,7 @@ A multi-branch company wants revenue broken down by branch.
 | All values are 0 | API returns no data | Check GI name, period, and that the GI has data |
 | "Template contains X placeholders" error | Too many placeholders | Maximum is 1,000. Simplify or split into multiple reports. |
 
-### 11.3 Generation Issues
+### 12.4 Generation Issues
 
 | Problem | Cause | Solution |
 |---|---|---|
@@ -834,18 +1081,20 @@ A multi-branch company wants revenue broken down by branch.
 | "No API credentials found" | Wrong Company Number | Verify Company Number matches a tenant record |
 | Generation fails immediately | Template file missing | Upload file with `FRTemplate` in the name |
 
-### 11.4 Pre-Generation Checklist
+### 12.5 Pre-Generation Checklist
 
 - ☐ Tenant Credentials configured for the Company Number
-- ☐ Report Definition is Active and has line items configured
+- ☐ All Report Definitions are Active and have line items configured
+- ☐ Each definition has a unique Definition Prefix set
 - ☐ Template Name filled in, Current Year and Financial Month set
 - ☐ Template file attached (filename contains `FRTemplate`)
-- ☐ Report Definition linked in the report record
+- ☐ Definitions linked in the Report Definitions tab (FR101000) with Display Orders set
+- ☐ Template placeholder names match `{{PREFIX_LINECODE_CY/PY/PM}}` format exactly
 - ☐ No other report shows "In Progress" status
-- ☐ Record is saved and selected (checkbox checked)
-- ☐ Financial data posted for the selected period
+- ☐ Record is saved before generating
+- ☐ Financial data posted for the selected period (and prior period for PY/PM)
 
-### 11.5 Using Trace Logs
+### 12.6 Using Trace Logs
 
 Check **System > Management > Trace** for:
 - `ReportCalculationEngine: Processing X line items for DefinitionID Y` — confirms engine ran
@@ -859,9 +1108,9 @@ Check **System > Management > Trace** for:
 
 ---
 
-## 12. Best Practices & Tips
+## 13. Best Practices & Tips
 
-### 12.1 Definition Design
+### 13.1 Definition Design
 
 - Use meaningful Line Codes: `CASH`, `TOTAL_ASSETS`, `NET_INCOME` — not `LINE1`, `LINE2`
 - Set Sort Order with gaps (10, 20, 30...) to allow inserting lines later
@@ -870,30 +1119,40 @@ Check **System > Management > Trace** for:
 - Use **Copy Definition** to create variants instead of rebuilding from scratch
 - Test with a small definition (3-5 lines) before building the full statement
 
-### 12.2 Template Design
+### 13.2 Multi-Definition & Prefix Best Practices
+
+- **Choose prefixes early** and lock them in before building templates — changing a prefix breaks all existing Word files
+- **Keep prefixes short and meaningful:** `BS` (Balance Sheet), `PL` (Profit & Loss), `CF` (Cash Flow), `EQ` (Equity), `NOTES` (Disclosure notes)
+- **Never share prefixes** across definitions — the system prevents this with validation, but plan naming upfront
+- **Use Display Order gaps** (10, 20, 30) to allow inserting definitions later without renumbering
+- **Cross-definition formulas:** Ensure the referenced definition's Display Order is lower than the referencing one
+- **`_PM` discipline:** Only add `_PM` placeholders to the template when you truly need month-over-month. Each `_PM` usage triggers an extra API call
+- **Test with one definition first**, then add more once the first one's template is verified
+
+### 13.3 Template Design
 
 - Always include `FRTemplate` in the filename
-- Use descriptive Template Names: "Balance Sheet Q4 2024" not "Report1"
-- Type placeholders directly in Word
-- Use Word tables for clean column alignment
-- Add `$` or currency symbols outside the placeholder: `${{CASH_CY}}`
+- Use descriptive Template Names: "Annual Financial Pack FY2025" not "Report1"
+- Type placeholders directly in Word — never copy/paste
+- Use Word tables for clean column alignment in comparative reports
+- Add `$` or currency symbols outside the placeholder: `${{BS_CASH_CY}}`
 - Use `{{CY}}` and `{{PY}}` in column headers for dynamic year labels
-- Start with a small test template before building the full report
+- Start with a small test template (3-5 placeholders) before building the full document
 
-### 12.3 Dimension Filters
+### 13.5 Dimension Filters
 
 - Leave report-level Branch/Organization blank when using per-line filters
 - Per-line filters use exact match — verify the exact values in your GI data
 - Check the trace log when filters return unexpected zeros
 
-### 12.4 Performance
+### 13.6 Performance
 
 - Generate large reports during off-hours
 - Coordinate with team to avoid generation conflicts (system-wide lock)
 - Keep templates under 1,000 placeholders
 - Legacy wildcard placeholders are more expensive than definition-mode lines
 
-### 12.5 Workflow
+### 13.7 Workflow
 
 - Use **Reset Status** to recover stuck reports instead of waiting
 - Regenerating overwrites the previous file — download first if you want to keep it
@@ -902,7 +1161,7 @@ Check **System > Management > Trace** for:
 
 ---
 
-## 13. Appendix A: Legacy Placeholder Reference
+## 14. Appendix A: Legacy Placeholder Reference
 
 Legacy placeholders work when **no** Report Definition is linked, or alongside a definition (definition placeholders take priority). They use raw account codes instead of Line Codes and do not include sign normalization, rounding, or accounting formatting.
 
@@ -960,7 +1219,7 @@ Both patterns must be the same length.
 
 ---
 
-## 14. Appendix B: Error Message Reference
+## 15. Appendix B: Error Message Reference
 
 | Error Message | Cause | Solution |
 |---|---|---|
@@ -987,9 +1246,9 @@ Both patterns must be the same length.
 
 ---
 
-## 15. Appendix C: Field Reference
+## 16. Appendix C: Field Reference
 
-### FR101000 - Financial Report
+### FR101000 - Financial Report (Header)
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -998,18 +1257,27 @@ Both patterns must be the same length.
 | Company Number | Integer | Yes | Links to Tenant Credentials |
 | Current Year | String(4) | Yes | Reporting year (selector from financial years) |
 | Financial Month | String(2) | Yes | Period month 01-12, default "12" |
-| Branch | String(10) | No | Branch filter (selector) |
+| Branch | String(10) | No | Branch filter applied to all data fetching |
 | Organization | String(50) | No | Organization filter (selector) |
 | Ledger | String(20) | No | Ledger filter (selector) |
-| Report Definition | Integer | No | Link to FR101002 definition (selector) |
 | Status | String(20) | Read-only | Current report status |
-| Select | Boolean | No | Selection checkbox |
+
+### FR101000 - Report Definitions Tab (FLRTReportDefinitionLink)
+
+Links one or more definitions to the report. Each row in this tab is a definition link.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| Report Definition | Integer | Yes | FK to FR101002 definition (selector, active only) |
+| Description | String(255) | Read-only | Auto-populated from definition |
+| Display Order | Integer | Yes | Processing sequence (lower = first). Recommended: 10, 20, 30... |
 
 ### FR101002 - Report Definition Header
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | Definition Code | String(50) | Yes | Unique identifier (immutable after save) |
+| **Definition Prefix** | String(10) | **Yes** | 2–10 alphanumeric chars, **globally unique**. Determines placeholder prefix, e.g. `BS` → `{{BS_CASH_CY}}`. Set once; do not change after templates are built. |
 | Description | String(255) | No | Friendly description |
 | Report Type | String(10) | Yes | BS, PL, CF, EQ, or CU |
 | Active | Boolean | Yes | Default true |
@@ -1034,7 +1302,7 @@ Both patterns must be the same length.
 | Account From | String(50) | Range start (Account Range only) |
 | Account To | String(50) | Range end (Account Range only) |
 | Account Type Filter | String(5) | A, L, E, I, Q, or blank for All |
-| Balance Type | String(10) | ENDING, BEGINNING, DEBIT, CREDIT, MOVEMENT |
+| Balance Type | String(10) | ENDING, BEGINNING, DEBIT, CREDIT, MOVEMENT, JANUARYBEGINNING |
 | Sign Rule | String(10) | ASIS or FLIP |
 | Parent Line Code | String(100) | Links to Subtotal parent |
 | Formula | String(500) | Expression for Calculated lines |
@@ -1058,7 +1326,7 @@ Both patterns must be the same length.
 
 ---
 
-## 16. Appendix D: Glossary
+## 17. Appendix D: Glossary
 
 | Term | Definition |
 |---|---|
@@ -1074,7 +1342,14 @@ Both patterns must be the same length.
 | **Movement** | Balance type calculated as Debit minus Credit (net activity) |
 | **Rounding Level** | Scale factor: Units (÷1), Thousands (÷1,000), Millions (÷1,000,000) |
 | **Parent Line Code** | Links a line to a Subtotal parent for automatic summation |
-| **CY / PY** | Current Year / Previous Year |
+| **CY / PY / PM** | Current Year / Previous Year / Previous Month — the three period suffixes used in placeholders |
+| **Definition Prefix** | A 2–10 character alphanumeric code (e.g. `BS`, `PL`) set on FR101002 that prefixes all placeholder names from that definition: `{{PREFIX_LINECODE_CY}}` |
+| **Multi-Definition Report** | A report record (FR101000) that links multiple Report Definitions via the Report Definitions tab. Each definition contributes its prefixed placeholders to the combined template |
+| **FLRTReportDefinitionLink** | The database table that stores the many-to-many relationship between report records and definitions, with Display Order |
+| **Display Order** | Integer that controls the sequence in which linked definitions are processed (lower = first). Matters for cross-definition formula resolution |
+| **Previous Month (`_PM`)** | The `_PM` suffix in a placeholder returns the ending balance for the period immediately before the selected Financial Month |
+| **JanuaryBeginning** | Balance Type that always returns the January 1st opening balance regardless of the selected month — useful for equity reconciliations and cash flow statements |
+| **Cross-Definition Formula** | A formula in one definition that references a line from another definition using `PREFIX_LINECODE` syntax |
 | **GI** | Generic Inquiry — Acumatica's configurable data query tool |
 | **OData** | Open Data Protocol — RESTful API used to fetch GI data |
 | **FRTemplate** | Required text in template filenames for the system to recognize them |
@@ -1087,4 +1362,4 @@ Both patterns must be the same length.
 
 ---
 
-*Financial Report Application User Guide v2.0 — March 2026*
+*Financial Report Application User Guide v2.1 — March 2026*

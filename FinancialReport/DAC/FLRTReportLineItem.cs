@@ -135,12 +135,12 @@ namespace FinancialReport
         /// CREDIT    = Credit movement
         /// MOVEMENT  = Movement (net debit/credit)
         /// </summary>
-        [PXDBString(10, IsUnicode = true)]
+        [PXDBString(15, IsUnicode = true)]
         [PXDefault(BalanceTypeValue.Ending)]
         [PXUIField(DisplayName = "Balance Type")]
         [PXStringList(
-            new string[] { BalanceTypeValue.Ending, BalanceTypeValue.Beginning, BalanceTypeValue.JanuaryBeginning, BalanceTypeValue.Debit, BalanceTypeValue.Credit, BalanceTypeValue.Movement },
-            new string[] { "Ending Balance", "Beginning Balance", "January Beginning Balance", "Debit", "Credit", "Movement" }
+            new string[] { BalanceTypeValue.Ending, BalanceTypeValue.Beginning, BalanceTypeValue.JanuaryBeginning, BalanceTypeValue.Debit, BalanceTypeValue.Credit, BalanceTypeValue.Movement, BalanceTypeValue.PeriodDebit, BalanceTypeValue.PeriodCredit, BalanceTypeValue.PeriodMovement },
+            new string[] { "Ending Balance", "Beginning Balance", "January Beginning Balance", "Debit (YTD)", "Credit (YTD)", "Movement (YTD)", "Period Debit", "Period Credit", "Period Movement" }
         )]
         public virtual string BalanceType { get; set; }
         public abstract class balanceType : PX.Data.BQL.BqlString.Field<balanceType> { }
@@ -308,9 +308,18 @@ namespace FinancialReport
             /// Equivalent to Beginning for December fiscal-year-end; differs for other month-ends.
             /// </summary>
             public const string JanuaryBeginning  = "JANBEGINNING";
+            /// <summary>Year-to-date cumulative debit (fiscal start → selected month).</summary>
             public const string Debit             = "DEBIT";
+            /// <summary>Year-to-date cumulative credit (fiscal start → selected month).</summary>
             public const string Credit            = "CREDIT";
+            /// <summary>Year-to-date cumulative movement / net (fiscal start → selected month).</summary>
             public const string Movement          = "MOVEMENT";
+            /// <summary>Debit for the selected period only (single month). Use for monthly reports.</summary>
+            public const string PeriodDebit       = "PDEBIT";
+            /// <summary>Credit for the selected period only (single month). Use for monthly reports.</summary>
+            public const string PeriodCredit      = "PCREDIT";
+            /// <summary>Net movement for the selected period only (single month). Use for monthly reports.</summary>
+            public const string PeriodMovement    = "PMOVEMENT";
         }
 
         public static class AccountTypeValue

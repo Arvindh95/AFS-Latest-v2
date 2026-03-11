@@ -76,7 +76,7 @@ namespace FinancialReport.Services
                         var def = result.GetItem<FLRTReportDefinition>();
                         definitionLinks.Add(new ReportCalculationEngine.DefinitionLink
                         {
-                            DefinitionID = def.DefinitionID.Value,
+                            DefinitionID = def.DefinitionID!.Value,
                             Prefix       = def.DefinitionPrefix,
                             Rounding     = RoundingSettings.FromDefinition(def)
                         });
@@ -98,7 +98,7 @@ namespace FinancialReport.Services
                         var rounding  = RoundingSettings.FromDefinition(reportDef);
                         definitionLinks.Add(new ReportCalculationEngine.DefinitionLink
                         {
-                            DefinitionID = reportDef.DefinitionID.Value,
+                            DefinitionID = reportDef.DefinitionID!.Value,
                             Prefix       = reportDef.DefinitionPrefix,
                             Rounding     = rounding
                         });
@@ -127,6 +127,45 @@ namespace FinancialReport.Services
                 // 3. Extract Placeholders
                 List<string> extractedKeys = _wordTemplateService.ExtractPlaceholderKeys(templatePath);
 
+                // 3b. Determine which optional API fetches are actually needed.
+                // PM: check template for any _PM placeholder (e.g. {{BS_REVENUE_PM}})
+                bool needsPM = extractedKeys.Any(k =>
+                    k.EndsWith("_" + Constants.PreviousMonthSuffix, StringComparison.OrdinalIgnoreCase));
+
+                // Detail rows + Cumulative: scan line items from all linked definitions.
+                // - needsDetail     → at least one line has a dimension filter (Sub/Branch/Org/Ledger)
+                // - needsCumulative → at least one line uses Debit/Credit/Movement (YTD) balance type
+                bool needsDetail     = false;
+                bool needsCumulative = false;
+                foreach (var defLink in definitionLinks)
+                {
+                    var lineItems = SelectFrom<FLRTReportLineItem>
+                        .Where<FLRTReportLineItem.definitionID.IsEqual<@P.AsInt>>
+                        .View.Select(_graph, defLink.DefinitionID)
+                        .RowCast<FLRTReportLineItem>();
+
+                    foreach (var li in lineItems)
+                    {
+                        if (!needsDetail && (
+                            !string.IsNullOrWhiteSpace(li.SubaccountFilter) ||
+                            !string.IsNullOrWhiteSpace(li.BranchFilter)     ||
+                            !string.IsNullOrWhiteSpace(li.OrganizationFilter) ||
+                            !string.IsNullOrWhiteSpace(li.LedgerFilter)))
+                            needsDetail = true;
+
+                        if (!needsCumulative && (
+                            string.Equals(li.BalanceType, FLRTReportLineItem.BalanceTypeValue.Debit,     StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(li.BalanceType, FLRTReportLineItem.BalanceTypeValue.Credit,    StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(li.BalanceType, FLRTReportLineItem.BalanceTypeValue.Movement,  StringComparison.OrdinalIgnoreCase)))
+                            needsCumulative = true;
+
+                        if (needsDetail && needsCumulative) break;
+                    }
+                    if (needsDetail && needsCumulative) break;
+                }
+
+                PXTrace.WriteInformation($"API fetch flags — needsDetail={needsDetail}, needsCumulative={needsCumulative}, needsPM={needsPM}");
+
                 // 4. ✅ NEW: Separate ALL placeholder types (wildcard, exact range, regular)
                 var (wildcardRangePlaceholders, exactRangePlaceholders, regularPlaceholders) =
                     localDataService.SeparateAllPlaceholderTypes(extractedKeys);
@@ -147,6 +186,11 @@ namespace FinancialReport.Services
                 string prevYearPeriod = $"{selectedMonth}{prevYear}";
                 string prevYearPriorPeriod = $"{selectedMonth}{prevYearPrior}";
 
+                // Previous month: wraps to December of prior year when selected month is January
+                int prevMonthInt  = selectedMonthInt == 1 ? 12 : selectedMonthInt - 1;
+                int prevMonthYear = selectedMonthInt == 1 ? currYearInt - 1 : currYearInt;
+                string prevMonthPeriod = $"{prevMonthInt:D2}{prevMonthYear}";
+
                 // Compute the fiscal year start period for cumulative (Debit/Credit/Movement) fetches.
                 // The fiscal year starts on the month immediately after the financial year-end month.
                 //   e.g. year-end = April (04) → fiscal start = May (05)
@@ -162,31 +206,40 @@ namespace FinancialReport.Services
 
                 PXTrace.WriteInformation($"Fiscal year: {cyCumulativeStart} → {selectedPeriod} (CY), {pyCumulativeStart} → {pyCumulativeEnd} (PY)");
 
-                // 6. Fetch all required data from the API in parallel
-                var dataFetchTasks = new[]
-                {
-            Task.Run(() => localDataService.FetchAllApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, selectedPeriod)),
-            Task.Run(() => localDataService.FetchAllApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, prevYearPeriod)),
-            Task.Run(() => localDataService.FetchJanuaryBeginningBalance(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, prevYear)),
-            Task.Run(() => localDataService.FetchJanuaryBeginningBalance(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, currYear)),
-            Task.Run(() => localDataService.FetchRangeApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, cyCumulativeStart, selectedPeriod)),
-            Task.Run(() => localDataService.FetchRangeApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, pyCumulativeStart, pyCumulativeEnd)),
-            // [6] Opening balance data for PY: year-end of (currYear-2) → EndingBalance = PY fiscal-year opening
-            Task.Run(() => localDataService.FetchAllApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, prevYearPriorPeriod))
-        };
+                // 6. Fetch all required data from the API in parallel.
+                // Optional fetches (cumulative, PM) are skipped via Task.FromResult(null) when not needed,
+                // so the engine receives null and gracefully returns 0 for those balance types.
+                var taskCY      = Task.Run(() => localDataService.FetchAllApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, selectedPeriod,      needsDetail));
+                var taskPY      = Task.Run(() => localDataService.FetchAllApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, prevYearPeriod,      needsDetail));
+                var taskJanPY   = Task.Run(() => localDataService.FetchJanuaryBeginningBalance(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, prevYear));
+                var taskJanCY   = Task.Run(() => localDataService.FetchJanuaryBeginningBalance(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, currYear));
+                // Cumulative (Debit/Credit/Movement YTD): skip if no line uses those balance types
+                var taskRangeCY = needsCumulative
+                    ? Task.Run(() => localDataService.FetchRangeApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, cyCumulativeStart, selectedPeriod))
+                    : Task.FromResult<FinancialApiData>(null);
+                var taskRangePY = needsCumulative
+                    ? Task.Run(() => localDataService.FetchRangeApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, pyCumulativeStart, pyCumulativeEnd))
+                    : Task.FromResult<FinancialApiData>(null);
+                // PY opening (EndingBalance of 2 years ago → PY fiscal-year opening for Beginning balance type)
+                var taskPrior   = Task.Run(() => localDataService.FetchAllApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, prevYearPriorPeriod, needsDetail));
+                // Previous month: skip if no _PM placeholder in template
+                var taskPM      = needsPM
+                    ? Task.Run(() => localDataService.FetchAllApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, prevMonthPeriod, needsDetail))
+                    : Task.FromResult<FinancialApiData>(null);
 
-                var results = Task.WhenAll(dataFetchTasks).Result;
-                var currYearData = results[0];
-                var prevYearData = results[1];
-                var januaryBeginningDataPY = results[2];
-                var januaryBeginningDataCY = results[3];
-                var cumulativeCYData = results[4];
-                var cumulativePYData = results[5];
-                // prevYearData.EndingBalance     = CY fiscal-year opening balance
-                // prevYearPriorData.EndingBalance = PY fiscal-year opening balance
-                var prevYearPriorData = results[6];
+                Task.WhenAll(taskCY, taskPY, taskJanPY, taskJanCY, taskRangeCY, taskRangePY, taskPrior, taskPM).Wait();
 
-                PXTrace.WriteInformation("📊 7 API calls completed - starting optimized placeholder processing");
+                var currYearData          = taskCY.Result;
+                var prevYearData          = taskPY.Result;
+                var januaryBeginningDataPY = taskJanPY.Result;
+                var januaryBeginningDataCY = taskJanCY.Result;
+                var cumulativeCYData      = taskRangeCY.Result; // null when needsCumulative=false
+                var cumulativePYData      = taskRangePY.Result; // null when needsCumulative=false
+                var prevYearPriorData     = taskPrior.Result;
+                var prevMonthData         = taskPM.Result;      // null when needsPM=false
+
+                int fetchCount = 6 + (needsCumulative ? 2 : 0) + (needsPM ? 1 : 0);
+                PXTrace.WriteInformation($"📊 {fetchCount} API calls completed (skipped: cumulative={!needsCumulative}, PM={!needsPM}) — prevMonth: {prevMonthPeriod}");
 
                 // 7. Set up user settings for analysis
                 var userSettings = new UserSettings
@@ -232,7 +285,8 @@ namespace FinancialReport.Services
                         cyJanOpeningData: januaryBeginningDataCY, // BalanceType=JanuaryBeginning: BeginningBalance of 01-{currYear}
                         pyJanOpeningData: januaryBeginningDataPY, // BalanceType=JanuaryBeginning: BeginningBalance of 01-{prevYear}
                         cyCumulativeData: cumulativeCYData,       // BalanceType=Debit/Credit/Movement: full-year Jan–Dec CY totals
-                        pyCumulativeData: cumulativePYData);      // BalanceType=Debit/Credit/Movement: full-year Jan–Dec PY totals
+                        pyCumulativeData: cumulativePYData,       // BalanceType=Debit/Credit/Movement: full-year Jan–Dec PY totals
+                        pmData:           prevMonthData);         // _PM placeholders: single period of previous month
 
                     foreach (var kvp in enginePlaceholders)
                         finalPlaceholders[kvp.Key] = kvp.Value;
@@ -245,19 +299,19 @@ namespace FinancialReport.Services
                 foreach (var kvp in regularPlaceholderValues)
                 {
                     if (!finalPlaceholders.ContainsKey(kvp.Key))
-                        finalPlaceholders[kvp.Key] = kvp.Value;
+                        finalPlaceholders.Add(kvp.Key, kvp.Value);
                 }
 
                 foreach (var kvp in exactRangePlaceholderValues)
                 {
                     if (!finalPlaceholders.ContainsKey(kvp.Key))
-                        finalPlaceholders[kvp.Key] = kvp.Value;
+                        finalPlaceholders.Add(kvp.Key, kvp.Value);
                 }
 
                 foreach (var kvp in wildcardRangePlaceholderValues)
                 {
                     if (!finalPlaceholders.ContainsKey(kvp.Key))
-                        finalPlaceholders[kvp.Key] = kvp.Value;
+                        finalPlaceholders.Add(kvp.Key, kvp.Value);
                 }
 
                 // Add year constants
@@ -286,7 +340,7 @@ namespace FinancialReport.Services
             catch (Exception ex)
             {
                 totalStopwatch.Stop();
-                PXTrace.WriteError($"Report generation failed after {totalStopwatch.ElapsedMilliseconds} ms for Report '{_currentRecord.ReportCD}' (ID: {_currentRecord.ReportID}): {ex.ToString()}");
+                PXTrace.WriteError($"Report generation failed after {totalStopwatch.ElapsedMilliseconds} ms for Report '{_currentRecord.ReportCD}' (ID: {_currentRecord.ReportID}): {ex.Message}");
                 throw;
             }
             finally
@@ -301,7 +355,7 @@ namespace FinancialReport.Services
                     }
                     catch (Exception ex)
                     {
-                        PXTrace.WriteWarning($"Failed to cleanup template file '{Path.GetFileName(templatePath)}': {ex.ToString()}");
+                        PXTrace.WriteWarning($"Failed to cleanup template file '{Path.GetFileName(templatePath)}': {ex.Message}");
                     }
                 }
 
@@ -314,7 +368,7 @@ namespace FinancialReport.Services
                     }
                     catch (Exception ex)
                     {
-                        PXTrace.WriteWarning($"Failed to cleanup output file '{Path.GetFileName(outputPath)}': {ex.ToString()}");
+                        PXTrace.WriteWarning($"Failed to cleanup output file '{Path.GetFileName(outputPath)}': {ex.Message}");
                     }
                 }
 

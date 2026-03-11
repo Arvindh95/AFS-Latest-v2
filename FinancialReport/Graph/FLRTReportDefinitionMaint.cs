@@ -49,7 +49,7 @@ namespace FinancialReport
             {
                 e.Cache.RaiseExceptionHandling<FLRTReportDefinition.definitionCD>(
                     e.Row, e.Row.DefinitionCD,
-                    new PXSetPropertyException(Messages.DefinitionCodeRequired, PXErrorLevel.Error));
+                    new PXSetPropertyException(Messages.DefinitionCodeRequired, PXErrorLevel.Error, e.Row));
             }
 
             // Validate prefix is provided
@@ -57,7 +57,7 @@ namespace FinancialReport
             {
                 e.Cache.RaiseExceptionHandling<FLRTReportDefinition.definitionPrefix>(
                     e.Row, e.Row.DefinitionPrefix,
-                    new PXSetPropertyException(Messages.DefinitionPrefixRequired, PXErrorLevel.Error));
+                    new PXSetPropertyException(Messages.DefinitionPrefixRequired, PXErrorLevel.Error, e.Row));
                 return;
             }
 
@@ -66,7 +66,7 @@ namespace FinancialReport
             {
                 e.Cache.RaiseExceptionHandling<FLRTReportDefinition.definitionPrefix>(
                     e.Row, e.Row.DefinitionPrefix,
-                    new PXSetPropertyException(Messages.DefinitionPrefixMustBeAlphanumeric, PXErrorLevel.Error));
+                    new PXSetPropertyException(Messages.DefinitionPrefixMustBeAlphanumeric, PXErrorLevel.Error, e.Row));
                 return;
             }
 
@@ -80,7 +80,7 @@ namespace FinancialReport
             {
                 e.Cache.RaiseExceptionHandling<FLRTReportDefinition.definitionPrefix>(
                     e.Row, e.Row.DefinitionPrefix,
-                    new PXSetPropertyException(Messages.DefinitionPrefixMustBeUnique, PXErrorLevel.Error));
+                    new PXSetPropertyException(Messages.DefinitionPrefixMustBeUnique, PXErrorLevel.Error, e.Row));
             }
 
             // Validate DefinitionCD uniqueness
@@ -93,7 +93,7 @@ namespace FinancialReport
             {
                 e.Cache.RaiseExceptionHandling<FLRTReportDefinition.definitionCD>(
                     e.Row, e.Row.DefinitionCD,
-                    new PXSetPropertyException(Messages.DefinitionCodeMustBeUnique, PXErrorLevel.Error));
+                    new PXSetPropertyException(Messages.DefinitionCodeMustBeUnique, PXErrorLevel.Error, e.Row));
             }
         }
 
@@ -163,7 +163,7 @@ namespace FinancialReport
             {
                 e.Cache.RaiseExceptionHandling<FLRTReportLineItem.lineCode>(
                     e.Row, e.Row.LineCode,
-                    new PXSetPropertyException(Messages.LineCodeRequired, PXErrorLevel.Error));
+                    new PXSetPropertyException(Messages.LineCodeRequired, PXErrorLevel.Error, e.Row));
             }
 
             // Validate ACCOUNT lines have a range
@@ -173,13 +173,13 @@ namespace FinancialReport
                 {
                     e.Cache.RaiseExceptionHandling<FLRTReportLineItem.accountFrom>(
                         e.Row, e.Row.AccountFrom,
-                        new PXSetPropertyException(Messages.AccountFromRequired, PXErrorLevel.Error));
+                        new PXSetPropertyException(Messages.AccountFromRequired, PXErrorLevel.Error, e.Row));
                 }
                 if (string.IsNullOrWhiteSpace(e.Row.AccountTo))
                 {
                     e.Cache.RaiseExceptionHandling<FLRTReportLineItem.accountTo>(
                         e.Row, e.Row.AccountTo,
-                        new PXSetPropertyException(Messages.AccountToRequired, PXErrorLevel.Error));
+                        new PXSetPropertyException(Messages.AccountToRequired, PXErrorLevel.Error, e.Row));
                 }
             }
 
@@ -189,7 +189,7 @@ namespace FinancialReport
             {
                 e.Cache.RaiseExceptionHandling<FLRTReportLineItem.formula>(
                     e.Row, e.Row.Formula,
-                    new PXSetPropertyException(Messages.FormulaRequired, PXErrorLevel.Error));
+                    new PXSetPropertyException(Messages.FormulaRequired, PXErrorLevel.Error, e.Row));
             }
 
             // LineCode uniqueness within the same definition
@@ -203,7 +203,7 @@ namespace FinancialReport
             {
                 e.Cache.RaiseExceptionHandling<FLRTReportLineItem.lineCode>(
                     e.Row, e.Row.LineCode,
-                    new PXSetPropertyException(Messages.LineCodeMustBeUnique, PXErrorLevel.Error));
+                    new PXSetPropertyException(Messages.LineCodeMustBeUnique, PXErrorLevel.Error, e.Row));
             }
         }
 
@@ -211,14 +211,14 @@ namespace FinancialReport
 
         #region Actions
 
-        public PXSave<FLRTReportDefinition> Save;
-        public PXCancel<FLRTReportDefinition> Cancel;
-        public PXInsert<FLRTReportDefinition> Insert;
-        public PXDelete<FLRTReportDefinition> Delete;
-        public PXFirst<FLRTReportDefinition> First;
-        public PXPrevious<FLRTReportDefinition> Previous;
-        public PXNext<FLRTReportDefinition> Next;
-        public PXLast<FLRTReportDefinition> Last;
+        public new PXSave<FLRTReportDefinition> Save;
+        public new PXCancel<FLRTReportDefinition> Cancel;
+        public new PXInsert<FLRTReportDefinition> Insert;
+        public new PXDelete<FLRTReportDefinition> Delete;
+        public new PXFirst<FLRTReportDefinition> First;
+        public new PXPrevious<FLRTReportDefinition> Previous;
+        public new PXNext<FLRTReportDefinition> Next;
+        public new PXLast<FLRTReportDefinition> Last;
 
         /// <summary>
         /// Copies an existing definition (header + all line items) as a new definition.

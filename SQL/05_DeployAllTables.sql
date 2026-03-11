@@ -330,7 +330,7 @@ BEGIN
         [AccountTo]              [nvarchar](50)   NULL,
         [AccountTypeFilter]      [nvarchar](5)    NULL,
         [SignRule]               [nvarchar](10)   NULL DEFAULT('ASIS'),
-        [BalanceType]            [nvarchar](10)   NULL DEFAULT('ENDING'),
+        [BalanceType]            [nvarchar](15)   NULL DEFAULT('ENDING'),
         [ParentLineCode]         [nvarchar](100)  NULL,
         [Formula]                [nvarchar](500)  NULL,
         [IsVisible]              [bit]            NULL DEFAULT(1),
@@ -383,6 +383,13 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[FLRTReportLineItem]') AND name = 'NoteID')
     BEGIN ALTER TABLE [dbo].[FLRTReportLineItem] ADD [NoteID] [uniqueidentifier] NULL
           PRINT '  + NoteID' END
+
+    -- Expand BalanceType to NVARCHAR(15) if still at old size (JANBEGINNING=12 chars, PMOVEMENT=9 chars)
+    IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_NAME = 'FLRTReportLineItem' AND COLUMN_NAME = 'BalanceType'
+                 AND CHARACTER_MAXIMUM_LENGTH < 15)
+    BEGIN ALTER TABLE [dbo].[FLRTReportLineItem] ALTER COLUMN [BalanceType] NVARCHAR(15) NULL
+          PRINT '  ~ BalanceType expanded to NVARCHAR(15)' END
 
     PRINT 'FLRTReportLineItem column check done.'
 END
