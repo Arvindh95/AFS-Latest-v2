@@ -1,6 +1,5 @@
 using System;
 using PX.Data;
-using System.Text;
 using PX.Data.BQL.Fluent;
 
 namespace FinancialReport
@@ -18,43 +17,6 @@ namespace FinancialReport
         }
 
         #region Event Handlers
-        // FieldUpdating to convert string input from UI to byte[]
-        protected void FLRTTenantCredentials_ClientID_FieldUpdating(PXCache cache, PXFieldUpdatingEventArgs e)
-        {
-            if (e.NewValue is string stringValue && !string.IsNullOrEmpty(stringValue))
-            {
-                PXTrace.WriteInformation($"Converting ClientID: {stringValue}");
-                e.NewValue = Encoding.UTF8.GetBytes(stringValue);
-            }
-        }
-
-        protected void FLRTTenantCredentials_SecretID_FieldUpdating(PXCache cache, PXFieldUpdatingEventArgs e)
-        {
-            if (e.NewValue is string stringValue && !string.IsNullOrEmpty(stringValue))
-            {
-                PXTrace.WriteInformation($"Converting SecretID: {stringValue}");
-                e.NewValue = Encoding.UTF8.GetBytes(stringValue);
-            }
-        }
-
-        protected void FLRTTenantCredentials_Username_FieldUpdating(PXCache cache, PXFieldUpdatingEventArgs e)
-        {
-            if (e.NewValue is string stringValue && !string.IsNullOrEmpty(stringValue))
-            {
-                PXTrace.WriteInformation($"Converting Username: {stringValue}");
-                e.NewValue = Encoding.UTF8.GetBytes(stringValue);
-            }
-        }
-
-        protected void FLRTTenantCredentials_Password_FieldUpdating(PXCache cache, PXFieldUpdatingEventArgs e)
-        {
-            if (e.NewValue is string stringValue && !string.IsNullOrEmpty(stringValue))
-            {
-                PXTrace.WriteInformation($"Converting Password: {stringValue}");
-                e.NewValue = Encoding.UTF8.GetBytes(stringValue);
-            }
-        }
-
         // RowPersisting for validation and logging
         protected void FLRTTenantCredentials_RowPersisting(PXCache cache, PXRowPersistingEventArgs e)
         {
@@ -105,11 +67,6 @@ namespace FinancialReport
                 }
             }
         }
-        #endregion
-
-        #region Helper Methods
-        public static byte[] StringToByteArray(string value) => Encoding.UTF8.GetBytes(value);
-        public static string ByteArrayToString(byte[] value) => value != null ? Encoding.UTF8.GetString(value) : string.Empty;
         #endregion
 
         #region Actions

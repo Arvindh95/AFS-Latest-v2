@@ -146,6 +146,28 @@ namespace FinancialReport
     public abstract class financialMonth : PX.Data.BQL.BqlString.Field<financialMonth> { }
     #endregion
 
+    #region DefinitionID
+    /// <summary>
+    /// Legacy single-definition link. Superseded by FLRTReportDefinitionLink child table
+    /// which supports multiple definitions per report with cross-definition formulas.
+    ///
+    /// If FLRTReportDefinitionLink rows exist for this report, this field is ignored.
+    /// Kept for backward compatibility with reports created before multi-definition support.
+    /// </summary>
+    [PXDBInt]
+    [PXUIField(DisplayName = "Report Definition (Legacy)", Visible = false)]
+    [PXSelector(
+        typeof(Search<FLRTReportDefinition.definitionID>),
+        typeof(FLRTReportDefinition.definitionCD),
+        typeof(FLRTReportDefinition.description),
+        typeof(FLRTReportDefinition.reportType),
+        SubstituteKey = typeof(FLRTReportDefinition.definitionCD),
+        DescriptionField = typeof(FLRTReportDefinition.description)
+    )]
+    public virtual int? DefinitionID { get; set; }
+    public abstract class definitionID : PX.Data.BQL.BqlInt.Field<definitionID> { }
+    #endregion
+
     #region GeneratedFileID
     [PXDBGuid]
     [PXUIField(DisplayName = "Generated File ID", Visible = false)]
