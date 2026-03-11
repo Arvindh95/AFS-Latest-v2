@@ -51,12 +51,42 @@ namespace FinancialReport.Services
                 int? companyID = _graph.GetCompanyIDFromDB(_currentRecord.ReportID);
                 string tenantName = _graph.MapCompanyIDToTenantName(companyID);
 
-                // 1b. Load Report Definition for GI/column/rounding config (if linked)
+                // 1b. Load Report Definitions — multi-definition (new) or single legacy fallback
                 GIColumnMapping columnMapping = null;
-                RoundingSettings roundingSettings = null;
+                var definitionLinks = new List<ReportCalculationEngine.DefinitionLink>();
 
-                if (_currentRecord.DefinitionID != null)
+                // Check for linked definitions first (multi-def path)
+                var linkedDefs = SelectFrom<FLRTReportDefinitionLink>
+                    .InnerJoin<FLRTReportDefinition>
+                        .On<FLRTReportDefinition.definitionID.IsEqual<FLRTReportDefinitionLink.definitionID>>
+                    .Where<FLRTReportDefinitionLink.reportID.IsEqual<@P.AsInt>>
+                    .OrderBy<FLRTReportDefinitionLink.displayOrder.Asc>
+                    .View.Select(_graph, _currentRecord.ReportID)
+                    .Cast<PXResult<FLRTReportDefinitionLink, FLRTReportDefinition>>()
+                    .ToList();
+
+                if (linkedDefs.Any())
                 {
+                    // Use the first definition's GI mapping for GL data fetching
+                    var firstDef = linkedDefs.First().GetItem<FLRTReportDefinition>();
+                    columnMapping = GIColumnMapping.FromDefinition(firstDef);
+
+                    foreach (var result in linkedDefs)
+                    {
+                        var def = result.GetItem<FLRTReportDefinition>();
+                        definitionLinks.Add(new ReportCalculationEngine.DefinitionLink
+                        {
+                            DefinitionID = def.DefinitionID.Value,
+                            Prefix       = def.DefinitionPrefix,
+                            Rounding     = RoundingSettings.FromDefinition(def)
+                        });
+                    }
+
+                    PXTrace.WriteInformation($"Multi-definition report: {definitionLinks.Count} definition(s) linked — prefixes: [{string.Join(", ", definitionLinks.Select(d => d.Prefix))}]");
+                }
+                else if (_currentRecord.DefinitionID != null)
+                {
+                    // Legacy single-definition fallback
                     var reportDef = SelectFrom<FLRTReportDefinition>
                         .Where<FLRTReportDefinition.definitionID.IsEqual<@P.AsInt>>
                         .View.Select(_graph, _currentRecord.DefinitionID)
@@ -65,8 +95,14 @@ namespace FinancialReport.Services
                     if (reportDef != null)
                     {
                         columnMapping = GIColumnMapping.FromDefinition(reportDef);
-                        roundingSettings = RoundingSettings.FromDefinition(reportDef);
-                        PXTrace.WriteInformation($"Report Definition '{reportDef.DefinitionCD}': GI={columnMapping.GIName}, Rounding={roundingSettings.RoundingLevel}/{roundingSettings.DecimalPlaces}dp");
+                        var rounding  = RoundingSettings.FromDefinition(reportDef);
+                        definitionLinks.Add(new ReportCalculationEngine.DefinitionLink
+                        {
+                            DefinitionID = reportDef.DefinitionID.Value,
+                            Prefix       = reportDef.DefinitionPrefix,
+                            Rounding     = rounding
+                        });
+                        PXTrace.WriteInformation($"Legacy single definition '{reportDef.DefinitionCD}' (prefix: {reportDef.DefinitionPrefix}): GI={columnMapping.GIName}, Rounding={rounding.RoundingLevel}/{rounding.DecimalPlaces}dp");
                     }
                 }
 
@@ -104,9 +140,27 @@ namespace FinancialReport.Services
                 string currYear = _currentRecord.CurrYear ?? DateTime.Now.ToString("yyyy");
                 string selectedMonth = _currentRecord.FinancialMonth ?? "12";
                 int currYearInt = int.TryParse(currYear, out int parsedYear) ? parsedYear : DateTime.Now.Year;
+                int selectedMonthInt = int.TryParse(selectedMonth, out int parsedMonth) ? parsedMonth : 12;
                 string prevYear = (currYearInt - 1).ToString();
+                string prevYearPrior = (currYearInt - 2).ToString();
                 string selectedPeriod = $"{selectedMonth}{currYear}";
                 string prevYearPeriod = $"{selectedMonth}{prevYear}";
+                string prevYearPriorPeriod = $"{selectedMonth}{prevYearPrior}";
+
+                // Compute the fiscal year start period for cumulative (Debit/Credit/Movement) fetches.
+                // The fiscal year starts on the month immediately after the financial year-end month.
+                //   e.g. year-end = April (04) → fiscal start = May (05)
+                //   e.g. year-end = December (12) → fiscal start = January (01) of same calendar year
+                int fiscalStartMonthInt = (selectedMonthInt % 12) + 1;
+                string fiscalStartMonth = fiscalStartMonthInt.ToString("D2");
+                // When the fiscal start month is AFTER the year-end month numerically, the fiscal year
+                // crosses a calendar year boundary and the start falls in the PRIOR calendar year.
+                int cyCumulativeStartYearInt = fiscalStartMonthInt > selectedMonthInt ? currYearInt - 1 : currYearInt;
+                string cyCumulativeStart = $"{fiscalStartMonth}{cyCumulativeStartYearInt}";
+                string pyCumulativeStart = $"{fiscalStartMonth}{cyCumulativeStartYearInt - 1}";
+                string pyCumulativeEnd   = prevYearPeriod; // $"{selectedMonth}{prevYear}"
+
+                PXTrace.WriteInformation($"Fiscal year: {cyCumulativeStart} → {selectedPeriod} (CY), {pyCumulativeStart} → {pyCumulativeEnd} (PY)");
 
                 // 6. Fetch all required data from the API in parallel
                 var dataFetchTasks = new[]
@@ -115,8 +169,10 @@ namespace FinancialReport.Services
             Task.Run(() => localDataService.FetchAllApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, prevYearPeriod)),
             Task.Run(() => localDataService.FetchJanuaryBeginningBalance(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, prevYear)),
             Task.Run(() => localDataService.FetchJanuaryBeginningBalance(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, currYear)),
-            Task.Run(() => localDataService.FetchRangeApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, $"01{currYear}", selectedPeriod)),
-            Task.Run(() => localDataService.FetchRangeApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, $"01{prevYear}", $"12{prevYear}"))
+            Task.Run(() => localDataService.FetchRangeApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, cyCumulativeStart, selectedPeriod)),
+            Task.Run(() => localDataService.FetchRangeApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, pyCumulativeStart, pyCumulativeEnd)),
+            // [6] Opening balance data for PY: year-end of (currYear-2) → EndingBalance = PY fiscal-year opening
+            Task.Run(() => localDataService.FetchAllApiData(_currentRecord.Branch, _currentRecord.Organization, _currentRecord.Ledger, prevYearPriorPeriod))
         };
 
                 var results = Task.WhenAll(dataFetchTasks).Result;
@@ -126,8 +182,11 @@ namespace FinancialReport.Services
                 var januaryBeginningDataCY = results[3];
                 var cumulativeCYData = results[4];
                 var cumulativePYData = results[5];
+                // prevYearData.EndingBalance     = CY fiscal-year opening balance
+                // prevYearPriorData.EndingBalance = PY fiscal-year opening balance
+                var prevYearPriorData = results[6];
 
-                PXTrace.WriteInformation("📊 6 API calls completed - starting optimized placeholder processing");
+                PXTrace.WriteInformation("📊 7 API calls completed - starting optimized placeholder processing");
 
                 // 7. Set up user settings for analysis
                 var userSettings = new UserSettings
@@ -156,18 +215,24 @@ namespace FinancialReport.Services
                 // 11. Combine all placeholder values
                 var finalPlaceholders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-                // ── NEW: If a Report Definition is linked, run the calculation engine first.
-                // The engine produces sign-corrected, pre-calculated values for every report
-                // line (ACCOUNT, SUBTOTAL, CALCULATED) keyed as LINECODE_CY / LINECODE_PY.
-                // Engine values take priority — they are the "right" answer.
-                if (_currentRecord.DefinitionID != null)
+                // ── Run ReportCalculationEngine for all linked definitions.
+                // Produces PREFIX_LINECODE_CY / PREFIX_LINECODE_PY placeholders.
+                // Cross-definition formulas are resolved via topological sort.
+                // Engine values take priority over raw account placeholders.
+                if (definitionLinks.Any())
                 {
-                    PXTrace.WriteInformation($"Report Definition ID {_currentRecord.DefinitionID} found — running ReportCalculationEngine.");
-                    var engine = new ReportCalculationEngine(_graph, roundingSettings);
-                    var enginePlaceholders = engine.Calculate(
-                        _currentRecord.DefinitionID.Value,
+                    PXTrace.WriteInformation($"Running ReportCalculationEngine for {definitionLinks.Count} definition(s).");
+                    var engine = new ReportCalculationEngine(_graph);
+                    var enginePlaceholders = engine.CalculateAll(
+                        definitionLinks,
                         currYearData,
-                        prevYearData);
+                        prevYearData,
+                        cyOpeningData:    prevYearData,           // BalanceType=Beginning: EndingBalance of prior year-end → CY fiscal opening
+                        pyOpeningData:    prevYearPriorData,      // BalanceType=Beginning: EndingBalance of 2-years-ago year-end → PY fiscal opening
+                        cyJanOpeningData: januaryBeginningDataCY, // BalanceType=JanuaryBeginning: BeginningBalance of 01-{currYear}
+                        pyJanOpeningData: januaryBeginningDataPY, // BalanceType=JanuaryBeginning: BeginningBalance of 01-{prevYear}
+                        cyCumulativeData: cumulativeCYData,       // BalanceType=Debit/Credit/Movement: full-year Jan–Dec CY totals
+                        pyCumulativeData: cumulativePYData);      // BalanceType=Debit/Credit/Movement: full-year Jan–Dec PY totals
 
                     foreach (var kvp in enginePlaceholders)
                         finalPlaceholders[kvp.Key] = kvp.Value;

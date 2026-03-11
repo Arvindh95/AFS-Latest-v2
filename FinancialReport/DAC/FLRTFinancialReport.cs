@@ -148,12 +148,14 @@ namespace FinancialReport
 
     #region DefinitionID
     /// <summary>
-    /// Links this report record to a Report Definition (Balance Sheet, P&L, etc.).
-    /// When set, the ReportCalculationEngine is used instead of raw placeholder matching.
-    /// Leave blank to use the legacy account-code placeholder approach.
+    /// Legacy single-definition link. Superseded by FLRTReportDefinitionLink child table
+    /// which supports multiple definitions per report with cross-definition formulas.
+    ///
+    /// If FLRTReportDefinitionLink rows exist for this report, this field is ignored.
+    /// Kept for backward compatibility with reports created before multi-definition support.
     /// </summary>
     [PXDBInt]
-    [PXUIField(DisplayName = "Report Definition")]
+    [PXUIField(DisplayName = "Report Definition (Legacy)", Visible = false)]
     [PXSelector(
         typeof(Search<FLRTReportDefinition.definitionID>),
         typeof(FLRTReportDefinition.definitionCD),

@@ -11,39 +11,88 @@ using static FinancialReport.FLRTFinancialReport;
 
 namespace FinancialReport
 {
-    public class FLRTFinancialReportMaint : PXGraph<FLRTFinancialReportMaint>
+    public class FLRTFinancialReportMaint : PXGraph<FLRTFinancialReportMaint, FLRTFinancialReport>
     {
         #region DAC View
         public SelectFrom<FLRTFinancialReport>.View FinancialReport = null!; // Initialized by PXGraph framework
+
+        /// <summary>
+        /// Child grid: linked Report Definitions for the currently selected report.
+        /// Each row ties one definition (with its prefix) to this report.
+        /// Multiple definitions enable cross-definition formulas and a single unified output.
+        /// </summary>
+        public SelectFrom<FLRTReportDefinitionLink>
+            .Where<FLRTReportDefinitionLink.reportID.IsEqual<FLRTFinancialReport.reportID.FromCurrent>>
+            .OrderBy<FLRTReportDefinitionLink.displayOrder.Asc>
+            .View DefinitionLinks;
         #endregion
 
         #region Events
-        protected void FLRTFinancialReport_Selected_FieldUpdated(PXCache cache, PXFieldUpdatedEventArgs e)
-        {
-            var current = (FLRTFinancialReport)e.Row;
-            if (current?.Selected != true) return;
 
-            foreach (FLRTFinancialReport item in FinancialReport.Cache.Cached)
+        // ── FLRTReportDefinitionLink events ──────────────────────────────────
+
+        /// <summary>
+        /// Populates the read-only Prefix display column from the joined FLRTReportDefinition.
+        /// </summary>
+        protected void _(Events.FieldSelecting<FLRTReportDefinitionLink, FLRTReportDefinitionLink.definitionPrefix> e)
+        {
+            if (e.Row?.DefinitionID == null) return;
+            var def = PXSelectorAttribute.Select<FLRTReportDefinitionLink.definitionID>(e.Cache, e.Row) as FLRTReportDefinition;
+            if (def != null)
+                e.ReturnValue = def.DefinitionPrefix;
+        }
+
+        /// <summary>
+        /// Validates that linked definitions have unique prefixes within this report.
+        /// </summary>
+        protected void _(Events.RowPersisting<FLRTReportDefinitionLink> e)
+        {
+            if (e.Row == null || e.Operation == PXDBOperation.Delete) return;
+
+            // Ensure a definition is selected
+            if (e.Row.DefinitionID == null)
             {
-                if (item.ReportID != current.ReportID && item.Selected == true)
+                e.Cache.RaiseExceptionHandling<FLRTReportDefinitionLink.definitionID>(
+                    e.Row, e.Row.DefinitionID,
+                    new PXSetPropertyException(Messages.DefinitionRequired, PXErrorLevel.Error));
+                return;
+            }
+
+            // Load the definition to get its prefix
+            var def = PXSelectorAttribute.Select<FLRTReportDefinitionLink.definitionID>(e.Cache, e.Row) as FLRTReportDefinition;
+            if (def == null || string.IsNullOrWhiteSpace(def.DefinitionPrefix)) return;
+
+            // Check for duplicate prefix among other links for the same report
+            foreach (FLRTReportDefinitionLink other in DefinitionLinks.Cache.Cached)
+            {
+                if (other.LinkID == e.Row.LinkID) continue;
+                if (other.DefinitionID == null) continue;
+
+                var otherDef = PXSelectorAttribute.Select<FLRTReportDefinitionLink.definitionID>(
+                    DefinitionLinks.Cache, other) as FLRTReportDefinition;
+
+                if (otherDef != null
+                    && string.Equals(otherDef.DefinitionPrefix, def.DefinitionPrefix, System.StringComparison.OrdinalIgnoreCase))
                 {
-                    item.Selected = false;
+                    e.Cache.RaiseExceptionHandling<FLRTReportDefinitionLink.definitionID>(
+                        e.Row, e.Row.DefinitionID,
+                        new PXSetPropertyException(Messages.DuplicatePrefixInReport, PXErrorLevel.Error, def.DefinitionPrefix));
+                    return;
                 }
             }
         }
+
+        // ── FLRTFinancialReport events ────────────────────────────────────────
 
         protected void FLRTFinancialReport_RowSelected(PXCache cache, PXRowSelectedEventArgs e)
         {
             var row = (FLRTFinancialReport)e.Row;
             if (row == null) return;
 
-            bool anyInProgress = FinancialReport.Cache.Cached
-                .Cast<FLRTFinancialReport>()
-                .Any(r => r.Status == ReportStatus.InProgress);
-
-            PXUIFieldAttribute.SetEnabled(cache, row, !anyInProgress);
-            GenerateReport.SetEnabled(!anyInProgress);
-            DownloadReport.SetEnabled(!anyInProgress);
+            bool isInProgress = row.Status == ReportStatus.InProgress;
+            PXUIFieldAttribute.SetEnabled(cache, row, !isInProgress);
+            GenerateReport.SetEnabled(!isInProgress);
+            DownloadReport.SetEnabled(!isInProgress);
         }
 
         protected void FLRTFinancialReport_RowPersisting(PXCache cache, PXRowPersistingEventArgs e)
@@ -76,16 +125,7 @@ namespace FinancialReport
             }
         }
 
-        protected virtual void FLRTFinancialReport_RowInserted(PXCache sender, PXRowInsertedEventArgs e)
-        {
-            // Acuminator disable once PX1043 SavingChangesInEventHandlers [Justification]
-            this.Actions.PressSave();
-            FinancialReport.Current = null!; // Clear current record in Acumatica framework
-            FinancialReport.Cache.Clear();
-            FinancialReport.Cache.ClearQueryCache();
-            FinancialReport.View.Clear();
-        }
-        #endregion
+#endregion
 
         #region Actions
         public PXSave<FLRTFinancialReport> Save = null!; // Initialized by PXGraph framework
@@ -98,9 +138,7 @@ namespace FinancialReport
         [PXUIField(DisplayName = "Generate Report")]
         protected virtual System.Collections.IEnumerable generateReport(PXAdapter adapter)
         {
-            var selectedRecord = FinancialReport.Cache.Cached
-                .Cast<FLRTFinancialReport>()
-                .FirstOrDefault(item => item.Selected == true);
+            var selectedRecord = FinancialReport.Current;
 
             // Perform initial validations on the UI thread
             if (selectedRecord == null) throw new PXException(Messages.PleaseSelectTemplate);
@@ -245,9 +283,7 @@ namespace FinancialReport
         [PXUIField(DisplayName = "Download Report", MapEnableRights = PXCacheRights.Select, Visible = true)]
         protected virtual System.Collections.IEnumerable downloadReport(PXAdapter adapter)
         {
-            var selectedRecord = FinancialReport.Cache.Cached
-                .Cast<FLRTFinancialReport>()
-                .FirstOrDefault(x => x.Selected == true);
+            var selectedRecord = FinancialReport.Current;
 
             if (selectedRecord == null)
                 throw new PXException(Messages.NoRecordIsSelected);
@@ -262,9 +298,7 @@ namespace FinancialReport
         [PXUIField(DisplayName = "Reset Status", MapEnableRights = PXCacheRights.Update, Visible = true)]
         protected virtual System.Collections.IEnumerable resetStatus(PXAdapter adapter)
         {
-            var selectedRecord = FinancialReport.Cache.Cached
-                .Cast<FLRTFinancialReport>()
-                .FirstOrDefault(x => x.Selected == true);
+            var selectedRecord = FinancialReport.Current;
 
             if (selectedRecord == null)
             {

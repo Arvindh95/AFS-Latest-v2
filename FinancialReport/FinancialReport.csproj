@@ -84,6 +84,7 @@
     <Compile Include="Services\ReportGenerationService.cs" />
     <Compile Include="Services\WordTemplateService.cs" />
     <Compile Include="DAC\FLRTReportDefinition.cs" />
+    <Compile Include="DAC\FLRTReportDefinitionLink.cs" />
     <Compile Include="DAC\FLRTReportLineItem.cs" />
     <Compile Include="Graph\FLRTReportDefinitionMaint.cs" />
     <Compile Include="Services\ReportCalculationEngine.cs" />

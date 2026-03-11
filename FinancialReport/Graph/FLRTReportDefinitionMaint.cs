@@ -36,6 +36,8 @@ namespace FinancialReport
             if (e.Row == null) return;
             bool isNewRecord = e.Cache.GetStatus(e.Row) == PXEntryStatus.Inserted;
             PXUIFieldAttribute.SetEnabled<FLRTReportDefinition.definitionCD>(e.Cache, e.Row, isNewRecord);
+            // Prefix is also locked once saved to prevent breaking existing Word templates
+            PXUIFieldAttribute.SetEnabled<FLRTReportDefinition.definitionPrefix>(e.Cache, e.Row, isNewRecord);
             Actions["detectColumns"]?.SetEnabled(!string.IsNullOrWhiteSpace(e.Row.GIName));
         }
 
@@ -50,7 +52,38 @@ namespace FinancialReport
                     new PXSetPropertyException(Messages.DefinitionCodeRequired, PXErrorLevel.Error));
             }
 
-            // Uniqueness check
+            // Validate prefix is provided
+            if (string.IsNullOrWhiteSpace(e.Row.DefinitionPrefix))
+            {
+                e.Cache.RaiseExceptionHandling<FLRTReportDefinition.definitionPrefix>(
+                    e.Row, e.Row.DefinitionPrefix,
+                    new PXSetPropertyException(Messages.DefinitionPrefixRequired, PXErrorLevel.Error));
+                return;
+            }
+
+            // Validate prefix is alphanumeric only (no underscores, spaces, or special chars)
+            if (!System.Text.RegularExpressions.Regex.IsMatch(e.Row.DefinitionPrefix, @"^[A-Za-z0-9]+$"))
+            {
+                e.Cache.RaiseExceptionHandling<FLRTReportDefinition.definitionPrefix>(
+                    e.Row, e.Row.DefinitionPrefix,
+                    new PXSetPropertyException(Messages.DefinitionPrefixMustBeAlphanumeric, PXErrorLevel.Error));
+                return;
+            }
+
+            // Validate prefix uniqueness across all definitions
+            FLRTReportDefinition duplicatePrefix = SelectFrom<FLRTReportDefinition>
+                .Where<FLRTReportDefinition.definitionPrefix.IsEqual<@P.AsString>
+                    .And<FLRTReportDefinition.definitionID.IsNotEqual<@P.AsInt>>>
+                .View.Select(this, e.Row.DefinitionPrefix, e.Row.DefinitionID ?? -1);
+
+            if (duplicatePrefix != null)
+            {
+                e.Cache.RaiseExceptionHandling<FLRTReportDefinition.definitionPrefix>(
+                    e.Row, e.Row.DefinitionPrefix,
+                    new PXSetPropertyException(Messages.DefinitionPrefixMustBeUnique, PXErrorLevel.Error));
+            }
+
+            // Validate DefinitionCD uniqueness
             FLRTReportDefinition duplicate = SelectFrom<FLRTReportDefinition>
                 .Where<FLRTReportDefinition.definitionCD.IsEqual<@P.AsString>
                     .And<FLRTReportDefinition.definitionID.IsNotEqual<@P.AsInt>>>
@@ -201,9 +234,17 @@ namespace FinancialReport
             if (ReportDefinition.Ask(Messages.ConfirmCopyDefinition, MessageButtons.YesNo) != WebDialogResult.Yes)
                 return adapter.Get();
 
+            // Build a unique copy prefix (truncate source prefix to 7 chars + "CP" suffix to stay within 10 chars)
+            string copyPrefix = string.IsNullOrWhiteSpace(source.DefinitionPrefix)
+                ? "COPY"
+                : (source.DefinitionPrefix.Length > 7
+                    ? source.DefinitionPrefix.Substring(0, 7) + "CP"
+                    : source.DefinitionPrefix + "CP");
+
             var newDef = new FLRTReportDefinition
             {
                 DefinitionCD       = source.DefinitionCD + "_COPY",
+                DefinitionPrefix   = copyPrefix,
                 Description        = source.Description + " (Copy)",
                 ReportType         = source.ReportType,
                 IsActive           = true,

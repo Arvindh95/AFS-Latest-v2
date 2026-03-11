@@ -12,15 +12,19 @@ namespace FinancialReport.Services
     /// <summary>
     /// The core financial report calculation engine.
     ///
-    /// Given a Report Definition (set of line items with account ranges, sign rules,
-    /// subtotal groupings, and formulas) and pre-fetched GL data, this engine:
+    /// Supports both single-definition (legacy) and multi-definition (new) modes.
     ///
-    ///   1. Iterates line items in SortOrder sequence
-    ///   2. For ACCOUNT lines  → sums GL accounts in the range, applies sign rule
-    ///   3. For SUBTOTAL lines → sums all child lines (those pointing to this LineCode as parent)
-    ///   4. For CALCULATED lines → evaluates a formula expression referencing other LineCodes
-    ///   5. Produces a flat Dictionary of {{LINECODE_CY}} / {{LINECODE_PY}} placeholder values
-    ///      ready to be inserted directly into the Word template.
+    /// Multi-definition mode (CalculateAll):
+    ///   - Accepts any number of Report Definitions, each with a short prefix (e.g. "BS", "PL", "CF")
+    ///   - Loads all line items from all definitions into a single processing graph
+    ///   - Resolves cross-definition formula references (e.g. CF formula: BS_RETAINED_ASSETS - DISPOSED_ASSETS)
+    ///   - Uses topological sort (Kahn's algorithm) to determine the correct calculation order automatically
+    ///   - Detects circular dependencies and surfaces a clear error
+    ///   - Produces prefixed placeholder keys: PREFIX_LINECODE_CY / PREFIX_LINECODE_PY
+    ///
+    /// Formula token resolution:
+    ///   - Explicit:  "BS_TOTAL_ASSETS" → token starts with known prefix "BS_" → cross-definition reference
+    ///   - Implicit:  "TOTAL_ASSETS"    → no prefix match → own-definition, resolved as "CURRENTPREFIX_TOTAL_ASSETS"
     ///
     /// The engine is stateless — create a new instance per report generation.
     /// </summary>
@@ -29,10 +33,9 @@ namespace FinancialReport.Services
         private readonly PXGraph _graph;
         private readonly RoundingSettings _rounding;
 
-        // Holds calculated values as the engine processes lines in order.
-        // Key = LineCode (uppercase), Value = calculated decimal
-        private readonly Dictionary<string, decimal> _cyValues  = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
-        private readonly Dictionary<string, decimal> _pyValues  = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+        // Global dictionaries used during CalculateAll — keyed by PREFIX_LINECODE (uppercase)
+        private readonly Dictionary<string, decimal> _cyGlobal = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, decimal> _pyGlobal = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
 
         public ReportCalculationEngine(PXGraph graph, RoundingSettings rounding = null)
         {
@@ -40,126 +43,498 @@ namespace FinancialReport.Services
             _rounding = rounding ?? new RoundingSettings();
         }
 
+        // ─────────────────────────────────────────────────────────────────
+        // PUBLIC STRUCTS & CLASSES
+        // ─────────────────────────────────────────────────────────────────
+
         /// <summary>
-        /// Main entry point. Calculates all line values for a report definition
-        /// and returns a placeholder dictionary ready for Word template population.
+        /// Describes one Report Definition to be included in a multi-definition calculation.
         /// </summary>
-        /// <param name="definitionID">The Report Definition to use.</param>
-        /// <param name="cyData">GL data for the current year period.</param>
-        /// <param name="pyData">GL data for the prior year period.</param>
+        public struct DefinitionLink
+        {
+            /// <summary>The DB identity of the FLRTReportDefinition record.</summary>
+            public int DefinitionID { get; set; }
+
+            /// <summary>
+            /// Short alphanumeric prefix (e.g. "BS", "PL", "CF").
+            /// Namespaces all placeholder keys produced by this definition.
+            /// Prefix + "_" + LineCode + "_CY" = the Word template placeholder key.
+            /// </summary>
+            public string Prefix { get; set; }
+
+            /// <summary>Per-definition rounding configuration for value formatting.</summary>
+            public RoundingSettings Rounding { get; set; }
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // INTERNAL NODE
+        // ─────────────────────────────────────────────────────────────────
+
+        private class LineNode
+        {
+            public FLRTReportLineItem Line     { get; set; }
+            public string            Prefix   { get; set; }
+            public int               DefinitionID { get; set; }
+            public RoundingSettings  Rounding { get; set; }
+
+            /// <summary>Global dictionary key: PREFIX_LINECODE (uppercase).</summary>
+            public string GlobalKey => $"{Prefix}_{Line.LineCode}".ToUpper();
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // MULTI-DEFINITION ENTRY POINT
+        // ─────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Calculates all line values across multiple linked definitions in one pass.
+        /// Uses topological sort to determine calculation order automatically —
+        /// cross-definition references are resolved without any manual sequencing.
+        /// </summary>
+        /// <param name="definitionLinks">All definitions linked to this report.</param>
+        /// <param name="cyData">GL data for the current year period (shared across all definitions).</param>
+        /// <param name="pyData">GL data for the prior year period (shared across all definitions).</param>
+        /// <param name="cyOpeningData">
+        /// GL data for the end of the year BEFORE the current year — i.e. the fiscal-year opening balance
+        /// for CY lines with BalanceType=Beginning.  Pass prevYearData here.
+        /// When null, falls back to cyData.BeginningBalance (legacy behaviour).
+        /// </param>
+        /// <param name="pyOpeningData">
+        /// GL data for the end of the year BEFORE the prior year — i.e. the fiscal-year opening balance
+        /// for PY lines with BalanceType=Beginning.  Pass prevYearPriorData here.
+        /// When null, falls back to pyData.BeginningBalance (legacy behaviour).
+        /// </param>
+        /// <param name="cyJanOpeningData">
+        /// GL data fetched from period 01-{currYear} via FetchJanuaryBeginningBalance.
+        /// Used for BalanceType=JanuaryBeginning on CY lines (.BeginningBalance per account).
+        /// </param>
+        /// <param name="pyJanOpeningData">
+        /// GL data fetched from period 01-{prevYear} via FetchJanuaryBeginningBalance.
+        /// Used for BalanceType=JanuaryBeginning on PY lines (.BeginningBalance per account).
+        /// </param>
+        /// <param name="cyCumulativeData">
+        /// Year-to-date range data for CY (e.g. Jan–Dec of current year).
+        /// Used for BalanceType=Debit/Credit/Movement so the full-year totals are used,
+        /// not just the single year-end period's movement values.
+        /// </param>
+        /// <param name="pyCumulativeData">
+        /// Year-to-date range data for PY (e.g. Jan–Dec of prior year).
+        /// Used for BalanceType=Debit/Credit/Movement on PY lines.
+        /// </param>
         /// <returns>
-        /// Dictionary keyed by placeholder name (e.g. "CASH_CY", "NET_INCOME_PY").
-        /// Values are formatted strings (e.g. "50,000" or "(30,000)" for negatives).
+        /// Unified placeholder dictionary keyed as PREFIX_LINECODE_CY / PREFIX_LINECODE_PY.
+        /// E.g. "BS_TOTAL_ASSETS_CY", "PL_NET_INCOME_PY"
         /// </returns>
+        public Dictionary<string, string> CalculateAll(
+            IEnumerable<DefinitionLink> definitionLinks,
+            FinancialApiData cyData,
+            FinancialApiData pyData,
+            FinancialApiData cyOpeningData = null,
+            FinancialApiData pyOpeningData = null,
+            FinancialApiData cyJanOpeningData = null,
+            FinancialApiData pyJanOpeningData = null,
+            FinancialApiData cyCumulativeData = null,
+            FinancialApiData pyCumulativeData = null)
+        {
+            _cyGlobal.Clear();
+            _pyGlobal.Clear();
+
+            var linkList = definitionLinks?.ToList();
+            if (linkList == null || !linkList.Any())
+                return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            // Collect known prefixes for formula token resolution
+            var knownPrefixes = new HashSet<string>(
+                linkList.Select(l => l.Prefix?.ToUpper()).Where(p => !string.IsNullOrEmpty(p)),
+                StringComparer.OrdinalIgnoreCase);
+
+            PXTrace.WriteInformation($"ReportCalculationEngine.CalculateAll: {linkList.Count} definition(s), prefixes: [{string.Join(", ", knownPrefixes)}]");
+
+            // 1. Load all line items from all definitions
+            var allNodes = LoadAllLineItems(linkList);
+            if (!allNodes.Any())
+            {
+                PXTrace.WriteWarning("ReportCalculationEngine.CalculateAll: No line items found across all definitions.");
+                return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            }
+
+            PXTrace.WriteInformation($"ReportCalculationEngine.CalculateAll: {allNodes.Count} total line items loaded.");
+
+            // 2. Build dependency graph and topologically sort
+            var sortedNodes = BuildAndSort(allNodes, knownPrefixes);
+
+            // 3. Process nodes in dependency-resolved order
+            foreach (var node in sortedNodes)
+            {
+                if (string.IsNullOrWhiteSpace(node.Line.LineCode)) continue;
+                if (node.Line.LineType == FLRTReportLineItem.LineItemType.Heading) continue;
+
+                decimal cyVal = 0m;
+                decimal pyVal = 0m;
+
+                switch (node.Line.LineType)
+                {
+                    case FLRTReportLineItem.LineItemType.Account:
+                        cyVal = CalculateAccountLine(node.Line, cyData, cyOpeningData, cyJanOpeningData, cyCumulativeData);
+                        pyVal = CalculateAccountLine(node.Line, pyData, pyOpeningData, pyJanOpeningData, pyCumulativeData);
+                        break;
+
+                    case FLRTReportLineItem.LineItemType.Subtotal:
+                        cyVal = CalculateSubtotal(node.Line.LineCode, node.DefinitionID, node.Prefix, _cyGlobal);
+                        pyVal = CalculateSubtotal(node.Line.LineCode, node.DefinitionID, node.Prefix, _pyGlobal);
+                        break;
+
+                    case FLRTReportLineItem.LineItemType.Calculated:
+                        cyVal = EvaluateFormula(node.Line.Formula, node.Prefix, knownPrefixes, _cyGlobal);
+                        pyVal = EvaluateFormula(node.Line.Formula, node.Prefix, knownPrefixes, _pyGlobal);
+                        break;
+                }
+
+                _cyGlobal[node.GlobalKey] = cyVal;
+                _pyGlobal[node.GlobalKey] = pyVal;
+
+                PXTrace.WriteInformation($"  [{node.Prefix}] {node.Line.LineCode,-30} CY={cyVal,15:#,##0.##}  PY={pyVal,15:#,##0.##}");
+            }
+
+            return BuildPlaceholderMap(allNodes);
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // LEGACY SINGLE-DEFINITION ENTRY POINT (backward compatibility)
+        // ─────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Legacy single-definition entry point. Internally delegates to CalculateAll.
+        /// Output placeholder keys are now PREFIX_LINECODE_CY (e.g. BS_TOTAL_ASSETS_CY)
+        /// rather than LINECODE_CY. Existing Word templates must be updated accordingly.
+        /// </summary>
         public Dictionary<string, string> Calculate(
             int definitionID,
             FinancialApiData cyData,
             FinancialApiData pyData)
         {
-            _cyValues.Clear();
-            _pyValues.Clear();
-
-            // Load all line items for this definition, ordered by SortOrder
-            var lineItems = SelectFrom<FLRTReportLineItem>
-                .Where<FLRTReportLineItem.definitionID.IsEqual<@P.AsInt>>
-                .OrderBy<FLRTReportLineItem.sortOrder.Asc>
+            var def = SelectFrom<FLRTReportDefinition>
+                .Where<FLRTReportDefinition.definitionID.IsEqual<@P.AsInt>>
                 .View.Select(_graph, definitionID)
-                .RowCast<FLRTReportLineItem>()
-                .ToList();
+                .TopFirst;
 
-            if (!lineItems.Any())
+            if (def == null)
             {
-                PXTrace.WriteWarning($"ReportCalculationEngine: No line items found for DefinitionID {definitionID}.");
+                PXTrace.WriteWarning($"ReportCalculationEngine.Calculate: Definition {definitionID} not found.");
                 return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             }
 
-            PXTrace.WriteInformation($"ReportCalculationEngine: Processing {lineItems.Count} line items for DefinitionID {definitionID}.");
+            // Fallback prefix if not set: first 10 chars of DefinitionCD
+            string prefix = !string.IsNullOrWhiteSpace(def.DefinitionPrefix)
+                ? def.DefinitionPrefix
+                : def.DefinitionCD?.Length > 10
+                    ? def.DefinitionCD.Substring(0, 10).ToUpper()
+                    : def.DefinitionCD?.ToUpper() ?? "DEF";
 
-            // Process each line in SortOrder — order matters because subtotals depend on account lines
-            foreach (var line in lineItems)
+            var link = new DefinitionLink
             {
-                if (string.IsNullOrWhiteSpace(line.LineCode)) continue;
-                if (line.LineType == FLRTReportLineItem.LineItemType.Heading) continue;
+                DefinitionID = definitionID,
+                Prefix       = prefix,
+                Rounding     = RoundingSettings.FromDefinition(def)
+            };
 
-                decimal cyValue = 0m;
-                decimal pyValue = 0m;
+            return CalculateAll(new[] { link }, cyData, pyData, cyOpeningData: null, pyOpeningData: null);
+        }
 
-                switch (line.LineType)
+        // ─────────────────────────────────────────────────────────────────
+        // LINE ITEM LOADING
+        // ─────────────────────────────────────────────────────────────────
+
+        private List<LineNode> LoadAllLineItems(List<DefinitionLink> links)
+        {
+            var allNodes = new List<LineNode>();
+
+            foreach (var link in links)
+            {
+                if (string.IsNullOrWhiteSpace(link.Prefix))
+                {
+                    PXTrace.WriteWarning($"ReportCalculationEngine: DefinitionID {link.DefinitionID} has no prefix — skipping.");
+                    continue;
+                }
+
+                var lineItems = SelectFrom<FLRTReportLineItem>
+                    .Where<FLRTReportLineItem.definitionID.IsEqual<@P.AsInt>>
+                    .OrderBy<FLRTReportLineItem.sortOrder.Asc>
+                    .View.Select(_graph, link.DefinitionID)
+                    .RowCast<FLRTReportLineItem>()
+                    .ToList();
+
+                foreach (var line in lineItems)
+                {
+                    allNodes.Add(new LineNode
+                    {
+                        Line         = line,
+                        Prefix       = link.Prefix.ToUpper(),
+                        DefinitionID = link.DefinitionID,
+                        Rounding     = link.Rounding ?? new RoundingSettings()
+                    });
+                }
+
+                PXTrace.WriteInformation($"  Loaded {lineItems.Count} lines for definition {link.DefinitionID} (prefix: {link.Prefix})");
+            }
+
+            return allNodes;
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // TOPOLOGICAL SORT (KAHN'S ALGORITHM)
+        // ─────────────────────────────────────────────────────────────────
+
+        private List<LineNode> BuildAndSort(List<LineNode> allNodes, HashSet<string> knownPrefixes)
+        {
+            // Map GlobalKey → node for fast lookup
+            var nodeMap = allNodes
+                .Where(n => !string.IsNullOrWhiteSpace(n.Line.LineCode))
+                .ToDictionary(n => n.GlobalKey, n => n, StringComparer.OrdinalIgnoreCase);
+
+            // Build dependency sets: deps[key] = set of keys that key depends on
+            var deps = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var node in nodeMap.Values)
+            {
+                string key = node.GlobalKey;
+                deps[key] = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                switch (node.Line.LineType)
                 {
                     case FLRTReportLineItem.LineItemType.Account:
-                        cyValue = CalculateAccountLine(line, cyData);
-                        pyValue = CalculateAccountLine(line, pyData);
+                    case FLRTReportLineItem.LineItemType.Heading:
+                        // No calculation dependencies
                         break;
 
                     case FLRTReportLineItem.LineItemType.Subtotal:
-                        cyValue = CalculateSubtotal(line.LineCode, _cyValues);
-                        pyValue = CalculateSubtotal(line.LineCode, _pyValues);
+                        // Depends on all child lines (same definition)
+                        var childLines = SelectFrom<FLRTReportLineItem>
+                            .Where<FLRTReportLineItem.definitionID.IsEqual<@P.AsInt>
+                                .And<FLRTReportLineItem.parentLineCode.IsEqual<@P.AsString>>>
+                            .View.Select(_graph, node.DefinitionID, node.Line.LineCode)
+                            .RowCast<FLRTReportLineItem>()
+                            .ToList();
+
+                        foreach (var child in childLines)
+                        {
+                            if (!string.IsNullOrWhiteSpace(child.LineCode))
+                                deps[key].Add($"{node.Prefix}_{child.LineCode}".ToUpper());
+                        }
                         break;
 
                     case FLRTReportLineItem.LineItemType.Calculated:
-                        cyValue = EvaluateFormula(line.Formula, _cyValues);
-                        pyValue = EvaluateFormula(line.Formula, _pyValues);
+                        // Depends on all tokens resolved from the formula
+                        if (!string.IsNullOrWhiteSpace(node.Line.Formula))
+                        {
+                            var formulaDeps = ExtractFormulaDependencies(
+                                node.Line.Formula, node.Prefix, knownPrefixes);
+                            foreach (var dep in formulaDeps)
+                                deps[key].Add(dep);
+                        }
                         break;
                 }
-
-                _cyValues[line.LineCode] = cyValue;
-                _pyValues[line.LineCode] = pyValue;
-
-                PXTrace.WriteInformation($"  [{line.SortOrder:D4}] {line.LineCode,-30} CY={cyValue,15:#,##0.##}  PY={pyValue,15:#,##0.##}");
             }
 
-            // Build the final placeholder dictionary
-            return BuildPlaceholderMap(lineItems);
+            // Kahn's algorithm
+            // inDegree[key]  = number of unresolved dependencies for this node
+            // dependents[key] = reverse edges: nodes that become unblocked when key is processed
+            var inDegree   = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var dependents = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+
+            // Build inDegree and reverse-edge (dependents) map in one pass
+            foreach (var kvp in deps)
+            {
+                string key = kvp.Key;
+                int count = 0;
+
+                foreach (string dep in kvp.Value)
+                {
+                    if (!nodeMap.ContainsKey(dep)) continue; // ignore refs to unknown nodes
+
+                    count++;
+
+                    if (!dependents.ContainsKey(dep))
+                        dependents[dep] = new List<string>();
+                    dependents[dep].Add(key);
+                }
+
+                inDegree[key] = count;
+            }
+
+            var queue = new Queue<string>();
+            foreach (var kvp in inDegree)
+            {
+                if (kvp.Value == 0)
+                    queue.Enqueue(kvp.Key);
+            }
+
+            var sortedKeys = new List<string>();
+            while (queue.Count > 0)
+            {
+                string key = queue.Dequeue();
+                sortedKeys.Add(key);
+
+                if (dependents.TryGetValue(key, out var depList))
+                {
+                    foreach (string dependent in depList)
+                    {
+                        inDegree[dependent]--;
+                        if (inDegree[dependent] == 0)
+                            queue.Enqueue(dependent);
+                    }
+                }
+            }
+
+            // Cycle detection
+            if (sortedKeys.Count < nodeMap.Count)
+            {
+                var cycleNodes = inDegree
+                    .Where(kv => kv.Value > 0)
+                    .Select(kv => kv.Key)
+                    .ToList();
+
+                throw new PXException(
+                    Messages.CircularDependencyDetected,
+                    string.Join(", ", cycleNodes));
+            }
+
+            // Return nodes in resolved order; nodes not in deps (HEADINGs, invalid) go last
+            var sortedNodeList = sortedKeys
+                .Where(k => nodeMap.ContainsKey(k))
+                .Select(k => nodeMap[k])
+                .ToList();
+
+            // Append any nodes that weren't in the dep graph (HEADINGs etc.)
+            var sortedSet = new HashSet<string>(sortedKeys, StringComparer.OrdinalIgnoreCase);
+            foreach (var node in allNodes)
+            {
+                if (!string.IsNullOrWhiteSpace(node.Line.LineCode) && !sortedSet.Contains(node.GlobalKey))
+                    sortedNodeList.Add(node);
+            }
+
+            return sortedNodeList;
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // FORMULA DEPENDENCY EXTRACTION
+        // ─────────────────────────────────────────────────────────────────
+
+        private HashSet<string> ExtractFormulaDependencies(
+            string formula, string currentPrefix, HashSet<string> knownPrefixes)
+        {
+            var deps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var tokens = TokenizeFormula(formula);
+
+            foreach (string token in tokens)
+            {
+                if (decimal.TryParse(token, out _)) continue;
+                if ("+-*/()".Contains(token)) continue;
+                if (string.IsNullOrWhiteSpace(token)) continue;
+
+                string resolved = ResolveToken(token, currentPrefix, knownPrefixes);
+                deps.Add(resolved.ToUpper());
+            }
+
+            return deps;
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // TOKEN RESOLUTION (explicit vs. implicit prefix)
+        // ─────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Resolves a formula token to its global dictionary key (PREFIX_LINECODE).
+        ///
+        /// Explicit: token starts with a known prefix + "_"
+        ///   → "BS_TOTAL_ASSETS" in any formula → resolved as "BS_TOTAL_ASSETS"
+        ///
+        /// Implicit: no known prefix detected
+        ///   → "TOTAL_ASSETS" in a CF formula → resolved as "CF_TOTAL_ASSETS"
+        /// </summary>
+        private string ResolveToken(string token, string currentPrefix, HashSet<string> knownPrefixes)
+        {
+            foreach (string prefix in knownPrefixes)
+            {
+                if (token.StartsWith(prefix + "_", StringComparison.OrdinalIgnoreCase))
+                    return token.ToUpper(); // already fully qualified
+            }
+
+            // Implicit: belongs to own definition
+            return $"{currentPrefix}_{token}".ToUpper();
         }
 
         // ─────────────────────────────────────────────────────────────────
         // ACCOUNT LINE CALCULATION
         // ─────────────────────────────────────────────────────────────────
 
-        private decimal CalculateAccountLine(FLRTReportLineItem line, FinancialApiData data)
+        private decimal CalculateAccountLine(FLRTReportLineItem line, FinancialApiData data, FinancialApiData openingData = null, FinancialApiData janOpeningData = null, FinancialApiData cumulativeData = null)
         {
             if (data == null) return 0m;
             if (string.IsNullOrWhiteSpace(line.AccountFrom) || string.IsNullOrWhiteSpace(line.AccountTo))
                 return 0m;
 
-            // When any per-line dimension filter is set, use the raw DetailRows so we can
-            // match on Subaccount / BranchID / OrganizationID per row.
             bool hasFilter = !string.IsNullOrWhiteSpace(line.SubaccountFilter)
                           || !string.IsNullOrWhiteSpace(line.BranchFilter)
                           || !string.IsNullOrWhiteSpace(line.OrganizationFilter)
                           || !string.IsNullOrWhiteSpace(line.LedgerFilter);
 
             if (hasFilter && data.DetailRows != null && data.DetailRows.Count > 0)
-                return CalculateAccountLineFromDetail(line, data.DetailRows);
+                return CalculateAccountLineFromDetail(line, data.DetailRows, openingData?.DetailRows, janOpeningData?.DetailRows, cumulativeData?.DetailRows);
 
-            // ── Default path: aggregated AccountData (same as before) ──
-            if (data.AccountData == null) return 0m;
+            bool isBeginning        = string.Equals(line.BalanceType, FLRTReportLineItem.BalanceTypeValue.Beginning,        StringComparison.OrdinalIgnoreCase);
+            bool isJanuaryBeginning = string.Equals(line.BalanceType, FLRTReportLineItem.BalanceTypeValue.JanuaryBeginning, StringComparison.OrdinalIgnoreCase);
+            bool isDebit    = string.Equals(line.BalanceType, FLRTReportLineItem.BalanceTypeValue.Debit,    StringComparison.OrdinalIgnoreCase);
+            bool isCredit   = string.Equals(line.BalanceType, FLRTReportLineItem.BalanceTypeValue.Credit,   StringComparison.OrdinalIgnoreCase);
+            bool isMovement = string.Equals(line.BalanceType, FLRTReportLineItem.BalanceTypeValue.Movement, StringComparison.OrdinalIgnoreCase);
+
+            // For Debit/Credit/Movement use the year-to-date cumulative data set (Jan–Dec range)
+            // so that transactions from any month are captured, not just the year-end period's values.
+            bool useCumulative = (isDebit || isCredit || isMovement) && cumulativeData?.AccountData != null;
+            var sourceData = useCumulative ? cumulativeData : data;
+
+            if (sourceData.AccountData == null) return 0m;
 
             decimal total = 0m;
             int matched = 0;
 
-            foreach (var kvp in data.AccountData)
+            foreach (var kvp in sourceData.AccountData)
             {
                 string accountCode = kvp.Key;
                 FinancialPeriodData periodData = kvp.Value;
 
-                // Filter by account range
                 if (!IsAccountInRange(accountCode, line.AccountFrom, line.AccountTo))
                     continue;
 
-                // Filter by account type if specified (uses the Type field from the GI)
                 if (!string.IsNullOrWhiteSpace(line.AccountTypeFilter)
                     && !string.Equals(periodData.AccountType, line.AccountTypeFilter, StringComparison.OrdinalIgnoreCase))
                     continue;
 
-                // Get the raw balance for the specified balance type
-                decimal rawValue = GetBalanceByType(periodData, line.BalanceType);
+                decimal rawValue;
+                if (isBeginning && openingData?.AccountData != null)
+                {
+                    // Opening balance = EndingBalance of the prior fiscal-year-end period.
+                    // Works for any fiscal year end month.
+                    rawValue = openingData.AccountData.TryGetValue(accountCode, out FinancialPeriodData openingPeriod)
+                        ? openingPeriod.EndingBalance
+                        : 0m;
+                }
+                else if (isJanuaryBeginning && janOpeningData?.AccountData != null)
+                {
+                    // Opening balance = BeginningBalance of period 01-{Year}.
+                    // Best suited for calendar-year (Jan–Dec) fiscal periods.
+                    rawValue = janOpeningData.AccountData.TryGetValue(accountCode, out FinancialPeriodData janPeriod)
+                        ? janPeriod.BeginningBalance
+                        : 0m;
+                }
+                else
+                {
+                    // For Debit/Credit/Movement, periodData is already from cumulativeData (full-year).
+                    // For Ending/Beginning fallback, periodData is from the single year-end period.
+                    rawValue = GetBalanceByType(periodData, line.BalanceType);
+                }
 
-                // Apply sign normalization based on account type from GI
                 decimal signCorrected = ApplyAccountTypeSign(rawValue, periodData.AccountType);
-
-                // Apply the line-level sign rule (FLIP allows accountant to override)
-                decimal finalValue = line.SignRule == FLRTReportLineItem.SignRuleValue.Flip
+                decimal finalValue  = line.SignRule == FLRTReportLineItem.SignRuleValue.Flip
                     ? signCorrected * -1
                     : signCorrected;
 
@@ -173,19 +548,25 @@ namespace FinancialReport.Services
             return total;
         }
 
-        /// <summary>
-        /// Filtered variant of account calculation — iterates the per-row DetailRows
-        /// and applies optional Subaccount / Branch / Organization filters.
-        /// </summary>
-        private decimal CalculateAccountLineFromDetail(FLRTReportLineItem line, List<FinancialPeriodData> detailRows)
+        private decimal CalculateAccountLineFromDetail(FLRTReportLineItem line, List<FinancialPeriodData> detailRows, List<FinancialPeriodData> openingDetailRows = null, List<FinancialPeriodData> janOpeningDetailRows = null, List<FinancialPeriodData> cumulativeDetailRows = null)
         {
             decimal total = 0m;
             int matched = 0;
 
-            foreach (var row in detailRows)
+            bool isBeginning        = string.Equals(line.BalanceType, FLRTReportLineItem.BalanceTypeValue.Beginning,        StringComparison.OrdinalIgnoreCase);
+            bool isJanuaryBeginning = string.Equals(line.BalanceType, FLRTReportLineItem.BalanceTypeValue.JanuaryBeginning, StringComparison.OrdinalIgnoreCase);
+            bool isDebit    = string.Equals(line.BalanceType, FLRTReportLineItem.BalanceTypeValue.Debit,    StringComparison.OrdinalIgnoreCase);
+            bool isCredit   = string.Equals(line.BalanceType, FLRTReportLineItem.BalanceTypeValue.Credit,   StringComparison.OrdinalIgnoreCase);
+            bool isMovement = string.Equals(line.BalanceType, FLRTReportLineItem.BalanceTypeValue.Movement, StringComparison.OrdinalIgnoreCase);
+
+            // For Debit/Credit/Movement use year-to-date cumulative rows (full-year range)
+            // so transactions from any month are captured, not just the year-end period.
+            bool useCumulative = (isDebit || isCredit || isMovement) && cumulativeDetailRows != null && cumulativeDetailRows.Count > 0;
+            var sourceRows = useCumulative ? cumulativeDetailRows : detailRows;
+
+            foreach (var row in sourceRows)
             {
-                if (!IsAccountInRange(row.Account, line.AccountFrom, line.AccountTo))
-                    continue;
+                if (!IsAccountInRange(row.Account, line.AccountFrom, line.AccountTo)) continue;
 
                 if (!string.IsNullOrWhiteSpace(line.AccountTypeFilter)
                     && !string.Equals(row.AccountType, line.AccountTypeFilter, StringComparison.OrdinalIgnoreCase))
@@ -207,7 +588,35 @@ namespace FinancialReport.Services
                     && !string.Equals(row.Ledger, line.LedgerFilter, StringComparison.OrdinalIgnoreCase))
                     continue;
 
-                decimal rawValue      = GetBalanceByType(row, line.BalanceType);
+                decimal rawValue;
+                if (isBeginning && openingDetailRows != null)
+                {
+                    // Opening balance = EndingBalance of the prior fiscal-year-end period for the same dimension combination.
+                    var openingRow = openingDetailRows.FirstOrDefault(r =>
+                        string.Equals(r.Account,         row.Account,         StringComparison.OrdinalIgnoreCase)
+                     && string.Equals(r.Subaccount,      row.Subaccount,      StringComparison.OrdinalIgnoreCase)
+                     && string.Equals(r.BranchID,        row.BranchID,        StringComparison.OrdinalIgnoreCase)
+                     && string.Equals(r.OrganizationID,  row.OrganizationID,  StringComparison.OrdinalIgnoreCase)
+                     && string.Equals(r.Ledger,          row.Ledger,          StringComparison.OrdinalIgnoreCase));
+                    rawValue = openingRow != null ? openingRow.EndingBalance : 0m;
+                }
+                else if (isJanuaryBeginning && janOpeningDetailRows != null)
+                {
+                    // Opening balance = BeginningBalance of period 01-{Year} for the same dimension combination.
+                    var janRow = janOpeningDetailRows.FirstOrDefault(r =>
+                        string.Equals(r.Account,         row.Account,         StringComparison.OrdinalIgnoreCase)
+                     && string.Equals(r.Subaccount,      row.Subaccount,      StringComparison.OrdinalIgnoreCase)
+                     && string.Equals(r.BranchID,        row.BranchID,        StringComparison.OrdinalIgnoreCase)
+                     && string.Equals(r.OrganizationID,  row.OrganizationID,  StringComparison.OrdinalIgnoreCase)
+                     && string.Equals(r.Ledger,          row.Ledger,          StringComparison.OrdinalIgnoreCase));
+                    rawValue = janRow != null ? janRow.BeginningBalance : 0m;
+                }
+                else
+                {
+                    // For Debit/Credit/Movement, row is already from cumulativeDetailRows (full-year).
+                    rawValue = GetBalanceByType(row, line.BalanceType);
+                }
+
                 decimal signCorrected = ApplyAccountTypeSign(rawValue, row.AccountType);
                 decimal finalValue    = line.SignRule == FLRTReportLineItem.SignRuleValue.Flip
                                         ? signCorrected * -1
@@ -217,12 +626,12 @@ namespace FinancialReport.Services
                 matched++;
             }
 
-            PXTrace.WriteInformation($"    Account range {line.AccountFrom}:{line.AccountTo} [filtered] matched {matched} of {detailRows.Count} detail rows → {total:#,##0.##}");
+            PXTrace.WriteInformation($"    Account range {line.AccountFrom}:{line.AccountTo} [filtered] matched {matched} of {sourceRows.Count} detail rows → {total:#,##0.##}");
+
             if (matched == 0)
             {
-                // Log filter values and a sample of what's in the data for debugging
                 PXTrace.WriteWarning($"    Filters: Sub='{line.SubaccountFilter}' Branch='{line.BranchFilter}' Org='{line.OrganizationFilter}' Ledger='{line.LedgerFilter}'");
-                var inRange = detailRows.Where(r => IsAccountInRange(r.Account, line.AccountFrom, line.AccountTo)).Take(3).ToList();
+                var inRange = sourceRows.Where(r => IsAccountInRange(r.Account, line.AccountFrom, line.AccountTo)).Take(3).ToList();
                 foreach (var r in inRange)
                     PXTrace.WriteWarning($"    Sample row: Acct={r.Account} Sub='{r.Subaccount}' Branch='{r.BranchID}' Org='{r.OrganizationID}' Ledger='{r.Ledger}' EndBal={r.EndingBalance}");
             }
@@ -232,23 +641,19 @@ namespace FinancialReport.Services
 
         // ─────────────────────────────────────────────────────────────────
         // SIGN NORMALIZATION
-        // Converts raw GL credit-normal balances to presentation-positive values
-        // based on the AccountType returned by the TrialBalance GI.
         // ─────────────────────────────────────────────────────────────────
 
         private decimal ApplyAccountTypeSign(decimal rawValue, string accountType)
         {
-            // Credit-normal accounts store natural balances as negatives in the GL.
-            // Flip them so they appear positive on the financial statement.
             switch (accountType?.Trim())
             {
-                case FLRTReportLineItem.AccountTypeValue.Liability: // L
-                case FLRTReportLineItem.AccountTypeValue.Income:    // I
-                case FLRTReportLineItem.AccountTypeValue.Equity:    // Q
+                case FLRTReportLineItem.AccountTypeValue.Liability:
+                case FLRTReportLineItem.AccountTypeValue.Income:
+                case FLRTReportLineItem.AccountTypeValue.Equity:
                     return rawValue * -1;
 
-                case FLRTReportLineItem.AccountTypeValue.Asset:     // A
-                case FLRTReportLineItem.AccountTypeValue.Expense:   // E
+                case FLRTReportLineItem.AccountTypeValue.Asset:
+                case FLRTReportLineItem.AccountTypeValue.Expense:
                 default:
                     return rawValue;
             }
@@ -274,22 +679,30 @@ namespace FinancialReport.Services
 
         // ─────────────────────────────────────────────────────────────────
         // SUBTOTAL CALCULATION
-        // Sums all lines that declared this LineCode as their ParentLineCode
+        // Scoped to the same definition (by DefinitionID + Prefix)
+        // Looks up child values from the global dictionary
         // ─────────────────────────────────────────────────────────────────
 
-        private decimal CalculateSubtotal(string subtotalLineCode, Dictionary<string, decimal> values)
+        private decimal CalculateSubtotal(
+            string subtotalLineCode,
+            int definitionID,
+            string prefix,
+            Dictionary<string, decimal> globalValues)
         {
-            // Find all line items in this definition that belong to this subtotal group
+            // Child lines are always within the same definition
             var childLines = SelectFrom<FLRTReportLineItem>
-                .Where<FLRTReportLineItem.parentLineCode.IsEqual<@P.AsString>>
-                .View.Select(_graph, subtotalLineCode)
+                .Where<FLRTReportLineItem.definitionID.IsEqual<@P.AsInt>
+                    .And<FLRTReportLineItem.parentLineCode.IsEqual<@P.AsString>>>
+                .View.Select(_graph, definitionID, subtotalLineCode)
                 .RowCast<FLRTReportLineItem>()
                 .ToList();
 
             decimal total = 0m;
             foreach (var child in childLines)
             {
-                if (values.TryGetValue(child.LineCode, out decimal childValue))
+                if (string.IsNullOrWhiteSpace(child.LineCode)) continue;
+                string childKey = $"{prefix}_{child.LineCode}".ToUpper();
+                if (globalValues.TryGetValue(childKey, out decimal childValue))
                     total += childValue;
             }
 
@@ -298,21 +711,22 @@ namespace FinancialReport.Services
 
         // ─────────────────────────────────────────────────────────────────
         // FORMULA EVALUATOR
-        // Handles expressions like: REVENUE - TOTAL_EXPENSES + OTHER_INCOME
-        // Supports: +, -, *, / operators and parentheses
-        // Operands must be LineCodes already calculated (earlier SortOrder)
+        // Resolves tokens as PREFIX_LINECODE, supports both explicit and
+        // implicit prefix syntax.
         // ─────────────────────────────────────────────────────────────────
 
-        private decimal EvaluateFormula(string formula, Dictionary<string, decimal> values)
+        private decimal EvaluateFormula(
+            string formula,
+            string currentPrefix,
+            HashSet<string> knownPrefixes,
+            Dictionary<string, decimal> globalValues)
         {
             if (string.IsNullOrWhiteSpace(formula)) return 0m;
 
             try
             {
-                // Tokenize: split on operators while keeping them
-                // Handles: REVENUE - TOTAL_EXPENSES * 1.5 + (OTHER_INCOME - ADJUSTMENTS)
                 var tokens = TokenizeFormula(formula);
-                return EvaluateTokens(tokens, values);
+                return EvaluateTokens(tokens, currentPrefix, knownPrefixes, globalValues);
             }
             catch (Exception ex)
             {
@@ -323,45 +737,51 @@ namespace FinancialReport.Services
 
         private List<string> TokenizeFormula(string formula)
         {
-            // Matches line codes (alphanumeric + underscore), numbers, operators, and parentheses
             var tokenRegex = new Regex(@"([A-Z][A-Z0-9_]*)|([\d]+\.?[\d]*)|([\+\-\*\/\(\)])", RegexOptions.IgnoreCase);
             var tokens = new List<string>();
-
             foreach (Match m in tokenRegex.Matches(formula.Trim()))
                 tokens.Add(m.Value);
-
             return tokens;
         }
 
-        // Recursive descent parser: handles operator precedence and parentheses
-        private decimal EvaluateTokens(List<string> tokens, Dictionary<string, decimal> values)
+        private decimal EvaluateTokens(
+            List<string> tokens,
+            string currentPrefix,
+            HashSet<string> knownPrefixes,
+            Dictionary<string, decimal> globalValues)
         {
             int pos = 0;
-            return ParseExpression(tokens, ref pos, values);
+            return ParseExpression(tokens, ref pos, currentPrefix, knownPrefixes, globalValues);
         }
 
-        private decimal ParseExpression(List<string> tokens, ref int pos, Dictionary<string, decimal> values)
+        private decimal ParseExpression(
+            List<string> tokens, ref int pos,
+            string currentPrefix, HashSet<string> knownPrefixes,
+            Dictionary<string, decimal> globalValues)
         {
-            decimal result = ParseTerm(tokens, ref pos, values);
+            decimal result = ParseTerm(tokens, ref pos, currentPrefix, knownPrefixes, globalValues);
 
             while (pos < tokens.Count && (tokens[pos] == "+" || tokens[pos] == "-"))
             {
                 string op = tokens[pos++];
-                decimal right = ParseTerm(tokens, ref pos, values);
+                decimal right = ParseTerm(tokens, ref pos, currentPrefix, knownPrefixes, globalValues);
                 result = op == "+" ? result + right : result - right;
             }
 
             return result;
         }
 
-        private decimal ParseTerm(List<string> tokens, ref int pos, Dictionary<string, decimal> values)
+        private decimal ParseTerm(
+            List<string> tokens, ref int pos,
+            string currentPrefix, HashSet<string> knownPrefixes,
+            Dictionary<string, decimal> globalValues)
         {
-            decimal result = ParseFactor(tokens, ref pos, values);
+            decimal result = ParseFactor(tokens, ref pos, currentPrefix, knownPrefixes, globalValues);
 
             while (pos < tokens.Count && (tokens[pos] == "*" || tokens[pos] == "/"))
             {
                 string op = tokens[pos++];
-                decimal right = ParseFactor(tokens, ref pos, values);
+                decimal right = ParseFactor(tokens, ref pos, currentPrefix, knownPrefixes, globalValues);
                 if (op == "/" && right != 0)
                     result = result / right;
                 else if (op == "*")
@@ -371,48 +791,46 @@ namespace FinancialReport.Services
             return result;
         }
 
-        private decimal ParseFactor(List<string> tokens, ref int pos, Dictionary<string, decimal> values)
+        private decimal ParseFactor(
+            List<string> tokens, ref int pos,
+            string currentPrefix, HashSet<string> knownPrefixes,
+            Dictionary<string, decimal> globalValues)
         {
             if (pos >= tokens.Count) return 0m;
 
             string token = tokens[pos];
 
-            // Parenthesized sub-expression
             if (token == "(")
             {
-                pos++; // consume "("
-                decimal inner = ParseExpression(tokens, ref pos, values);
+                pos++;
+                decimal inner = ParseExpression(tokens, ref pos, currentPrefix, knownPrefixes, globalValues);
                 if (pos < tokens.Count && tokens[pos] == ")")
-                    pos++; // consume ")"
+                    pos++;
                 return inner;
             }
 
-            // Unary minus
             if (token == "-")
             {
                 pos++;
-                return -ParseFactor(tokens, ref pos, values);
+                return -ParseFactor(tokens, ref pos, currentPrefix, knownPrefixes, globalValues);
             }
 
             pos++;
 
-            // Numeric literal
             if (decimal.TryParse(token, out decimal numericValue))
                 return numericValue;
 
-            // LineCode reference — look up already-calculated value
-            string lineCode = token.ToUpper();
-            if (values.TryGetValue(lineCode, out decimal lineValue))
+            // Resolve token to global key and look up
+            string globalKey = ResolveToken(token, currentPrefix, knownPrefixes);
+            if (globalValues.TryGetValue(globalKey, out decimal lineValue))
                 return lineValue;
 
-            PXTrace.WriteWarning($"ReportCalculationEngine: Formula references unknown LineCode '{token}'. " +
-                                  "Ensure it is defined earlier in SortOrder. Defaulting to 0.");
+            PXTrace.WriteWarning($"ReportCalculationEngine: Formula references unknown key '{globalKey}' (token: '{token}'). Defaulting to 0.");
             return 0m;
         }
 
         // ─────────────────────────────────────────────────────────────────
         // ACCOUNT RANGE COMPARISON
-        // Reuses the same smart alphanumeric comparison from FinancialDataService
         // ─────────────────────────────────────────────────────────────────
 
         private bool IsAccountInRange(string account, string from, string to)
@@ -469,60 +887,59 @@ namespace FinancialReport.Services
 
         // ─────────────────────────────────────────────────────────────────
         // BUILD PLACEHOLDER MAP
-        // Converts the internal decimal values into formatted strings
-        // keyed by {{LINECODE_CY}} / {{LINECODE_PY}} placeholder names
+        // Keys: PREFIX_LINECODE_CY / PREFIX_LINECODE_PY
+        // Values: formatted strings (per-definition rounding applied)
         // ─────────────────────────────────────────────────────────────────
 
-        private Dictionary<string, string> BuildPlaceholderMap(List<FLRTReportLineItem> lineItems)
+        private Dictionary<string, string> BuildPlaceholderMap(List<LineNode> allNodes)
         {
             var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (var line in lineItems)
+            foreach (var node in allNodes)
             {
-                if (string.IsNullOrWhiteSpace(line.LineCode)) continue;
+                if (string.IsNullOrWhiteSpace(node.Line.LineCode)) continue;
 
-                string cyKey = $"{line.LineCode}_{Constants.CurrentYearSuffix}";
-                string pyKey = $"{line.LineCode}_{Constants.PreviousYearSuffix}";
+                string cyKey = $"{node.Prefix}_{node.Line.LineCode}_{Constants.CurrentYearSuffix}";
+                string pyKey = $"{node.Prefix}_{node.Line.LineCode}_{Constants.PreviousYearSuffix}";
 
-                // Heading lines and non-visible lines get empty string (not "0")
-                if (line.LineType == FLRTReportLineItem.LineItemType.Heading || line.IsVisible == false)
+                if (node.Line.LineType == FLRTReportLineItem.LineItemType.Heading || node.Line.IsVisible == false)
                 {
                     map[cyKey] = string.Empty;
                     map[pyKey] = string.Empty;
                     continue;
                 }
 
-                decimal cyVal = _cyValues.TryGetValue(line.LineCode, out decimal cy) ? cy : 0m;
-                decimal pyVal = _pyValues.TryGetValue(line.LineCode, out decimal py) ? py : 0m;
+                decimal cyVal = _cyGlobal.TryGetValue(node.GlobalKey, out decimal cy) ? cy : 0m;
+                decimal pyVal = _pyGlobal.TryGetValue(node.GlobalKey, out decimal py) ? py : 0m;
 
-                map[cyKey] = FormatFinancialValue(cyVal);
-                map[pyKey] = FormatFinancialValue(pyVal);
+                map[cyKey] = FormatFinancialValue(cyVal, node.Rounding);
+                map[pyKey] = FormatFinancialValue(pyVal, node.Rounding);
             }
 
             return map;
         }
 
-        /// <summary>
-        /// Formats a decimal for financial report presentation.
-        /// Applies rounding level (Units/Thousands/Millions) and decimal places.
-        /// Positive values: "1,234,567"
-        /// Negative values: "(1,234,567)"  — accounting bracket notation
-        /// Zero: "-"  (dash, standard financial statement practice)
-        /// </summary>
-        private string FormatFinancialValue(decimal value)
+        // ─────────────────────────────────────────────────────────────────
+        // VALUE FORMATTING
+        // ─────────────────────────────────────────────────────────────────
+
+        private string FormatFinancialValue(decimal value, RoundingSettings rounding = null)
         {
-            decimal scaled = ApplyRounding(value);
+            rounding = rounding ?? _rounding;
+            decimal scaled = ApplyRounding(value, rounding);
 
             if (scaled == 0m) return "-";
 
-            string format = BuildFormatString();
+            string format = BuildFormatString(rounding);
             if (scaled < 0m) return $"({Math.Abs(scaled).ToString(format)})";
             return scaled.ToString(format);
         }
 
-        private decimal ApplyRounding(decimal value)
+        private decimal ApplyRounding(decimal value, RoundingSettings rounding = null)
         {
-            switch (_rounding.RoundingLevel)
+            rounding = rounding ?? _rounding;
+
+            switch (rounding.RoundingLevel)
             {
                 case FLRTReportDefinition.RoundingLevelType.Thousands:
                     value = value / 1000m;
@@ -532,14 +949,15 @@ namespace FinancialReport.Services
                     break;
             }
 
-            return Math.Round(value, _rounding.DecimalPlaces, MidpointRounding.AwayFromZero);
+            return Math.Round(value, rounding.DecimalPlaces, MidpointRounding.AwayFromZero);
         }
 
-        private string BuildFormatString()
+        private string BuildFormatString(RoundingSettings rounding = null)
         {
-            if (_rounding.DecimalPlaces <= 0)
+            rounding = rounding ?? _rounding;
+            if (rounding.DecimalPlaces <= 0)
                 return "#,##0";
-            return "#,##0." + new string('0', _rounding.DecimalPlaces);
+            return "#,##0." + new string('0', rounding.DecimalPlaces);
         }
     }
 }
