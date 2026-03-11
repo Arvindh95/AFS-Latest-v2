@@ -86,6 +86,9 @@ namespace FinancialReport
         // ==================================================
         public const string DefinitionCodeRequired = "Definition Code is required.";
         public const string DefinitionCodeMustBeUnique = "Definition Code must be unique.";
+        public const string DefinitionPrefixRequired = "Definition Prefix is required. Enter a short alphanumeric code (e.g. BS, PL, CF).";
+        public const string DefinitionPrefixMustBeAlphanumeric = "Definition Prefix must contain letters and digits only — no spaces, underscores, or special characters.";
+        public const string DefinitionPrefixMustBeUnique = "Definition Prefix must be unique across all definitions. Another definition already uses this prefix.";
         public const string LineCodeRequired = "Line Code is required.";
         public const string LineCodeMustBeUnique = "Line Code must be unique within the same definition.";
         public const string AccountFromRequired = "Account From is required for Account Range line types.";
@@ -95,6 +98,13 @@ namespace FinancialReport
         public const string NoDefinitionLineItems = "Report Definition has no line items configured. Please set up line items in the Report Definition screen.";
         public const string FormulaEvaluationFailed = "Formula evaluation failed for line '{0}': {1}";
         public const string UnknownFormulaLineCode = "Formula references unknown Line Code '{0}'. Ensure it is defined with a lower Sort Order.";
+
+        // ==================================================
+        // MULTI-DEFINITION REPORT MESSAGES
+        // ==================================================
+        public const string DefinitionRequired = "Please select a Report Definition.";
+        public const string DuplicatePrefixInReport = "Prefix '{0}' is already used by another linked definition in this report. Each definition must have a unique prefix.";
+        public const string CircularDependencyDetected = "Circular dependency detected in report definitions. The following line codes form a cycle and cannot be resolved: {0}. Please revise the formulas to break the cycle.";
 
         // ==================================================
         // GI & COLUMN MAPPING MESSAGES

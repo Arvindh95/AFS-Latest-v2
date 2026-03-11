@@ -23,11 +23,26 @@ namespace FinancialReport
         [PXDefault]
         [PXSelector(typeof(FLRTReportDefinition.definitionCD),
             typeof(FLRTReportDefinition.definitionCD),
+            typeof(FLRTReportDefinition.definitionPrefix),
             typeof(FLRTReportDefinition.description),
             typeof(FLRTReportDefinition.reportType),
             Filterable = true)]
         public virtual string DefinitionCD { get; set; }
         public abstract class definitionCD : PX.Data.BQL.BqlString.Field<definitionCD> { }
+        #endregion
+
+        #region DefinitionPrefix
+        /// <summary>
+        /// Short alphanumeric prefix (2-10 chars) used to namespace placeholder keys
+        /// when this definition is used in a multi-definition report.
+        /// Example: "BS" produces {{BS_TOTAL_ASSETS_CY}} in the Word template.
+        /// Must be unique across all definitions and contain only letters/digits.
+        /// </summary>
+        [PXDBString(10, IsUnicode = true)]
+        [PXUIField(DisplayName = "Prefix")]
+        [PXDefault]
+        public virtual string DefinitionPrefix { get; set; }
+        public abstract class definitionPrefix : PX.Data.BQL.BqlString.Field<definitionPrefix> { }
         #endregion
 
         #region Description
