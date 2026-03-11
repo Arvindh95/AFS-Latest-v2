@@ -36,6 +36,7 @@ namespace FinancialReport.Services
         // Global dictionaries used during CalculateAll — keyed by PREFIX_LINECODE (uppercase)
         private readonly Dictionary<string, decimal> _cyGlobal = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, decimal> _pyGlobal = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, decimal> _pmGlobal = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
 
         public ReportCalculationEngine(PXGraph graph, RoundingSettings rounding = null)
         {
@@ -120,9 +121,14 @@ namespace FinancialReport.Services
         /// Year-to-date range data for PY (e.g. Jan–Dec of prior year).
         /// Used for BalanceType=Debit/Credit/Movement on PY lines.
         /// </param>
+        /// <param name="pmData">
+        /// Single-period data for the month immediately before the selected financial month.
+        /// Produces PREFIX_LINECODE_PM placeholder keys for month-over-month comparisons.
+        /// All balance types use this single period (no cumulative for PM).
+        /// </param>
         /// <returns>
-        /// Unified placeholder dictionary keyed as PREFIX_LINECODE_CY / PREFIX_LINECODE_PY.
-        /// E.g. "BS_TOTAL_ASSETS_CY", "PL_NET_INCOME_PY"
+        /// Unified placeholder dictionary keyed as PREFIX_LINECODE_CY / PREFIX_LINECODE_PY / PREFIX_LINECODE_PM.
+        /// E.g. "BS_TOTAL_ASSETS_CY", "PL_NET_INCOME_PY", "KL_CASH_PM"
         /// </returns>
         public Dictionary<string, string> CalculateAll(
             IEnumerable<DefinitionLink> definitionLinks,
@@ -133,10 +139,12 @@ namespace FinancialReport.Services
             FinancialApiData cyJanOpeningData = null,
             FinancialApiData pyJanOpeningData = null,
             FinancialApiData cyCumulativeData = null,
-            FinancialApiData pyCumulativeData = null)
+            FinancialApiData pyCumulativeData = null,
+            FinancialApiData pmData = null)
         {
             _cyGlobal.Clear();
             _pyGlobal.Clear();
+            _pmGlobal.Clear();
 
             var linkList = definitionLinks?.ToList();
             if (linkList == null || !linkList.Any())
@@ -159,10 +167,14 @@ namespace FinancialReport.Services
 
             PXTrace.WriteInformation($"ReportCalculationEngine.CalculateAll: {allNodes.Count} total line items loaded.");
 
-            // 2. Build dependency graph and topologically sort
-            var sortedNodes = BuildAndSort(allNodes, knownPrefixes);
+            // 2. Build parent→children map once — shared by BuildAndSort (for deps) and CalculateSubtotal (for summing).
+            // Key: "{DefinitionID}_{ParentLineCode_uppercase}" → child LineNodes
+            var childrenByParent = BuildChildrenMap(allNodes);
 
-            // 3. Process nodes in dependency-resolved order
+            // 3. Build dependency graph and topologically sort
+            var sortedNodes = BuildAndSort(allNodes, knownPrefixes, childrenByParent);
+
+            // 4. Process nodes in dependency-resolved order
             foreach (var node in sortedNodes)
             {
                 if (string.IsNullOrWhiteSpace(node.Line.LineCode)) continue;
@@ -170,29 +182,33 @@ namespace FinancialReport.Services
 
                 decimal cyVal = 0m;
                 decimal pyVal = 0m;
+                decimal pmVal = 0m;
 
                 switch (node.Line.LineType)
                 {
                     case FLRTReportLineItem.LineItemType.Account:
                         cyVal = CalculateAccountLine(node.Line, cyData, cyOpeningData, cyJanOpeningData, cyCumulativeData);
                         pyVal = CalculateAccountLine(node.Line, pyData, pyOpeningData, pyJanOpeningData, pyCumulativeData);
+                        // PM: single-period previous month — no opening data, no cumulative
+                        pmVal = CalculateAccountLine(node.Line, pmData);
                         break;
 
                     case FLRTReportLineItem.LineItemType.Subtotal:
-                        cyVal = CalculateSubtotal(node.Line.LineCode, node.DefinitionID, node.Prefix, _cyGlobal);
-                        pyVal = CalculateSubtotal(node.Line.LineCode, node.DefinitionID, node.Prefix, _pyGlobal);
+                        cyVal = CalculateSubtotal(node.Line.LineCode, node.DefinitionID, node.Prefix, _cyGlobal, childrenByParent);
+                        pyVal = CalculateSubtotal(node.Line.LineCode, node.DefinitionID, node.Prefix, _pyGlobal, childrenByParent);
+                        pmVal = CalculateSubtotal(node.Line.LineCode, node.DefinitionID, node.Prefix, _pmGlobal, childrenByParent);
                         break;
 
                     case FLRTReportLineItem.LineItemType.Calculated:
                         cyVal = EvaluateFormula(node.Line.Formula, node.Prefix, knownPrefixes, _cyGlobal);
                         pyVal = EvaluateFormula(node.Line.Formula, node.Prefix, knownPrefixes, _pyGlobal);
+                        pmVal = EvaluateFormula(node.Line.Formula, node.Prefix, knownPrefixes, _pmGlobal);
                         break;
                 }
 
                 _cyGlobal[node.GlobalKey] = cyVal;
                 _pyGlobal[node.GlobalKey] = pyVal;
-
-                PXTrace.WriteInformation($"  [{node.Prefix}] {node.Line.LineCode,-30} CY={cyVal,15:#,##0.##}  PY={pyVal,15:#,##0.##}");
+                _pmGlobal[node.GlobalKey] = pmVal;
             }
 
             return BuildPlaceholderMap(allNodes);
@@ -284,7 +300,29 @@ namespace FinancialReport.Services
         // TOPOLOGICAL SORT (KAHN'S ALGORITHM)
         // ─────────────────────────────────────────────────────────────────
 
-        private List<LineNode> BuildAndSort(List<LineNode> allNodes, HashSet<string> knownPrefixes)
+        /// <summary>
+        /// Builds the parent→children lookup once — shared between BuildAndSort (dep resolution)
+        /// and CalculateSubtotal (value summation), eliminating all per-subtotal DB queries.
+        /// Key: "{DefinitionID}_{ParentLineCode_uppercase}"
+        /// </summary>
+        private static Dictionary<string, List<LineNode>> BuildChildrenMap(List<LineNode> allNodes)
+        {
+            var map = new Dictionary<string, List<LineNode>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var n in allNodes)
+            {
+                if (string.IsNullOrWhiteSpace(n.Line.ParentLineCode)) continue;
+                string key = $"{n.DefinitionID}_{n.Line.ParentLineCode.ToUpper()}";
+                if (!map.TryGetValue(key, out var children))
+                {
+                    children = new List<LineNode>();
+                    map[key] = children;
+                }
+                children.Add(n);
+            }
+            return map;
+        }
+
+        private List<LineNode> BuildAndSort(List<LineNode> allNodes, HashSet<string> knownPrefixes, Dictionary<string, List<LineNode>> childrenByParent)
         {
             // Map GlobalKey → node for fast lookup
             var nodeMap = allNodes
@@ -307,18 +345,15 @@ namespace FinancialReport.Services
                         break;
 
                     case FLRTReportLineItem.LineItemType.Subtotal:
-                        // Depends on all child lines (same definition)
-                        var childLines = SelectFrom<FLRTReportLineItem>
-                            .Where<FLRTReportLineItem.definitionID.IsEqual<@P.AsInt>
-                                .And<FLRTReportLineItem.parentLineCode.IsEqual<@P.AsString>>>
-                            .View.Select(_graph, node.DefinitionID, node.Line.LineCode)
-                            .RowCast<FLRTReportLineItem>()
-                            .ToList();
-
-                        foreach (var child in childLines)
+                        // Depends on all child lines — resolved from in-memory map (no DB query)
+                        string parentLookupKey = $"{node.DefinitionID}_{node.Line.LineCode.ToUpper()}";
+                        if (childrenByParent.TryGetValue(parentLookupKey, out var childNodes))
                         {
-                            if (!string.IsNullOrWhiteSpace(child.LineCode))
-                                deps[key].Add($"{node.Prefix}_{child.LineCode}".ToUpper());
+                            foreach (var child in childNodes)
+                            {
+                                if (!string.IsNullOrWhiteSpace(child.Line.LineCode))
+                                    deps[key].Add(child.GlobalKey);
+                            }
                         }
                         break;
 
@@ -492,7 +527,7 @@ namespace FinancialReport.Services
             bool useCumulative = (isDebit || isCredit || isMovement) && cumulativeData?.AccountData != null;
             var sourceData = useCumulative ? cumulativeData : data;
 
-            if (sourceData.AccountData == null) return 0m;
+            if (sourceData == null || sourceData.AccountData == null) return 0m;
 
             decimal total = 0m;
             int matched = 0;
@@ -548,6 +583,24 @@ namespace FinancialReport.Services
             return total;
         }
 
+        /// <summary>Builds a dimension composite key for detail-row index lookups.</summary>
+        private static string DetailKey(string account, string subaccount, string branchID, string organizationID, string ledger)
+            => $"{account}|{subaccount}|{branchID}|{organizationID}|{ledger}";
+
+        /// <summary>
+        /// Builds an O(1)-lookup dictionary from a detail rows list, keyed by
+        /// "Account|Subaccount|BranchID|OrganizationID|Ledger". Last row wins on collision (no exact dupes expected).
+        /// Returns null when the source list is null or empty.
+        /// </summary>
+        private static Dictionary<string, FinancialPeriodData> BuildDetailIndex(List<FinancialPeriodData> rows)
+        {
+            if (rows == null || rows.Count == 0) return null;
+            var index = new Dictionary<string, FinancialPeriodData>(rows.Count, StringComparer.OrdinalIgnoreCase);
+            foreach (var r in rows)
+                index[DetailKey(r.Account, r.Subaccount, r.BranchID, r.OrganizationID, r.Ledger)] = r;
+            return index;
+        }
+
         private decimal CalculateAccountLineFromDetail(FLRTReportLineItem line, List<FinancialPeriodData> detailRows, List<FinancialPeriodData> openingDetailRows = null, List<FinancialPeriodData> janOpeningDetailRows = null, List<FinancialPeriodData> cumulativeDetailRows = null)
         {
             decimal total = 0m;
@@ -563,6 +616,13 @@ namespace FinancialReport.Services
             // so transactions from any month are captured, not just the year-end period.
             bool useCumulative = (isDebit || isCredit || isMovement) && cumulativeDetailRows != null && cumulativeDetailRows.Count > 0;
             var sourceRows = useCumulative ? cumulativeDetailRows : detailRows;
+
+            if (sourceRows == null || sourceRows.Count == 0) return 0m;
+
+            // Pre-build O(1) indexes for opening/jan lookups — replaces O(N) FirstOrDefault per row.
+            // Built once here; used inside the loop below.
+            var openingIndex    = isBeginning        ? BuildDetailIndex(openingDetailRows)    : null;
+            var janOpeningIndex = isJanuaryBeginning ? BuildDetailIndex(janOpeningDetailRows) : null;
 
             foreach (var row in sourceRows)
             {
@@ -589,27 +649,17 @@ namespace FinancialReport.Services
                     continue;
 
                 decimal rawValue;
-                if (isBeginning && openingDetailRows != null)
+                if (isBeginning && openingIndex != null)
                 {
                     // Opening balance = EndingBalance of the prior fiscal-year-end period for the same dimension combination.
-                    var openingRow = openingDetailRows.FirstOrDefault(r =>
-                        string.Equals(r.Account,         row.Account,         StringComparison.OrdinalIgnoreCase)
-                     && string.Equals(r.Subaccount,      row.Subaccount,      StringComparison.OrdinalIgnoreCase)
-                     && string.Equals(r.BranchID,        row.BranchID,        StringComparison.OrdinalIgnoreCase)
-                     && string.Equals(r.OrganizationID,  row.OrganizationID,  StringComparison.OrdinalIgnoreCase)
-                     && string.Equals(r.Ledger,          row.Ledger,          StringComparison.OrdinalIgnoreCase));
-                    rawValue = openingRow != null ? openingRow.EndingBalance : 0m;
+                    string k = DetailKey(row.Account, row.Subaccount, row.BranchID, row.OrganizationID, row.Ledger);
+                    rawValue = openingIndex.TryGetValue(k, out FinancialPeriodData openingRow) ? openingRow.EndingBalance : 0m;
                 }
-                else if (isJanuaryBeginning && janOpeningDetailRows != null)
+                else if (isJanuaryBeginning && janOpeningIndex != null)
                 {
                     // Opening balance = BeginningBalance of period 01-{Year} for the same dimension combination.
-                    var janRow = janOpeningDetailRows.FirstOrDefault(r =>
-                        string.Equals(r.Account,         row.Account,         StringComparison.OrdinalIgnoreCase)
-                     && string.Equals(r.Subaccount,      row.Subaccount,      StringComparison.OrdinalIgnoreCase)
-                     && string.Equals(r.BranchID,        row.BranchID,        StringComparison.OrdinalIgnoreCase)
-                     && string.Equals(r.OrganizationID,  row.OrganizationID,  StringComparison.OrdinalIgnoreCase)
-                     && string.Equals(r.Ledger,          row.Ledger,          StringComparison.OrdinalIgnoreCase));
-                    rawValue = janRow != null ? janRow.BeginningBalance : 0m;
+                    string k = DetailKey(row.Account, row.Subaccount, row.BranchID, row.OrganizationID, row.Ledger);
+                    rawValue = janOpeningIndex.TryGetValue(k, out FinancialPeriodData janRow) ? janRow.BeginningBalance : 0m;
                 }
                 else
                 {
@@ -667,10 +717,14 @@ namespace FinancialReport.Services
         {
             switch (balanceType?.ToUpper())
             {
-                case FLRTReportLineItem.BalanceTypeValue.Beginning: return data.BeginningBalance;
-                case FLRTReportLineItem.BalanceTypeValue.Debit:     return data.Debit;
-                case FLRTReportLineItem.BalanceTypeValue.Credit:    return data.Credit;
-                case FLRTReportLineItem.BalanceTypeValue.Movement:  return data.Debit - data.Credit;
+                case FLRTReportLineItem.BalanceTypeValue.Beginning:     return data.BeginningBalance;
+                case FLRTReportLineItem.BalanceTypeValue.Debit:         return data.Debit;
+                case FLRTReportLineItem.BalanceTypeValue.Credit:        return data.Credit;
+                case FLRTReportLineItem.BalanceTypeValue.Movement:      return data.Debit - data.Credit;
+                // Period types: read the same fields but always from single-period data (no cumulative)
+                case FLRTReportLineItem.BalanceTypeValue.PeriodDebit:    return data.Debit;
+                case FLRTReportLineItem.BalanceTypeValue.PeriodCredit:   return data.Credit;
+                case FLRTReportLineItem.BalanceTypeValue.PeriodMovement: return data.Debit - data.Credit;
                 case FLRTReportLineItem.BalanceTypeValue.Ending:
                 default:
                     return data.EndingBalance;
@@ -687,22 +741,19 @@ namespace FinancialReport.Services
             string subtotalLineCode,
             int definitionID,
             string prefix,
-            Dictionary<string, decimal> globalValues)
+            Dictionary<string, decimal> globalValues,
+            Dictionary<string, List<LineNode>> childrenByParent)
         {
-            // Child lines are always within the same definition
-            var childLines = SelectFrom<FLRTReportLineItem>
-                .Where<FLRTReportLineItem.definitionID.IsEqual<@P.AsInt>
-                    .And<FLRTReportLineItem.parentLineCode.IsEqual<@P.AsString>>>
-                .View.Select(_graph, definitionID, subtotalLineCode)
-                .RowCast<FLRTReportLineItem>()
-                .ToList();
+            // Look up children from in-memory map — zero DB queries
+            string parentKey = $"{definitionID}_{subtotalLineCode.ToUpper()}";
+            if (!childrenByParent.TryGetValue(parentKey, out var childNodes))
+                return 0m;
 
             decimal total = 0m;
-            foreach (var child in childLines)
+            foreach (var child in childNodes)
             {
-                if (string.IsNullOrWhiteSpace(child.LineCode)) continue;
-                string childKey = $"{prefix}_{child.LineCode}".ToUpper();
-                if (globalValues.TryGetValue(childKey, out decimal childValue))
+                if (string.IsNullOrWhiteSpace(child.Line.LineCode)) continue;
+                if (globalValues.TryGetValue(child.GlobalKey, out decimal childValue))
                     total += childValue;
             }
 
@@ -901,19 +952,23 @@ namespace FinancialReport.Services
 
                 string cyKey = $"{node.Prefix}_{node.Line.LineCode}_{Constants.CurrentYearSuffix}";
                 string pyKey = $"{node.Prefix}_{node.Line.LineCode}_{Constants.PreviousYearSuffix}";
+                string pmKey = $"{node.Prefix}_{node.Line.LineCode}_{Constants.PreviousMonthSuffix}";
 
                 if (node.Line.LineType == FLRTReportLineItem.LineItemType.Heading || node.Line.IsVisible == false)
                 {
                     map[cyKey] = string.Empty;
                     map[pyKey] = string.Empty;
+                    map[pmKey] = string.Empty;
                     continue;
                 }
 
                 decimal cyVal = _cyGlobal.TryGetValue(node.GlobalKey, out decimal cy) ? cy : 0m;
                 decimal pyVal = _pyGlobal.TryGetValue(node.GlobalKey, out decimal py) ? py : 0m;
+                decimal pmVal = _pmGlobal.TryGetValue(node.GlobalKey, out decimal pm) ? pm : 0m;
 
                 map[cyKey] = FormatFinancialValue(cyVal, node.Rounding);
                 map[pyKey] = FormatFinancialValue(pyVal, node.Rounding);
+                map[pmKey] = FormatFinancialValue(pmVal, node.Rounding);
             }
 
             return map;

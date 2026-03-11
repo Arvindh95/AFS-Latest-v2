@@ -33,9 +33,6 @@ namespace FinancialReport.Services
             Timeout = TimeSpan.FromMinutes(5)
         };
 
-        // ✅ Thread-safe semaphore for auth header updates
-        private static readonly SemaphoreSlim _authSemaphore = new SemaphoreSlim(1, 1);
-
         static FinancialDataService()
         {
             _httpClient.DefaultRequestHeaders.Accept.Clear();
@@ -56,13 +53,13 @@ namespace FinancialReport.Services
         // --------------------------------------------------------
 
         // Synchronous version for backward compatibility
-        public FinancialApiData FetchAllApiData(string branch, string organization, string ledger, string period)
+        public FinancialApiData FetchAllApiData(string branch, string organization, string ledger, string period, bool includeDetail = true)
         {
-            return FetchAllApiDataAsync(branch, organization, ledger, period).Result;
+            return FetchAllApiDataAsync(branch, organization, ledger, period, includeDetail).Result;
         }
 
         // Async version
-        public async Task<FinancialApiData> FetchAllApiDataAsync(string branch, string organization, string ledger, string period)
+        public async Task<FinancialApiData> FetchAllApiDataAsync(string branch, string organization, string ledger, string period, bool includeDetail = true)
         {
             string accessToken = await _authService.AuthenticateAndGetTokenAsync();
             string dimensionFilter = BuildDimensionFilter(branch, organization);
@@ -71,8 +68,8 @@ namespace FinancialReport.Services
             var accountData = new Dictionary<string, FinancialPeriodData>();
             var detailRows  = new List<FinancialPeriodData>();
 
-            await SetAuthorizationHeaderAsync(accessToken);
-            List<JToken> results = await ExecuteFetchWithFallbackAsync(_httpClient, filter, ledger);
+            // Token is passed per-request via HttpRequestMessage — no shared header mutation needed.
+            List<JToken> results = await ExecuteFetchWithFallbackAsync(_httpClient, filter, ledger, accessToken);
 
             if (results == null)
             {
@@ -102,33 +99,38 @@ namespace FinancialReport.Services
                 decimal credit  = item[_columnMapping.CreditColumn]?.ToObject<decimal>()    ?? 0;
 
                 // Aggregated AccountData (existing behaviour — unchanged)
-                if (!accountData.ContainsKey(accountId!))
+                if (!accountData.TryGetValue(accountId!, out var acctEntry))
                 {
-                    accountData[accountId!] = new FinancialPeriodData
+                    acctEntry = new FinancialPeriodData
                     {
                         Account     = accountId,
                         AccountType = accountType
                     };
+                    accountData[accountId!] = acctEntry;
                 }
-                accountData[accountId!].BeginningBalance += begBal;
-                accountData[accountId!].EndingBalance    += endBal;
-                accountData[accountId!].Debit            += debit;
-                accountData[accountId!].Credit           += credit;
+                acctEntry.BeginningBalance += begBal;
+                acctEntry.EndingBalance    += endBal;
+                acctEntry.Debit            += debit;
+                acctEntry.Credit           += credit;
 
-                // Per-row detail — used when a line item has dimension filters
-                detailRows.Add(new FinancialPeriodData
+                // Per-row detail — used only when a line item has dimension filters (SubaccountFilter, BranchFilter, etc.)
+                // Skipped when includeDetail=false to avoid allocating large lists when not needed.
+                if (includeDetail)
                 {
-                    Account        = accountId,
-                    Subaccount     = subaccount,
-                    AccountType    = accountType,
-                    BranchID       = branchId,
-                    OrganizationID = orgId,
-                    Ledger         = ledgerId,
-                    BeginningBalance = begBal,
-                    EndingBalance    = endBal,
-                    Debit            = debit,
-                    Credit           = credit
-                });
+                    detailRows.Add(new FinancialPeriodData
+                    {
+                        Account        = accountId,
+                        Subaccount     = subaccount,
+                        AccountType    = accountType,
+                        BranchID       = branchId,
+                        OrganizationID = orgId,
+                        Ledger         = ledgerId,
+                        BeginningBalance = begBal,
+                        EndingBalance    = endBal,
+                        Debit            = debit,
+                        Credit           = credit
+                    });
+                }
             }
 
             // Diagnostic: log DetailRows summary for troubleshooting dimension filters
@@ -159,8 +161,7 @@ namespace FinancialReport.Services
 
             var apiData = new FinancialApiData();
 
-            SetAuthorizationHeader(accessToken);
-            var results = ExecuteFetchWithFallback(_httpClient, baseFilter, ledger);
+            var results = ExecuteFetchWithFallback(_httpClient, baseFilter, ledger, accessToken);
 
             if (results == null)
             {
@@ -174,12 +175,13 @@ namespace FinancialReport.Services
 
                 if (string.IsNullOrEmpty(accountId)) continue;
 
-                if (!apiData.AccountData.ContainsKey(accountId!))
+                if (!apiData.AccountData.TryGetValue(accountId!, out var janEntry))
                 {
-                    apiData.AccountData[accountId!] = new FinancialPeriodData();
+                    janEntry = new FinancialPeriodData();
+                    apiData.AccountData[accountId!] = janEntry;
                 }
-                apiData.AccountData[accountId!].BeginningBalance += beginningBalance;
-                apiData.AccountData[accountId!].EndingBalance += beginningBalance;
+                janEntry.BeginningBalance += beginningBalance;
+                janEntry.EndingBalance += beginningBalance;
             }
 
             return apiData;
@@ -196,8 +198,7 @@ namespace FinancialReport.Services
 
             var cumulativeDict = new Dictionary<string, FinancialPeriodData>();
 
-            SetAuthorizationHeader(accessToken);
-            var results = ExecuteFetchWithFallback(_httpClient, baseFilter, ledger);
+            var results = ExecuteFetchWithFallback(_httpClient, baseFilter, ledger, accessToken);
 
             if (results == null)
             {
@@ -213,14 +214,15 @@ namespace FinancialReport.Services
 
                 if (string.IsNullOrEmpty(accountId)) continue;
 
-                if (!cumulativeDict.ContainsKey(accountId!))
+                if (!cumulativeDict.TryGetValue(accountId!, out var cumEntry))
                 {
-                    cumulativeDict[accountId!] = new FinancialPeriodData();
+                    cumEntry = new FinancialPeriodData();
+                    cumulativeDict[accountId!] = cumEntry;
                 }
 
-                cumulativeDict[accountId!].Debit += debit;
-                cumulativeDict[accountId!].Credit += credit;
-                cumulativeDict[accountId!].EndingBalance += endingBalance;
+                cumEntry.Debit += debit;
+                cumEntry.Credit += credit;
+                cumEntry.EndingBalance += endingBalance;
             }
 
             var apiData = new FinancialApiData();
@@ -242,8 +244,7 @@ namespace FinancialReport.Services
 
             var compositeData = new Dictionary<string, FinancialPeriodData>();
 
-            SetAuthorizationHeader(accessToken);
-            var results = ExecuteFetchWithFallback(_httpClient, baseFilter, ledger);
+            var results = ExecuteFetchWithFallback(_httpClient, baseFilter, ledger, accessToken);
 
             if (results == null)
             {
@@ -299,8 +300,7 @@ namespace FinancialReport.Services
             string baseFilter = $"FinancialPeriod eq '{period}' and BranchID eq '{branch}' and OrganizationID eq '{organization}' and " +
                                $"Account eq '{account}' and Subaccount eq '{subaccount}'";
 
-            SetAuthorizationHeader(accessToken);
-            var results = ExecuteFetchWithFallback(_httpClient, baseFilter, ledger);
+            var results = ExecuteFetchWithFallback(_httpClient, baseFilter, ledger, accessToken);
 
             if (results == null || results.Count == 0)
             {
@@ -312,71 +312,43 @@ namespace FinancialReport.Services
         }
 
 
-        // ✅ Thread-safe method to set authorization header (synchronous version)
-        private static void SetAuthorizationHeader(string accessToken)
-        {
-            _authSemaphore.Wait();
-            try
-            {
-                _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-            }
-            finally
-            {
-                _authSemaphore.Release();
-            }
-        }
-
-        // ✅ Thread-safe method to set authorization header (async version)
-        private static async Task SetAuthorizationHeaderAsync(string accessToken)
-        {
-            await _authSemaphore.WaitAsync();
-            try
-            {
-                _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-            }
-            finally
-            {
-                _authSemaphore.Release();
-            }
-        }
-
         /// <summary>
         /// Executes a fetch operation with fallback logic for both URL format and Ledger filtering (synchronous).
         /// </summary>
-        private List<JToken> ExecuteFetchWithFallback(HttpClient client, string baseFilter, string ledger)
+        private List<JToken> ExecuteFetchWithFallback(HttpClient client, string baseFilter, string ledger, string accessToken)
         {
-            return ExecuteFetchWithFallbackAsync(client, baseFilter, ledger).Result;
+            return ExecuteFetchWithFallbackAsync(client, baseFilter, ledger, accessToken).Result;
         }
 
         /// <summary>
         /// Executes a fetch operation with fallback logic for both URL format and Ledger filtering (async).
+        /// The access token is set per-request via HttpRequestMessage so parallel calls never race on shared headers.
         /// </summary>
-        private async Task<List<JToken>> ExecuteFetchWithFallbackAsync(HttpClient client, string baseFilter, string ledger)
+        private async Task<List<JToken>> ExecuteFetchWithFallbackAsync(HttpClient client, string baseFilter, string ledger, string accessToken)
         {
             string giName = _columnMapping.GIName;
             string modernUrlBase = $"{_baseUrl}/odata/{_tenantName}/{giName}";
             string legacyUrlBase = $"{_baseUrl}/t/{_tenantName}/api/odata/gi/{giName}";
             string selectColumns = _columnMapping.BuildSelectColumns();
 
-            // Attempt 1: Modern URL with Ledger
+            // Attempt 1: Modern URL with Ledger (normal path — no trace on success)
             string filterWithLedger = AppendLedgerFilter(baseFilter, ledger);
-            PXTrace.WriteInformation($"Attempt 1: Modern URL with Ledger. URL: {modernUrlBase}, Filter: {filterWithLedger}");
-            var results = await PaginatedFetchAsync(client, modernUrlBase, filterWithLedger, selectColumns);
+            var results = await PaginatedFetchAsync(client, modernUrlBase, filterWithLedger, selectColumns, accessToken);
             if (results != null) return results;
 
-            // Attempt 2: Modern URL without Ledger
-            PXTrace.WriteWarning($"Attempt 1 failed. Retrying with Modern URL without Ledger. URL: {modernUrlBase}, Filter: {baseFilter}");
-            results = await PaginatedFetchAsync(client, modernUrlBase, baseFilter, selectColumns);
+            // Attempt 2: Modern URL without Ledger (Attempt 1 with ledger filter failed)
+            PXTrace.WriteWarning($"Fallback 2: Modern URL without Ledger. URL: {modernUrlBase}, Filter: {baseFilter}");
+            results = await PaginatedFetchAsync(client, modernUrlBase, baseFilter, selectColumns, accessToken);
             if (results != null) return results;
 
             // Attempt 3: Legacy URL with Ledger
             PXTrace.WriteWarning($"Attempt 2 failed. Retrying with Legacy URL with Ledger. URL: {legacyUrlBase}, Filter: {filterWithLedger}");
-            results = await PaginatedFetchAsync(client, legacyUrlBase, filterWithLedger, selectColumns);
+            results = await PaginatedFetchAsync(client, legacyUrlBase, filterWithLedger, selectColumns, accessToken);
             if (results != null) return results;
 
             // Attempt 4: Legacy URL without Ledger
             PXTrace.WriteWarning($"Attempt 3 failed. Retrying with Legacy URL without Ledger. URL: {legacyUrlBase}, Filter: {baseFilter}");
-            results = await PaginatedFetchAsync(client, legacyUrlBase, baseFilter, selectColumns);
+            results = await PaginatedFetchAsync(client, legacyUrlBase, baseFilter, selectColumns, accessToken);
             if (results != null) return results;
 
             PXTrace.WriteError("All fetch attempts failed.");
@@ -386,15 +358,17 @@ namespace FinancialReport.Services
         /// <summary>
         /// Private helper method to execute a paginated OData fetch operation against a specific URL (synchronous).
         /// </summary>
-        private List<JToken> PaginatedFetch(HttpClient client, string baseUrl, string filter, string selectColumns)
+        private List<JToken> PaginatedFetch(HttpClient client, string baseUrl, string filter, string selectColumns, string accessToken)
         {
-            return PaginatedFetchAsync(client, baseUrl, filter, selectColumns).Result;
+            return PaginatedFetchAsync(client, baseUrl, filter, selectColumns, accessToken).Result;
         }
 
         /// <summary>
         /// Private helper method to execute a paginated OData fetch operation against a specific URL (async).
+        /// Uses per-request HttpRequestMessage so the Bearer token is set on each individual request —
+        /// safe for parallel calls without any serialization or shared-state mutation.
         /// </summary>
-        private async Task<List<JToken>> PaginatedFetchAsync(HttpClient client, string baseUrl, string filter, string selectColumns)
+        private async Task<List<JToken>> PaginatedFetchAsync(HttpClient client, string baseUrl, string filter, string selectColumns, string accessToken)
         {
             var allResults = new List<JToken>();
             int pageSize = 5000;
@@ -410,11 +384,17 @@ namespace FinancialReport.Services
                 HttpResponseMessage response;
                 try
                 {
-                    response = await client.GetAsync(pagedUrl);
+                    // Set Authorization per-request — avoids mutating shared DefaultRequestHeaders
+                    // which would require serialization when called from multiple parallel tasks.
+                    using (var request = new HttpRequestMessage(HttpMethod.Get, pagedUrl))
+                    {
+                        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+                        response = await client.SendAsync(request);
+                    }
                 }
                 catch (Exception ex)
                 {
-                    PXTrace.WriteError($"HTTP request to {pagedUrl} failed: {ex.ToString()}");
+                    PXTrace.WriteError($"HTTP request to {pagedUrl} failed: {ex.Message}");
                     return null; // Return null to indicate failure
                 }
 
@@ -490,25 +470,29 @@ namespace FinancialReport.Services
         public List<string> FetchGIColumns(string giName)
         {
             string accessToken = _authService.AuthenticateAndGetToken();
-            SetAuthorizationHeader(accessToken);
 
             string modernUrl = $"{_baseUrl}/odata/{_tenantName}/{giName}?$top=1";
             string legacyUrl = $"{_baseUrl}/t/{_tenantName}/api/odata/gi/{giName}?$top=1";
 
-            var columns = TryFetchColumnsFromUrl(modernUrl);
+            var columns = TryFetchColumnsFromUrl(modernUrl, accessToken);
             if (columns != null && columns.Count > 0) return columns;
 
-            columns = TryFetchColumnsFromUrl(legacyUrl);
+            columns = TryFetchColumnsFromUrl(legacyUrl, accessToken);
             if (columns != null && columns.Count > 0) return columns;
 
             return new List<string>();
         }
 
-        private List<string> TryFetchColumnsFromUrl(string url)
+        private List<string> TryFetchColumnsFromUrl(string url, string accessToken)
         {
             try
             {
-                var response = _httpClient.GetAsync(url).Result;
+                HttpResponseMessage response;
+                using (var request = new HttpRequestMessage(HttpMethod.Get, url))
+                {
+                    request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+                    response = _httpClient.SendAsync(request).Result;
+                }
                 if (!response.IsSuccessStatusCode) return null;
 
                 string json = response.Content.ReadAsStringAsync().Result;
@@ -793,11 +777,10 @@ namespace FinancialReport.Services
                     decimal total = CalculateAccountRangeSum(startAccount, endAccount, balanceType, dataSource);
 
                     results[placeholder] = total.ToString("#,##0");
-                    PXTrace.WriteInformation($"Range result: {placeholder} = {total}");
                 }
                 catch (Exception ex)
                 {
-                    PXTrace.WriteError($"Failed to process range placeholder '{placeholder}': {ex.ToString()}");
+                    PXTrace.WriteError($"Failed to process range placeholder '{placeholder}': {ex.Message}");
                     results[placeholder] = "0";
                 }
             }
@@ -891,7 +874,6 @@ namespace FinancialReport.Services
                 }
             }
 
-            PXTrace.WriteInformation($"Range {startAccount}:{endAccount} processed {processedCount} accounts, {balanceType} total: {total}");
             return total;
         }
 
@@ -1101,11 +1083,10 @@ namespace FinancialReport.Services
                     decimal total = CalculateWildcardRangeSum(startPattern, endPattern, balanceType, dataSource);
 
                     results[placeholder] = total.ToString("#,##0");
-                    PXTrace.WriteInformation($"Wildcard range result: {placeholder} = {total}");
                 }
                 catch (Exception ex)
                 {
-                    PXTrace.WriteError($"Failed to process wildcard range placeholder '{placeholder}': {ex.ToString()}");
+                    PXTrace.WriteError($"Failed to process wildcard range placeholder '{placeholder}': {ex.Message}");
                     results[placeholder] = "0";
                 }
             }
@@ -1178,7 +1159,6 @@ namespace FinancialReport.Services
                 }
             }
 
-            PXTrace.WriteInformation($"Wildcard range {startPattern}:{endPattern} processed {processedCount} accounts, {balanceType} total: {total}");
             return total;
         }
 
@@ -1270,7 +1250,6 @@ namespace FinancialReport.Services
             try
             {
                 _httpClient?.Dispose();
-                _authSemaphore?.Dispose();
                 PXTrace.WriteInformation("FinancialDataService: Static resources cleaned up");
             }
             catch (Exception ex)
@@ -1314,10 +1293,9 @@ namespace FinancialReport.Services
 
                 // Get access token and execute query
                 string accessToken = _authService.AuthenticateAndGetToken();
-                SetAuthorizationHeader(accessToken);
 
                 // Use existing fallback logic
-                var results = ExecutePrefixFetchWithFallback(filter, selectColumns);
+                var results = ExecutePrefixFetchWithFallback(filter, selectColumns, accessToken);
 
                 // Sum all matching records based on balance type
                 decimal totalBalance = 0m;
@@ -1373,17 +1351,17 @@ namespace FinancialReport.Services
         }
 
         // Helper method for prefix placeholder OData execution
-        private List<JToken> ExecutePrefixFetchWithFallback(string filter, string selectColumns)
+        private List<JToken> ExecutePrefixFetchWithFallback(string filter, string selectColumns, string accessToken)
         {
             string modernUrlBase = $"{_baseUrl}/odata/{_tenantName}/TrialBalance";
             string legacyUrlBase = $"{_baseUrl}/t/{_tenantName}/api/odata/gi/TrialBalance";
 
             // Try modern URL first
-            var results = PaginatedFetch(_httpClient, modernUrlBase, filter, selectColumns);
+            var results = PaginatedFetch(_httpClient, modernUrlBase, filter, selectColumns, accessToken);
             if (results != null) return results;
 
             // Try legacy URL if modern fails
-            results = PaginatedFetch(_httpClient, legacyUrlBase, filter, selectColumns);
+            results = PaginatedFetch(_httpClient, legacyUrlBase, filter, selectColumns, accessToken);
             if (results != null) return results;
 
             // Return empty list if both fail
@@ -1473,7 +1451,6 @@ namespace FinancialReport.Services
                     }
                 }
 
-                PXTrace.WriteInformation($"Parsed {placeholder} → Account:{info.Account}, Branch:{info.Branch}, Org:{info.Organization}, Ledger:{info.Ledger}, Subacct:{info.Subaccount}, BalanceType:{info.BalanceType}, Period:{info.Period}");
 
                 return info;
             }
@@ -1511,8 +1488,6 @@ namespace FinancialReport.Services
                     // Build and execute OData query
                     decimal balance = FetchBalanceForPrefixPlaceholder(info);
                     results[placeholder] = balance.ToString("#,##0");
-
-                    PXTrace.WriteInformation($"Prefix result: {placeholder} = {balance}");
                 }
                 catch (Exception ex)
                 {
@@ -1620,16 +1595,17 @@ namespace FinancialReport.Services
 
             void AddToGroup(string apiCall, string placeholder, string period)
             {
-                if (!apiCallGroups.ContainsKey(apiCall))
+                if (!apiCallGroups.TryGetValue(apiCall, out var group))
                 {
-                    apiCallGroups[apiCall] = new PlaceholderRequest
+                    group = new PlaceholderRequest
                     {
                         ApiCall = apiCall,
                         Placeholders = new List<string>(),
                         Period = period
                     };
+                    apiCallGroups[apiCall] = group;
                 }
-                apiCallGroups[apiCall].Placeholders.Add(placeholder);
+                group.Placeholders.Add(placeholder);
             }
 
             // Build API requests for simple accounts
@@ -1874,7 +1850,6 @@ namespace FinancialReport.Services
 
                     // Get access token
                     string accessToken = _authService.AuthenticateAndGetToken();
-                    SetAuthorizationHeader(accessToken);
 
                     // Build full filter with dimensions and ledger
                     string fullFilter = $"{request.ApiCall.Replace("FinancialPeriod", "FinancialPeriod")}";
@@ -1884,7 +1859,7 @@ namespace FinancialReport.Services
                     }
 
                     // Execute the API call
-                    var results = ExecuteFetchWithFallback(_httpClient, fullFilter, userSettings.Ledger);
+                    var results = ExecuteFetchWithFallback(_httpClient, fullFilter, userSettings.Ledger, accessToken);
 
                     sw.Stop();
                     PXTrace.WriteInformation($"📡 API call completed in {sw.ElapsedMilliseconds}ms: {fullFilter} → {results?.Count ?? 0} records");
@@ -1896,7 +1871,7 @@ namespace FinancialReport.Services
                 }
                 catch (Exception ex)
                 {
-                    PXTrace.WriteError($"❌ API call failed for filter '{request.ApiCall}': {ex.ToString()}");
+                    PXTrace.WriteError($"❌ API call failed for filter '{request.ApiCall}': {ex.Message}");
                     lock (apiResults)
                     {
                         apiResults[request.ApiCall] = new List<JToken>();

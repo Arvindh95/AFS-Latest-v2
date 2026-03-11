@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -8,7 +8,7 @@ using PX.Data;
 
 namespace FinancialReport.Services
 {
-    public class AuthService
+    public class AuthService : IDisposable
     {
         private string _accessToken;
         private string _refreshToken;
@@ -19,68 +19,69 @@ namespace FinancialReport.Services
         private readonly string _clientSecret;
         private readonly string _username;
         private readonly string _password;
-        private readonly object _lock = new object();
+        private readonly System.Threading.SemaphoreSlim _tokenLock = new System.Threading.SemaphoreSlim(1, 1);
+        private bool _disposed;
 
-        // Increase this if you need more than the default 100s
-        private static readonly TimeSpan HttpTimeout = TimeSpan.FromMinutes(3);
+        // Single HttpClient reused for all auth requests — avoids socket exhaustion
+        private static readonly HttpClient _authClient = CreateAuthClient();
+
+        private static HttpClient CreateAuthClient()
+        {
+            var handler = new HttpClientHandler { UseProxy = false };
+            return new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(3) };
+        }
 
         public AuthService(string baseUrl, string clientId, string clientSecret, string username, string password)
         {
-            // must be "http://112.137.169.188/UpmTest"
             _baseUrl = baseUrl.TrimEnd('/');
             _clientId = clientId;
             _clientSecret = clientSecret;
             _username = username;
             _password = password;
+
+            // Security: warn if credentials will be sent over plain HTTP
+            if (_baseUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+                PXTrace.WriteWarning("AuthService: base URL is HTTP — credentials and tokens are sent unencrypted. Use HTTPS in production.");
         }
 
-        // Synchronous version for backward compatibility
+        // Synchronous wrapper — runs on a thread-pool thread to avoid deadlock in sync contexts
         public string AuthenticateAndGetToken()
         {
-            return AuthenticateAndGetTokenAsync().Result;
+            return Task.Run(() => AuthenticateAndGetTokenAsync()).GetAwaiter().GetResult();
         }
 
         // Async version
         public async Task<string> AuthenticateAndGetTokenAsync()
         {
-            // reuse still-valid token
+            // Fast path — no lock needed, just read fields
             if (!string.IsNullOrEmpty(_accessToken) && _tokenExpiry > DateTime.Now)
-            {
-                PXTrace.WriteInformation("Reusing existing access token.");
                 return _accessToken;
-            }
 
-            lock (_lock)
+            // Only one thread/task fetches a new token at a time; others wait then hit the fast path
+            await _tokenLock.WaitAsync();
+            try
             {
+                // Double-check: another task may have fetched while we waited
                 if (!string.IsNullOrEmpty(_accessToken) && _tokenExpiry > DateTime.Now)
-                {
-                    PXTrace.WriteInformation("Reusing existing access token.");
                     return _accessToken;
-                }
-            }
 
-            // try refresh
-            if (!string.IsNullOrEmpty(_refreshToken))
-            {
-                PXTrace.WriteInformation("Attempting refresh...");
-                try
+                // Try refresh first
+                if (!string.IsNullOrEmpty(_refreshToken))
                 {
-                    return await RefreshAccessTokenAsync(_refreshToken);
+                    try
+                    {
+                        return await RefreshAccessTokenAsync(_refreshToken);
+                    }
+                    catch (PXException ex)
+                    {
+                        PXTrace.WriteError($"Refresh failed: {ex.Message}. Falling back to password grant.");
+                    }
                 }
-                catch (PXException ex)
-                {
-                    PXTrace.WriteError($"Refresh failed: {ex.Message}. Falling back to password grant.");
-                }
-            }
 
-            // password grant
-            PXTrace.WriteInformation("Requesting a new access token...");
-            string tokenUrl = $"{_baseUrl}/identity/connect/token";
+                // Password grant
+                PXTrace.WriteInformation("Requesting a new access token...");
+                string tokenUrl = $"{_baseUrl}/identity/connect/token";
 
-            // disable proxy if that's blocking you
-            var handler = new HttpClientHandler { UseProxy = false };
-            using (var client = new HttpClient(handler) { Timeout = HttpTimeout })
-            {
                 var form = new FormUrlEncodedContent(new[]
                 {
                     new KeyValuePair<string,string>("grant_type",    "password"),
@@ -91,15 +92,15 @@ namespace FinancialReport.Services
                     new KeyValuePair<string,string>("scope",         "api")
                 });
 
-                HttpResponseMessage resp = await client.PostAsync(tokenUrl, form);
-                string body = await resp.Content.ReadAsStringAsync();
+                HttpResponseMessage resp = await _authClient.PostAsync(tokenUrl, form);
 
                 if (!resp.IsSuccessStatusCode)
                 {
-                    PXTrace.WriteError($"Auth failed ({resp.StatusCode}): {body}");
+                    PXTrace.WriteError($"Authentication failed with status {(int)resp.StatusCode} ({resp.StatusCode}).");
                     throw new PXException(Messages.FailedToAuthenticate);
                 }
 
+                string body = await resp.Content.ReadAsStringAsync();
                 var json = JObject.Parse(body);
                 _accessToken = json["access_token"]?.ToString()
                                 ?? throw new PXException(Messages.AccessTokenNotFound);
@@ -109,60 +110,60 @@ namespace FinancialReport.Services
                 if (expiresIn == 0)
                     throw new PXException(Messages.TokenExpirationNotFound);
 
-                // buffer 60 seconds
+                // Buffer 60 seconds so token never expires mid-request
                 _tokenExpiry = DateTime.Now.AddSeconds(expiresIn - 60);
 
-                PXTrace.WriteInformation("✅ New access token retrieved.");
+                PXTrace.WriteInformation("New access token retrieved.");
                 return _accessToken;
+            }
+            finally
+            {
+                _tokenLock.Release();
             }
         }
 
         private async Task<string> RefreshAccessTokenAsync(string refreshToken)
         {
             string url = $"{_baseUrl}/identity/connect/token";
-            using (var client = new HttpClient { Timeout = HttpTimeout })
+
+            var form = new FormUrlEncodedContent(new[]
             {
-                var form = new FormUrlEncodedContent(new[]
-                {
-                    new KeyValuePair<string,string>("grant_type",    "refresh_token"),
-                    new KeyValuePair<string,string>("client_id",     _clientId),
-                    new KeyValuePair<string,string>("client_secret", _clientSecret),
-                    new KeyValuePair<string,string>("refresh_token", refreshToken)
-                });
+                new KeyValuePair<string,string>("grant_type",    "refresh_token"),
+                new KeyValuePair<string,string>("client_id",     _clientId),
+                new KeyValuePair<string,string>("client_secret", _clientSecret),
+                new KeyValuePair<string,string>("refresh_token", refreshToken)
+            });
 
-                HttpResponseMessage resp = await client.PostAsync(url, form);
-                string body = await resp.Content.ReadAsStringAsync();
+            HttpResponseMessage resp = await _authClient.PostAsync(url, form);
 
-                if (!resp.IsSuccessStatusCode)
-                {
-                    PXTrace.WriteError($"Refresh failed ({resp.StatusCode}): {body}");
-                    throw new PXException(Messages.FailedToRefreshToken);
-                }
-
-                var json = JObject.Parse(body);
-                string newToken = json["access_token"]?.ToString()
-                                  ?? throw new PXException(Messages.AccessTokenNotFound);
-
-                int expiresIn = json["expires_in"]?.ToObject<int>() ?? 0;
-                if (expiresIn == 0)
-                    throw new PXException(Messages.TokenExpirationNotFound);
-
-                lock (_lock)
-                {
-                    _accessToken = newToken;
-                    _refreshToken = json["refresh_token"]?.ToString() ?? string.Empty;
-                    _tokenExpiry = DateTime.Now.AddSeconds(expiresIn - 60);
-                }
-
-                PXTrace.WriteInformation("✅ Access token refreshed.");
-                return newToken;
+            if (!resp.IsSuccessStatusCode)
+            {
+                PXTrace.WriteError($"Token refresh failed with status {(int)resp.StatusCode} ({resp.StatusCode}).");
+                throw new PXException(Messages.FailedToRefreshToken);
             }
+
+            string body = await resp.Content.ReadAsStringAsync();
+            var json = JObject.Parse(body);
+            string newToken = json["access_token"]?.ToString()
+                              ?? throw new PXException(Messages.AccessTokenNotFound);
+
+            int expiresIn = json["expires_in"]?.ToObject<int>() ?? 0;
+            if (expiresIn == 0)
+                throw new PXException(Messages.TokenExpirationNotFound);
+
+            // Caller holds _tokenLock — no inner lock needed
+            _accessToken = newToken;
+            _refreshToken = json["refresh_token"]?.ToString() ?? string.Empty;
+            _tokenExpiry = DateTime.Now.AddSeconds(expiresIn - 60);
+
+            PXTrace.WriteInformation("Access token refreshed.");
+            return newToken;
         }
 
-        // Synchronous version for backward compatibility
+        // Synchronous wrapper — runs on a thread-pool thread to avoid deadlock in sync contexts
         public void Logout()
         {
-            LogoutAsync().Wait();
+            Task.Run(() => LogoutAsync()).GetAwaiter().GetResult();
         }
 
         // Async version
@@ -171,32 +172,32 @@ namespace FinancialReport.Services
             try
             {
                 string url = $"{_baseUrl}/entity/auth/logout";
-                var handler = new HttpClientHandler { UseProxy = false };
-                using (var client = new HttpClient(handler) { Timeout = HttpTimeout })
+                using (var request = new HttpRequestMessage(HttpMethod.Post, url))
                 {
-                    client.DefaultRequestHeaders.Authorization =
-                        new AuthenticationHeaderValue("Bearer", _accessToken);
-
-                    HttpResponseMessage resp = await client.PostAsync(url, null);
-                    string body = await resp.Content.ReadAsStringAsync();
+                    request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
+                    HttpResponseMessage resp = await _authClient.SendAsync(request);
                     if (resp.IsSuccessStatusCode)
                         PXTrace.WriteInformation("Logged out successfully.");
                     else
-                        PXTrace.WriteError($"Logout failed ({resp.StatusCode}): {body}");
+                        PXTrace.WriteError($"Logout failed with status {(int)resp.StatusCode} ({resp.StatusCode}).");
                 }
             }
             catch (Exception ex)
             {
-                PXTrace.WriteError($"Logout exception: {ex.ToString()}");
+                PXTrace.WriteError($"Logout exception: {ex.Message}");
             }
             finally
             {
-                lock (_lock)
-                {
-                    _accessToken = _refreshToken = null;
-                    _tokenExpiry = DateTime.MinValue;
-                }
+                _accessToken = _refreshToken = null;
+                _tokenExpiry = DateTime.MinValue;
             }
+        }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _tokenLock.Dispose();
+            _disposed = true;
         }
     }
 }

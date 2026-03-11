@@ -31,7 +31,6 @@ namespace FinancialReport.Services
                 {
                     string value = ExtractValueForPlaceholder(placeholder, results);
                     placeholderValues[placeholder] = value;
-                    PXTrace.WriteInformation($"✅ {placeholder} = {value}");
                 }
             }
 
