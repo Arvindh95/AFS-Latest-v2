@@ -1,1 +1,1 @@
-C:\TCourseInstances\Acumatica_PDFGen\App_Data\Projects\FinancialReport
+C:\Program Files\Acumatica ERP\saga\App_Data\Projects\FinancialReport

@@ -12,15 +12,23 @@ namespace FinancialReport
   [PXCacheName("FLRTFinancialReport")]
   public class FLRTFinancialReport : PXBqlTable, IBqlTable
   {
+
+    #region CompanyNum
+    [PXDBInt]
+    [PXUIField(DisplayName = "Company Number")]
+    public virtual int? CompanyNum { get; set; }
+    public abstract class companyNum : PX.Data.BQL.BqlInt.Field<companyNum> { }
+    #endregion
+
     #region ReportID
     [PXDBIdentity(IsKey = true)]
+    [PXUIField(DisplayName = "Report ID", Visible = false)]
     public virtual int? ReportID { get; set; }
     public abstract class reportID : PX.Data.BQL.BqlInt.Field<reportID> { }
     #endregion
 
     #region ReportCD
-    [PXDBString(15, IsUnicode = true, InputMask = ">aaaaaaaaaaaaaaa")]      
-    [PXDefault]
+    [PXDBString(225, IsUnicode = true)]      
     [PXUIField(DisplayName = "Template Name")]
     public virtual string ReportCD { get; set; }
     public abstract class reportCD : PX.Data.BQL.BqlString.Field<reportCD> { }       
@@ -78,6 +86,7 @@ namespace FinancialReport
 
     #region Noteid
     [PXNote()]
+    [PXUIField(DisplayName = "Note ID", Visible = false)]
     public virtual Guid? Noteid { get; set; }
     public abstract class noteid : PX.Data.BQL.BqlGuid.Field<noteid> { }
         #endregion
@@ -137,6 +146,28 @@ namespace FinancialReport
     public abstract class financialMonth : PX.Data.BQL.BqlString.Field<financialMonth> { }
     #endregion
 
+    #region DefinitionID
+    /// <summary>
+    /// Legacy single-definition link. Superseded by FLRTReportDefinitionLink child table
+    /// which supports multiple definitions per report with cross-definition formulas.
+    ///
+    /// If FLRTReportDefinitionLink rows exist for this report, this field is ignored.
+    /// Kept for backward compatibility with reports created before multi-definition support.
+    /// </summary>
+    [PXDBInt]
+    [PXUIField(DisplayName = "Report Definition (Legacy)", Visible = false)]
+    [PXSelector(
+        typeof(Search<FLRTReportDefinition.definitionID>),
+        typeof(FLRTReportDefinition.definitionCD),
+        typeof(FLRTReportDefinition.description),
+        typeof(FLRTReportDefinition.reportType),
+        SubstituteKey = typeof(FLRTReportDefinition.definitionCD),
+        DescriptionField = typeof(FLRTReportDefinition.description)
+    )]
+    public virtual int? DefinitionID { get; set; }
+    public abstract class definitionID : PX.Data.BQL.BqlInt.Field<definitionID> { }
+    #endregion
+
     #region GeneratedFileID
     [PXDBGuid]
     [PXUIField(DisplayName = "Generated File ID", Visible = false)]
@@ -144,8 +175,22 @@ namespace FinancialReport
     public abstract class generatedFileID : PX.Data.BQL.BqlGuid.Field<generatedFileID> { }
     #endregion
 
+    #region UploadedFileID
+    [PXDBGuid]
+    [PXUIField(DisplayName = "Uploaded File ID", Enabled = false, Visible = false)]
+    public virtual Guid? UploadedFileID { get; set; }
+    public abstract class uploadedFileID : PX.Data.BQL.BqlGuid.Field<uploadedFileID> { }
+    #endregion
+
+    #region UploadedFileIDDisplay
+    [PXDBString(225, IsUnicode = true)]
+    [PXUIField(DisplayName = "Uploaded File ID (Display Only)", Enabled = false, Visible = false)]
+    public virtual string UploadedFileIDDisplay { get; set; }
+    public abstract class uploadedFileIDDisplay : PX.Data.BQL.BqlString.Field<uploadedFileIDDisplay> { }
+    #endregion
+
     #region Status
-    [PXDBString(20, IsUnicode = true)]
+        [PXDBString(20, IsUnicode = true)]
     [PXDefault(ReportStatus.Pending)] // Default status
     [PXUIField(DisplayName = "Status", IsReadOnly = true)]
     [PXStringList(new string[]

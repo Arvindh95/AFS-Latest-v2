@@ -3,491 +3,366 @@ using PX.Data;
 using PX.Data.BQL.Fluent;
 using System.Collections.Generic;
 using System.IO;
-using PX.SM; // For UploadFileMaintenance and NoteDoc
+using PX.SM;
 using System.Linq;
-using System.Text;
-using System.Net.Http;
-using Newtonsoft.Json; // For JsonConvert
-using DocumentFormat.OpenXml.Packaging;
-using DocumentFormat.OpenXml.Wordprocessing;
-using Newtonsoft.Json.Linq;
-using System.Net.Http.Headers;
-using System.Configuration;
-using System.Collections;
-using PX.Objects.GL;
-using static PX.Objects.GL.AccountEntityType;
+using FinancialReport.Helper;
 using FinancialReport.Services;
 using static FinancialReport.FLRTFinancialReport;
 
 namespace FinancialReport
 {
-    public class FLRTFinancialReportMaint : PXGraph<FLRTFinancialReportMaint>
+    public class FLRTFinancialReportMaint : PXGraph<FLRTFinancialReportMaint, FLRTFinancialReport>
     {
+        #region DAC View
+        public SelectFrom<FLRTFinancialReport>.View FinancialReport = null!; // Initialized by PXGraph framework
 
-        #region Services     
-
-        // Handles Authentication with Acumatica API
-        private readonly AuthService _authService;
-
-        // Fetches financial data from Acumatica API
-        private readonly FinancialDataService _dataService;
-
-        // Manages file operations such as fetching templates & saving reports
-        private readonly FileService _fileService;
-
-        // Handles Word template population and formatting
-        private readonly WordTemplateService _wordTemplateService;
-
+        /// <summary>
+        /// Child grid: linked Report Definitions for the currently selected report.
+        /// Each row ties one definition (with its prefix) to this report.
+        /// Multiple definitions enable cross-definition formulas and a single unified output.
+        /// </summary>
+        public SelectFrom<FLRTReportDefinitionLink>
+            .Where<FLRTReportDefinitionLink.reportID.IsEqual<FLRTFinancialReport.reportID.FromCurrent>>
+            .OrderBy<FLRTReportDefinitionLink.displayOrder.Asc>
+            .View DefinitionLinks;
         #endregion
 
-        #region Configuration & Utility Methods
+        #region Events
 
-        private string GetConfigValue(string key)
+        // ── FLRTReportDefinitionLink events ──────────────────────────────────
+
+        /// <summary>
+        /// Populates the read-only Prefix display column from the joined FLRTReportDefinition.
+        /// </summary>
+        protected void _(Events.FieldSelecting<FLRTReportDefinitionLink, FLRTReportDefinitionLink.definitionPrefix> e)
         {
-            return ConfigurationManager.AppSettings[key] ?? throw new PXException(Messages.MissingConfig);
+            if (e.Row?.DefinitionID == null) return;
+            var def = PXSelectorAttribute.Select<FLRTReportDefinitionLink.definitionID>(e.Cache, e.Row) as FLRTReportDefinition;
+            if (def != null)
+                e.ReturnValue = def.DefinitionPrefix;
         }
-        private string _baseUrl => GetConfigValue("Acumatica.BaseUrl");
 
-        public FLRTFinancialReportMaint()
+        /// <summary>
+        /// Validates that linked definitions have unique prefixes within this report.
+        /// </summary>
+        protected void _(Events.RowPersisting<FLRTReportDefinitionLink> e)
         {
-            _authService = new AuthService(_baseUrl, GetConfigValue("Acumatica.ClientId"), GetConfigValue("Acumatica.ClientSecret"), GetConfigValue("Acumatica.Username"), GetConfigValue("Acumatica.Password"));
-            _dataService = new FinancialDataService(_baseUrl, _authService, GetAccountNumbers);
-            _fileService = new FileService(this);
-            _wordTemplateService = new WordTemplateService();
-        }
+            if (e.Row == null || e.Operation == PXDBOperation.Delete) return;
 
-        #endregion
-
-        #region Utility Methods
-
-        private List<string> GetAccountNumbers()
-        {
-            var accountNumbers = PXSelect<Account>
-            .Select(this)
-                                 .RowCast<Account>()
-                                 .Select(a => a.AccountCD.Trim())
-                                 .ToList();
-
-            // Log the fetched account numbers
-            PXTrace.WriteInformation("Fetched Account Numbers:");
-            foreach (var account in accountNumbers)
+            // Ensure a definition is selected
+            if (e.Row.DefinitionID == null)
             {
-                PXTrace.WriteInformation($"AccountCD: {account}");
+                e.Cache.RaiseExceptionHandling<FLRTReportDefinitionLink.definitionID>(
+                    e.Row, e.Row.DefinitionID,
+                    new PXSetPropertyException(Messages.DefinitionRequired, PXErrorLevel.Error));
+                return;
             }
 
-            return accountNumbers;
-        }
+            // Load the definition to get its prefix
+            var def = PXSelectorAttribute.Select<FLRTReportDefinitionLink.definitionID>(e.Cache, e.Row) as FLRTReportDefinition;
+            if (def == null || string.IsNullOrWhiteSpace(def.DefinitionPrefix)) return;
 
-        private string FormatNumber(string value)
-        {
-            if (decimal.TryParse(value, out decimal number))
+            // Check for duplicate prefix among other links for the same report
+            foreach (FLRTReportDefinitionLink other in DefinitionLinks.Cache.Cached)
             {
-                return number.ToString("N0"); // Formats as ###,###.00
-            }
-            return value; // Return original if parsing fails
-        }
+                if (other.LinkID == e.Row.LinkID) continue;
+                if (other.DefinitionID == null) continue;
 
-        #endregion
+                var otherDef = PXSelectorAttribute.Select<FLRTReportDefinitionLink.definitionID>(
+                    DefinitionLinks.Cache, other) as FLRTReportDefinition;
 
-
-        public SelectFrom<FLRTFinancialReport>.View FinancialReport;
-               
-    
-        #region Events and Actions
-
-        protected void FLRTFinancialReport_Selected_FieldUpdated(PXCache cache, PXFieldUpdatedEventArgs e)
-        {
-            var current = (FLRTFinancialReport)e.Row;
-            if (current?.Selected != true) return;
-
-            // Unselect all other records
-            foreach (FLRTFinancialReport item in FinancialReport.Cache.Cached)
-            {
-                if (item.ReportID != current.ReportID && item.Selected == true)
+                if (otherDef != null
+                    && string.Equals(otherDef.DefinitionPrefix, def.DefinitionPrefix, System.StringComparison.OrdinalIgnoreCase))
                 {
-                    item.Selected = false;
+                    e.Cache.RaiseExceptionHandling<FLRTReportDefinitionLink.definitionID>(
+                        e.Row, e.Row.DefinitionID,
+                        new PXSetPropertyException(Messages.DuplicatePrefixInReport, PXErrorLevel.Error, def.DefinitionPrefix));
+                    return;
                 }
             }
-
         }
 
-        protected void FLRTFinancialReport_Branch_FieldUpdated(PXCache cache, PXFieldUpdatedEventArgs e)
-        {
-            //No need to implement this method
-        }
+        // ── FLRTFinancialReport events ────────────────────────────────────────
 
-        protected void FLRTFinancialReport_Ledger_FieldUpdated(PXCache cache, PXFieldUpdatedEventArgs e)
+        protected void FLRTFinancialReport_RowSelected(PXCache cache, PXRowSelectedEventArgs e)
         {
             var row = (FLRTFinancialReport)e.Row;
-            if (row != null && string.IsNullOrEmpty(row.Ledger))
+            if (row == null) return;
+
+            bool isInProgress = row.Status == ReportStatus.InProgress;
+            PXUIFieldAttribute.SetEnabled(cache, row, !isInProgress);
+            GenerateReport.SetEnabled(!isInProgress);
+            DownloadReport.SetEnabled(!isInProgress);
+        }
+
+        protected void FLRTFinancialReport_RowPersisting(PXCache cache, PXRowPersistingEventArgs e)
+        {
+            var row = (FLRTFinancialReport)e.Row;
+            if (row == null) return;
+
+            // Update file ID fields before persisting if needed
+            if (row.Noteid != null)
             {
-                PXTrace.WriteError("Ledger cannot be empty.");
-                throw new PXException(Messages.PleaseSelectALedger);
+                using (new PXConnectionScope())
+                {
+                    var fileCmd = new PXSelectJoin<UploadFile,
+                                        InnerJoin<NoteDoc, On<NoteDoc.fileID, Equal<UploadFile.fileID>>>,
+                                    Where<NoteDoc.noteID, Equal<Required<NoteDoc.noteID>>>,
+                                    OrderBy<Desc<UploadFile.createdDateTime>>>(this);
+
+                    var file = fileCmd.SelectSingle(row.Noteid);
+
+                    if (file?.Name?.Contains(Constants.TemplateFileFilter) == true)
+                    {
+                        string fileIdString = file.FileID.ToString();
+                        if (row.UploadedFileIDDisplay != fileIdString)
+                        {
+                            cache.SetValue<FLRTFinancialReport.uploadedFileIDDisplay>(row, fileIdString);
+                            cache.SetValueExt<FLRTFinancialReport.uploadedFileID>(row, file.FileID);
+                        }
+                    }
+                }
             }
         }
 
-        protected void FLRTFinancialReport_CurrYear_FieldUpdated(PXCache cache, PXFieldUpdatedEventArgs e)
-        {
-            var row = (FLRTFinancialReport)e.Row;
-            if (row != null)
-            {
-                PXTrace.WriteInformation($"CurrYear Updated to: {row.CurrYear}");
-            }
-        }
+#endregion
 
-        #endregion
+        #region Actions
+        public PXSave<FLRTFinancialReport> Save = null!; // Initialized by PXGraph framework
+        public PXCancel<FLRTFinancialReport> Cancel = null!; // Initialized by PXGraph framework
+        public PXAction<FLRTFinancialReport> GenerateReport = null!; // Initialized by PXGraph framework
+        public PXAction<FLRTFinancialReport> DownloadReport = null!; // Initialized by PXGraph framework
+        public PXAction<FLRTFinancialReport> ResetStatus = null!; // Initialized by PXGraph framework
 
-        public PXSave<FLRTFinancialReport> Save;
-        public PXCancel<FLRTFinancialReport> Cancel;
-
-
-
-        #region Business Logic
-
-        public PXAction<FLRTFinancialReport> GenerateReport;
         [PXButton(CommitChanges = false)]
         [PXUIField(DisplayName = "Generate Report")]
-        protected virtual IEnumerable generateReport(PXAdapter adapter)
+        protected virtual System.Collections.IEnumerable generateReport(PXAdapter adapter)
         {
+            var selectedRecord = FinancialReport.Current;
 
-            // Get the current selected record
-            FLRTFinancialReport selectedRecord = FinancialReport.Cache.Cached
-                                .Cast<FLRTFinancialReport>()
-                                .FirstOrDefault(item => item.Selected == true);
+            // Perform initial validations on the UI thread
+            if (selectedRecord == null) throw new PXException(Messages.PleaseSelectTemplate);
+            if (selectedRecord.ReportID == null) throw new PXException(Messages.NoReportSelected);
+            if (selectedRecord.Status == ReportStatus.InProgress) throw new PXException(Messages.FileGenerationInProgress);
+            if (selectedRecord.Noteid == null) throw new PXException(Messages.TemplateHasNoFiles);
 
-
-
-            if (selectedRecord == null)
-                throw new PXException(Messages.PleaseSelectTemplate);
-
-            if (selectedRecord.Status == ReportStatus.InProgress)
-            {
-                throw new PXException(Messages.FileGenerationInProgress);
-            }
-
-            if (selectedRecord.Noteid == null)
-                throw new PXException(Messages.TemplateHasNoFiles);
-
-            // Retrieve CompanyID from the database
             int? companyID = GetCompanyIDFromDB(selectedRecord.ReportID);
-            PXTrace.WriteInformation($"CompanyID retrieved: {companyID}");
-
-            // Map CompanyID to a tenant name
             string tenantName = MapCompanyIDToTenantName(companyID);
-            PXTrace.WriteInformation($"Mapped Tenant Name: {tenantName}");
-
-            // Fetch credentials based on the tenant
             AcumaticaCredentials tenantCredentials = CredentialProvider.GetCredentials(tenantName);
-            PXTrace.WriteInformation($"API Credentials: ClientId={tenantCredentials.ClientId}, Username={tenantCredentials.Username}");
 
-            // Initialize AuthService with these credentials
-            AuthService authService = new AuthService(
-                                        _baseUrl,
-                                        tenantCredentials.ClientId,
-                                        tenantCredentials.ClientSecret,
-                                        tenantCredentials.Username,
-                                        tenantCredentials.Password
+            var authService = new AuthService(
+                tenantCredentials.BaseURL,
+                tenantCredentials.ClientId,
+                tenantCredentials.ClientSecret,
+                tenantCredentials.Username,
+                tenantCredentials.Password
             );
 
-            string token;
-            try
-            {
-                token = authService.AuthenticateAndGetToken();
-                PXTrace.WriteInformation($"Successfully authenticated for {tenantName}. Token: {token}");
-            }
-            catch (Exception ex)
-            {
-                PXTrace.WriteError($"Authentication failed for {tenantName}: {ex.Message}");
-                throw new PXException(Messages.InvalidCredentials);
-            }
+            // Pre-authenticate to ensure credentials are valid before starting the long operation
+            //authService.AuthenticateAndGetToken();
+            //PXTrace.WriteInformation($"Successfully authenticated for {tenantName}.");
 
-            PXTrace.WriteInformation($"Using API Credentials for {tenantName}");
-
+            // Mark record as In Progress and save before starting background task
             selectedRecord.Status = ReportStatus.InProgress;
-            // Persist the record and ensure its state is stored in the database.
-            selectedRecord.Selected = true;
-            
             FinancialReport.Update(selectedRecord);
             Actions.PressSave();
 
             int? reportID = selectedRecord.ReportID;
-            if (reportID == null)
-                throw new PXException(Messages.PleaseSelectTemplate);
 
-            // Start the background operation.
             PXLongOperation.StartOperation(this, () =>
             {
-                FLRTFinancialReportMaint reportGraph = PXGraph.CreateInstance<FLRTFinancialReportMaint>();
-                // Retrieve the record from the database using ReportID.
-                FLRTFinancialReport dbRecord = PXSelect<FLRTFinancialReport,
-                    Where<FLRTFinancialReport.reportID, Equal<Required<FLRTFinancialReport.reportID>>>>
-                    .Select(reportGraph, reportID);
-
-                if (dbRecord == null)
-                    throw new PXException(Messages.FailedToRetrieveFile);
-                if (dbRecord.Noteid == null)
-                    throw new PXException(Messages.TemplateHasNoFiles);
-
-                // Set the record explicitly for the background graph.
-                reportGraph.FinancialReport.Current = dbRecord;
+                var reportGraph = PXGraph.CreateInstance<FLRTFinancialReportMaint>();
+                FLRTFinancialReport dbRecord = null;
 
                 try
                 {
-                    // Generate the report.
-                    reportGraph.GenerateFinancialReport(token);
-                    // Log or store the file ID so the UI can later display a download link.
-                    PXTrace.WriteInformation("Report has been generated and is ready for download.");
+                    dbRecord = PXSelect<FLRTFinancialReport, Where<FLRTFinancialReport.reportID, Equal<Required<FLRTFinancialReport.reportID>>>>
+                        .SelectSingleBound(reportGraph, null, reportID);
+
+                    // Timeout protection: 15 minutes maximum for report generation
+                    var timeoutCancellation = new System.Threading.CancellationTokenSource();
+                    const int timeoutMinutes = 15;
+                    timeoutCancellation.CancelAfter(TimeSpan.FromMinutes(timeoutMinutes));
+
+                    var timeoutTask = System.Threading.Tasks.Task.Run(() =>
+                    {
+                        try
+                        {
+                            if (dbRecord == null) throw new PXException(Messages.FailedToRetrieveFile);
+                            if (dbRecord.Noteid == null) throw new PXException(Messages.TemplateHasNoFiles);
+
+                            // Check for cancellation before starting
+                            timeoutCancellation.Token.ThrowIfCancellationRequested();
+
+                        // Pre-authenticate INSIDE the long operation where async/sync issues are less problematic
+                        PXTrace.WriteInformation("Authenticating...");
+                        authService.AuthenticateAndGetToken();
+                        PXTrace.WriteInformation($"Successfully authenticated for {tenantName}.");
+
+                        // Check for cancellation before generation
+                        timeoutCancellation.Token.ThrowIfCancellationRequested();
+
+                        // Instantiate and execute the new service
+                        var generationService = new ReportGenerationService(reportGraph, dbRecord, authService);
+                        Guid generatedFileID = generationService.Execute();
+
+                        // Check for cancellation before saving
+                        timeoutCancellation.Token.ThrowIfCancellationRequested();
+
+                        // Update the record with the successful result
+                        dbRecord.GeneratedFileID = generatedFileID;
+                        dbRecord.Status = ReportStatus.Completed;
+                        reportGraph.FinancialReport.Update(dbRecord);
+                        reportGraph.Actions.PressSave();
+                        PXTrace.WriteInformation("Report generation completed successfully.");
+                    }
+                    catch (System.OperationCanceledException)
+                    {
+                        PXTrace.WriteError($"Report generation timed out after {timeoutMinutes} minutes");
+                        if (dbRecord != null)
+                        {
+                            dbRecord.Status = ReportStatus.Failed;
+                            reportGraph.FinancialReport.Update(dbRecord);
+                            reportGraph.Actions.PressSave();
+                        }
+                        throw new PXException(Messages.ReportGenerationTimeout, timeoutMinutes);
+                    }
+                    catch (Exception ex)
+                    {
+                        PXTrace.WriteError($"Report generation failed: {ex.ToString()}");
+                        if (dbRecord != null)
+                        {
+                            dbRecord.Status = ReportStatus.Failed;
+                            reportGraph.FinancialReport.Update(dbRecord);
+                            reportGraph.Actions.PressSave();
+                        }
+                        throw;
+                    }
+                    finally
+                    {
+                        authService?.Logout();
+                        timeoutCancellation?.Dispose();
+                    }
+                }, timeoutCancellation.Token);
+
+                    try
+                    {
+                        timeoutTask.Wait();
+                    }
+                    catch (System.AggregateException aex)
+                    {
+                        // Unwrap AggregateException and throw the actual exception
+                        throw aex.InnerException ?? aex;
+                    }
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
-                    PXTrace.WriteError($"Report generation failed: {ex.Message}");
-                    // Set status to "Failed" if an error occurs
-                    dbRecord.Status = ReportStatus.Failed;
+                    // If ANY unhandled exception occurs (including user cancellation),
+                    // ensure status is set to Failed
+                    if (dbRecord != null && dbRecord.Status == ReportStatus.InProgress)
+                    {
+                        dbRecord.Status = ReportStatus.Failed;
+                        reportGraph.FinancialReport.Update(dbRecord);
+                        try
+                        {
+                            reportGraph.Actions.PressSave();
+                        }
+                        catch
+                        {
+                            // Ignore save errors in cleanup
+                        }
+                    }
+                    throw; // Re-throw to show user the error
                 }
             });
 
             return adapter.Get();
         }
 
-        private void GenerateFinancialReport(string authToken)
-        {
-            try
-            {
-                // Use the persisted current record.
-                var currentRecord = FinancialReport.Current;
-                if (currentRecord == null)
-                    throw new PXException(Messages.PleaseSelectTemplate);
-                if (currentRecord.Noteid == null)
-                    throw new PXException(Messages.TemplateHasNoFiles);
-
-                // Use currentRecord directly (avoid searching the cache for Selected).
-                string branch = currentRecord.Branch;
-                string ledger = currentRecord.Ledger;
-                string organization = currentRecord.Organization;
-
-                branch = string.IsNullOrEmpty(branch) ? organization : branch;
-
-                if (string.IsNullOrEmpty(branch) && string.IsNullOrEmpty(organization))
-                    throw new PXException(Messages.PleaseSelectABranch);
-
-                //if (string.IsNullOrEmpty(branch))
-                //    throw new PXException(Messages.PleaseSelectABranch);
-                if (string.IsNullOrEmpty(ledger))
-                    throw new PXException(Messages.PleaseSelectALedger);
-
-                // Fetch template file content
-                var templateFileContent = GetFileContent(currentRecord.Noteid);
-                if (templateFileContent == null || templateFileContent.Length == 0)
-                    throw new PXException(Messages.TemplateFileIsEmpty);
-
-                // Create paths for template and output
-                string templatePath = Path.Combine(Path.GetTempPath(), $"{currentRecord.ReportCD}_Template.docx");
-                File.WriteAllBytes(templatePath, templateFileContent);
-
-                string uniqueFileName = $"{currentRecord.ReportCD}_Generated_{DateTime.Now:yyyyMMdd_HHmmssfff}.docx";
-                string outputPath = Path.Combine(Path.GetTempPath(), uniqueFileName);
-
-                // Determine periods for current and previous years.
-                string currYear = currentRecord.CurrYear ?? DateTime.Now.ToString("yyyy");
-                string selectedMonth = currentRecord.FinancialMonth ?? "12"; // Default to December
-                string selectedPeriod = $"{selectedMonth}{currYear}";
-                int currYearInt = int.TryParse(currYear, out int parsedYear) ? parsedYear : DateTime.Now.Year;
-                string prevYear = (currYearInt - 1).ToString();
-                string prevYearPeriod = selectedMonth + prevYear;
-
-                _authService.SetToken(authToken);
-
-                PXTrace.WriteInformation($"Fetching data for Period: {selectedPeriod}, Branch: {branch}, Ledger: {ledger}");
-                var currYearData = _dataService.FetchAllApiData(branch, ledger, selectedPeriod) ?? new FinancialApiData();
-
-                PXTrace.WriteInformation($"Fetching data for Prev Year Period: {prevYearPeriod}, Branch: {branch}, Ledger: {ledger}");
-                var prevYearData = _dataService.FetchAllApiData(branch, ledger, prevYearPeriod) ?? new FinancialApiData();
-
-                // Prepare placeholder data and populate the template.
-                var placeholderData = GetPlaceholderData(currYearData, prevYearData);
-                _wordTemplateService.PopulateTemplate(templatePath, outputPath, placeholderData);
-
-                // Upload the generated document and store the file ID (instead of redirecting immediately).
-                byte[] generatedFileContent = File.ReadAllBytes(outputPath);
-                Guid fileID = SaveGeneratedDocument(uniqueFileName, generatedFileContent, currentRecord);
-
-                PXTrace.WriteInformation("Report generated successfully.");
-
-                // Redirect to the generated file
-                //throw new PXRedirectToFileException(fileID, 1, false);
-
-                // Optionally, store the fileID on the record or in a related table so that the UI can display a download link.
-                // For example:
-                currentRecord.GeneratedFileID = fileID;
-                currentRecord.Status = ReportStatus.Completed;
-                FinancialReport.Update(currentRecord);
-                Actions.PressSave();
-
-
-            }
-            catch (Exception ex)
-            {
-                PXTrace.WriteError($"Report generation failed: {ex.Message}");
-
-                var currentRecord = FinancialReport.Current;
-                if (currentRecord != null)
-                {
-                    // Set status to "Failed" if an error occurs
-                    currentRecord.Status = ReportStatus.Failed;
-                    FinancialReport.Update(currentRecord);
-                    Actions.PressSave();
-                }
-
-                throw new PXException(Messages.FailedToRetrieveFile);
-            }
-            finally
-            {
-                _authService.Logout();
-            }
-        }
-
-        #endregion
-
-
-        #region Supporting Methods
-
-        private Dictionary<string, string> GetPlaceholderData(FinancialApiData currYearData, FinancialApiData prevYearData)
-        {
-            var selectedRecord = FinancialReport.Current;
-            string selectedMonth = selectedRecord?.FinancialMonth ?? "12"; // Default to December
-            string currYear = selectedRecord?.CurrYear ?? DateTime.Now.ToString("yyyy");
-
-            // Validate CurrYear
-            if (string.IsNullOrEmpty(currYear))
-                throw new PXException(Messages.CurrentYearNotSpecified);
-
-            // Compute PrevYear
-            int currYearInt = int.TryParse(currYear, out int parsedYear) ? parsedYear : DateTime.Now.Year;
-            string prevYear = (currYearInt - 1).ToString();
-
-
-            // ✅ Convert "01" to "January", "02" to "February", etc.
-            int monthNumber = int.Parse(selectedMonth);
-            string monthName = new DateTime(1, monthNumber, 1).ToString("MMMM");
-
-            var placeholderData = new Dictionary<string, string>
-            {
-                { "{{financialMonth}}", monthName},
-                { "{{branchName}}", "Censof-Test" },
-                { "{{agencyname}}", "Suruhanjaya Tenaga" },
-                { "{{name1}}", "Dato' Khir bin Osman" },
-                { "{{name2}}", "Dato' Shaik Hussein bin Anggota" },
-                { "{{agencyName}}", "Suruhanjaya Tenaga" },
-                { "{{CY}}", currYear },
-                { "{{currmonth}}", DateTime.Now.ToString("MMMM") },
-                { "{{PY}}", prevYear }
-            };
-
-            // Add fetched data for CurrYear
-            foreach (var account in currYearData.AccountData)
-            {
-                placeholderData[$"{{{{{account.Key}_CY}}}}"] = FormatNumber(account.Value.EndingBalance); // {{101000_2024}}
-                placeholderData[$"{{{{description_{account.Key}_CY}}}}"] = account.Value.Description; // {{description_101000_CurrYear}}
-            }
-
-            // Add fetched data for PrevYear
-            foreach (var account in prevYearData.AccountData)
-            {
-                placeholderData[$"{{{{{account.Key}_PY}}}}"] = FormatNumber(account.Value.EndingBalance); // {{101000_2023}}
-            }
-
-            return placeholderData;
-        }
-
-        private byte[] GetFileContent(Guid? noteID)
-        {
-            return _fileService.GetFileContent(noteID);
-        }
-
-
-        private Guid SaveGeneratedDocument(string fileName, byte[] fileContent, FLRTFinancialReport currentRecord)
-        {
-            return _fileService.SaveGeneratedDocument(fileName, fileContent, currentRecord);
-        }
-
-        #endregion
-
-
-        #region Download Method
-
-        public PXAction<FLRTFinancialReport> DownloadReport;
         [PXButton]
         [PXUIField(DisplayName = "Download Report", MapEnableRights = PXCacheRights.Select, Visible = true)]
-        protected virtual IEnumerable downloadReport(PXAdapter adapter)
+        protected virtual System.Collections.IEnumerable downloadReport(PXAdapter adapter)
         {
-            // Get the current record from the grid.
-            FLRTFinancialReport currentRecord = FinancialReport.Current;
-            if (currentRecord == null)
-            {
+            var selectedRecord = FinancialReport.Current;
+
+            if (selectedRecord == null)
                 throw new PXException(Messages.NoRecordIsSelected);
-            }
 
-            if (currentRecord.GeneratedFileID == null)
-            {
+            if (selectedRecord.GeneratedFileID == null)
                 throw new PXException(Messages.NoGeneratedFile);
-            }
 
-            // Trigger the file download using PXRedirectToFileException.
-            throw new PXRedirectToFileException(currentRecord.GeneratedFileID.Value, 1, false);
+            throw new PXRedirectToFileException(selectedRecord.GeneratedFileID.Value, true);
         }
 
+        [PXButton(CommitChanges = true)]
+        [PXUIField(DisplayName = "Reset Status", MapEnableRights = PXCacheRights.Update, Visible = true)]
+        protected virtual System.Collections.IEnumerable resetStatus(PXAdapter adapter)
+        {
+            var selectedRecord = FinancialReport.Current;
 
+            if (selectedRecord == null)
+            {
+                throw new PXException(Messages.UnselectedResetStatus);
+            }
+
+            string currentStatus = selectedRecord.Status ?? "Unknown";
+            string statusName = currentStatus == ReportStatus.InProgress ? "In Progress" :
+                               currentStatus == ReportStatus.Failed ? "Failed" :
+                               currentStatus == ReportStatus.Completed ? "Completed" : "Pending";
+
+            // Ask for confirmation before resetting
+            if (FinancialReport.Ask("Confirm Reset",
+                $"Reset this report from '{statusName}' to 'Pending'? This will allow regeneration.",
+                MessageButtons.YesNo) == WebDialogResult.Yes)
+            {
+                selectedRecord.Status = ReportStatus.Pending;
+                selectedRecord.GeneratedFileID = null; // Clear the generated file so it doesn't show old data
+                FinancialReport.Update(selectedRecord);
+                Actions.PressSave();
+
+                PXTrace.WriteInformation($"Report {selectedRecord.ReportCD} status reset from {statusName} to Pending.");
+            }
+
+            return adapter.Get();
+        }
         #endregion
 
-        private int? GetCompanyIDFromDB(int? reportID)
+        #region Public Helper Methods
+        // These methods are made public so they can be called by the ReportGenerationService
+        public int? GetCompanyIDFromDB(int? reportID)
         {
-            if (reportID == null) return null;
+            if (reportID == null)
+                throw new PXException(Messages.ReportIDNull);
 
-            using (PXTransactionScope ts = new PXTransactionScope())
+            using (new PXConnectionScope())
             {
                 var result = PXDatabase.SelectSingle<FLRTFinancialReport>(
-                    new PXDataField("CompanyID"), // Column name in DB
-                    new PXDataFieldValue("ReportID", reportID) // Filtering by ReportID
+                    new PXDataField("CompanyID"),
+                    new PXDataFieldValue(nameof(FLRTFinancialReport.ReportID), reportID)
                 );
 
-                if (result != null)
-                {
-                    return (int?)result.GetInt32(0);
-                }
+                if (result != null) return result.GetInt32(0);
             }
-
-            return null;
+            throw new PXException(Messages.NoCompanyIDFound);
         }
 
-        private string MapCompanyIDToTenantName(int? companyID)
+        public string MapCompanyIDToTenantName(int? companyID)
         {
             if (companyID == null)
-                return string.Empty; // Default to general credentials
+                throw new PXException(Messages.CompanyNumRequired);
 
-            switch (companyID)
+            FLRTTenantCredentials tenantCreds = PXSelect<FLRTTenantCredentials,
+                Where<FLRTTenantCredentials.companyNum, Equal<Required<FLRTTenantCredentials.companyNum>>>>
+                .Select(this, companyID);
+
+            if (tenantCreds == null || string.IsNullOrEmpty(tenantCreds.TenantName))
             {
-                case 3:
-                    return "TenantA"; // Maps to Acumatica.TenantA in web.config
-                case 4:
-                    return "TenantB"; // Maps to Acumatica.TenantB in web.config
-                case 5:
-                    return "TenantC"; // Add more mappings if needed
-                case 6:
-                    return "TenantD"; // Add more mappings if needed
-                case 7:
-                    return "TenantE"; // Add more mappings if needed
-                case 8:
-                    return "TenantF"; // Add more mappings if needed
-                case 9:
-                    return "TenantG"; // Add more mappings if needed
-                default:
-                    return string.Empty; // Default to general credentials
+                PXTrace.WriteError($"No tenant found in FLRTTenantCredentials for CompanyID: {companyID}");
+                throw new PXException(Messages.NoTenantMapping);
             }
+
+            return tenantCreds.TenantName;
         }
-
-
-
-
-
+        #endregion
     }
 }
