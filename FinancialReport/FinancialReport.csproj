@@ -92,6 +92,11 @@
     <Compile Include="Helper\GIColumnMapping.cs" />
     <Compile Include="Helper\GIColumnSelectorAttribute.cs" />
     <Compile Include="Helper\RoundingSettings.cs" />
+    <Compile Include="Services\AlaiApiService.cs" />
+    <Compile Include="Services\MarkdownBuilderService.cs" />
+    <Compile Include="Services\SlideGenerationService.cs" />
+    <Compile Include="Services\SlidesGptApiService.cs" />
+    <Compile Include="Services\GammaApiService.cs" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="DocumentFormat.OpenXml">

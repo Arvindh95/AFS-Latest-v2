@@ -113,5 +113,26 @@ namespace FinancialReport
         { }
         #endregion
 
+        #region AlaiApiKey
+        [PXRSACryptString]
+        [PXUIField(DisplayName = "Alai API Key")]
+        public virtual string AlaiApiKey { get; set; }
+        public abstract class alaiApiKey : PX.Data.BQL.BqlString.Field<alaiApiKey> { }
+        #endregion
+
+        #region SlidesGptApiKey
+        [PXRSACryptString]
+        [PXUIField(DisplayName = "SlidesGPT API Key")]
+        public virtual string SlidesGptApiKey { get; set; }
+        public abstract class slidesGptApiKey : PX.Data.BQL.BqlString.Field<slidesGptApiKey> { }
+        #endregion
+
+        #region GammaApiKey
+        [PXRSACryptString]
+        [PXUIField(DisplayName = "Gamma API Key")]
+        public virtual string GammaApiKey { get; set; }
+        public abstract class gammaApiKey : PX.Data.BQL.BqlString.Field<gammaApiKey> { }
+        #endregion
+
     }
 }
