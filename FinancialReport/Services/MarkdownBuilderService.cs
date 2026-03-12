@@ -8,16 +8,12 @@ namespace FinancialReport.Services
 {
     /// <summary>
     /// Builds a structured markdown string from calculated financial report data.
-    /// The markdown is used as the input_text payload for the Alai presentation API.
+    /// The markdown is used as the prompt payload for Gamma's AI presentation generation.
     ///
-    /// Output format:
-    ///   # [Title]
-    ///   [Description]
-    ///   Organization | Branch | Ledger | Period context
-    ///   ---
-    ///   ## [Line Description]
-    ///   - CY value, PM value, MoM change, PY value, YoY change
-    ///   (repeated per visible line item across all definitions)
+    /// Output structure:
+    ///   - CFO-level instruction prompt (role, requirements, slide sections, analysis guidance)
+    ///   - Raw financial figures per visible line item (CY, PM, PY)
+    ///   Gamma's AI calculates percentage changes and generates the narrative.
     /// </summary>
     public class MarkdownBuilderService
     {
@@ -28,7 +24,7 @@ namespace FinancialReport.Services
         };
 
         /// <summary>
-        /// Builds the complete markdown string from the report header, line items, and calculated results.
+        /// Builds the complete markdown prompt from the report header, line items, and calculated results.
         /// </summary>
         /// <param name="report">The FLRTFinancialReport record (provides period, org, branch, ledger, title, description).</param>
         /// <param name="definitions">Each definition paired with its ordered line items.</param>
@@ -51,26 +47,81 @@ namespace FinancialReport.Services
 
             var sb = new StringBuilder();
 
-            // ── Header ─────────────────────────────────────────────────────────────
+            // ── Report context ─────────────────────────────────────────────────────
             string title = !string.IsNullOrWhiteSpace(report.PresentationTitle)
                 ? report.PresentationTitle
                 : $"{cyLabel} Financial Report";
 
             sb.AppendLine($"# {title}");
+            sb.AppendLine();
+            sb.AppendLine($"**Organization:** {report.Organization ?? "N/A"} | **Branch:** {report.Branch ?? "N/A"} | **Ledger:** {report.Ledger ?? "N/A"}");
+            sb.AppendLine($"**Reporting Period:** {cyLabel}");
+            sb.AppendLine($"**Prior Month:** {pmLabel}");
+            sb.AppendLine($"**Prior Year (same month):** {pyLabel}");
+            sb.AppendLine();
 
             if (!string.IsNullOrWhiteSpace(report.PresentationDescription))
+            {
                 sb.AppendLine(report.PresentationDescription);
+                sb.AppendLine();
+            }
 
-            sb.AppendLine();
-            sb.AppendLine($"Organization: {report.Organization ?? "N/A"} | Branch: {report.Branch ?? "N/A"} | Ledger: {report.Ledger ?? "N/A"}");
-            sb.AppendLine($"Reporting Period: {cyLabel}");
-            sb.AppendLine($"Month-over-Month: {cyLabel} vs {pmLabel}");
-            sb.AppendLine($"Year-over-Year: {cyLabel} vs {pyLabel}");
-            sb.AppendLine();
             sb.AppendLine("---");
             sb.AppendLine();
 
-            // ── Line items ─────────────────────────────────────────────────────────
+            // ── CFO prompt ────────────────────────────────────────────────────────
+            sb.AppendLine("You are a **Chief Financial Officer (CFO)** preparing a professional financial analysis presentation for senior management and board members.");
+            sb.AppendLine();
+            sb.AppendLine("Your task is to analyze the financial data provided below and produce a professional **slide deck**.");
+            sb.AppendLine();
+            sb.AppendLine("## Presentation Requirements");
+            sb.AppendLine();
+            sb.AppendLine("The presentation should:");
+            sb.AppendLine("- Be written in a professional CFO-level tone");
+            sb.AppendLine("- Provide insights, not just repeat numbers");
+            sb.AppendLine("- Highlight key trends, risks, and opportunities");
+            sb.AppendLine("- Include recommendations where appropriate");
+            sb.AppendLine("- Suggest charts where useful (bar chart, trend chart, waterfall, etc.)");
+            sb.AppendLine("- **Calculate percentage changes yourself** (MoM %, YoY %) from the raw figures provided. Round to 1 decimal place.");
+            sb.AppendLine();
+            sb.AppendLine("## Slide Structure");
+            sb.AppendLine();
+            sb.AppendLine("Create a structured slide deck with the following sections:");
+            sb.AppendLine();
+            sb.AppendLine("1. Executive Summary");
+            sb.AppendLine("2. Financial Position Overview");
+            sb.AppendLine("3. Asset Analysis");
+            sb.AppendLine("4. Income Performance");
+            sb.AppendLine("5. Expense Analysis");
+            sb.AppendLine("6. Equity and Capital Structure");
+            sb.AppendLine("7. Liability Analysis");
+            sb.AppendLine("8. Month-over-Month Key Movements");
+            sb.AppendLine("9. Financial Health Assessment");
+            sb.AppendLine("10. Risks and Observations");
+            sb.AppendLine("11. Strategic Recommendations");
+            sb.AppendLine("12. Key Takeaways");
+            sb.AppendLine();
+            sb.AppendLine("Each slide should include:");
+            sb.AppendLine("- **Slide Title**");
+            sb.AppendLine("- **Key bullet insights**");
+            sb.AppendLine("- **Important figures referenced**");
+            sb.AppendLine("- **Suggested chart type**");
+            sb.AppendLine();
+            sb.AppendLine("## Analysis Guidance");
+            sb.AppendLine();
+            sb.AppendLine("Use management-level analysis such as:");
+            sb.AppendLine("- Operational performance");
+            sb.AppendLine("- Balance sheet movement");
+            sb.AppendLine("- Cost control effectiveness");
+            sb.AppendLine("- Sustainability of revenue growth");
+            sb.AppendLine("- Financial stability indicators");
+            sb.AppendLine();
+            sb.AppendLine("---");
+            sb.AppendLine();
+            sb.AppendLine("## Financial Data");
+            sb.AppendLine();
+
+            // ── Line items (raw figures only — let Gamma calculate % changes) ──────
             foreach (var (defLink, items) in definitions)
             {
                 var visibleItems = items.Where(l => l.IsVisible == true).ToList();
@@ -87,33 +138,10 @@ namespace FinancialReport.Services
                         ? line.Description
                         : line.LineCode;
 
-                    decimal cyDec = ParseDecimal(cyVal);
-                    decimal pmDec = ParseDecimal(pmVal);
-                    decimal pyDec = ParseDecimal(pyVal);
-
-                    decimal momChange = cyDec - pmDec;
-                    decimal yoyChange = cyDec - pyDec;
-
-                    // Credit-balance accounts (equity, liability, expenses) are stored as negative.
-                    // For those, a positive raw change means the balance shrank — which is a decrease
-                    // in real terms. Negate the displayed change so the narrative reads correctly:
-                    // e.g. Equity (9.5M) vs (10.2M): raw change = +641K → displayed as -641K (-6.3%).
-                    bool isCredit = cyDec < 0;
-                    decimal displayMom = isCredit ? -momChange : momChange;
-                    decimal displayYoy = isCredit ? -yoyChange : yoyChange;
-
-                    decimal momBase = pmDec != 0 ? Math.Abs(pmDec) : 0;
-                    decimal yoyBase = pyDec != 0 ? Math.Abs(pyDec) : 0;
-
-                    string momPct = momBase != 0 ? $" ({displayMom / momBase * 100:N1}%)" : "";
-                    string yoyPct = yoyBase != 0 ? $" ({displayYoy / yoyBase * 100:N1}%)" : "";
-
-                    sb.AppendLine($"## {label}");
+                    sb.AppendLine($"### {label}");
                     sb.AppendLine($"- {cyLabel}: {cyVal}");
                     sb.AppendLine($"- {pmLabel}: {pmVal}");
-                    sb.AppendLine($"- Month-on-Month Change: {displayMom:N0}{momPct}");
                     sb.AppendLine($"- {pyLabel}: {pyVal}");
-                    sb.AppendLine($"- Year-on-Year Change: {displayYoy:N0}{yoyPct}");
                     sb.AppendLine();
                 }
             }
@@ -126,17 +154,6 @@ namespace FinancialReport.Services
             if (results != null && results.TryGetValue(key, out string val) && !string.IsNullOrEmpty(val))
                 return val;
             return "0";
-        }
-
-        private decimal ParseDecimal(string value)
-        {
-            if (string.IsNullOrEmpty(value)) return 0m;
-            // Strip formatting characters that may come from the engine (commas, spaces)
-            string cleaned = value.Replace(",", "").Replace(" ", "").Trim();
-            // Handle accounting format: (1234) means -1234
-            if (cleaned.StartsWith("(") && cleaned.EndsWith(")"))
-                cleaned = "-" + cleaned.Substring(1, cleaned.Length - 2);
-            return decimal.TryParse(cleaned, out decimal result) ? result : 0m;
         }
     }
 }

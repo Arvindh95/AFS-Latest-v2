@@ -111,8 +111,8 @@ namespace FinancialReport
         // ==================================================
         public const string SlideGenerationInProgress = "A presentation generation process is already running for this report.";
         public const string PresentationTitleRequired = "Please enter a Presentation Title before generating a presentation.";
-        public const string AlaiApiKeyNotConfigured = "Alai API Key is not configured. Please enter your Alai API Key in the Tenant Credentials screen.";
-        public const string SlidesGptApiKeyNotConfigured = "SlidesGPT API Key is not configured. Please enter your SlidesGPT API Key in the Tenant Credentials screen.";
+        public const string NoDefinitionsLinked = "No report definitions linked. Please add at least one definition on the Report Definitions tab before generating a presentation.";
+        public const string VisibleLineItemsMissingDescriptions = "The following visible line items are missing descriptions: {0}. Please fill in all descriptions before generating a presentation.";
         public const string GammaApiKeyNotConfigured = "Gamma API Key is not configured. Please enter your Gamma API Key in the Tenant Credentials screen.";
         public const string NoGeneratedPresentation = "No presentation is available for download. Please generate a presentation first.";
         public const string MarkdownPreviewComplete = "Markdown preview saved. Download it from the Files panel (paperclip icon).";
