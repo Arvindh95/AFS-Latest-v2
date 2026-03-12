@@ -107,6 +107,17 @@ namespace FinancialReport
         public const string CircularDependencyDetected = "Circular dependency detected in report definitions. The following line codes form a cycle and cannot be resolved: {0}. Please revise the formulas to break the cycle.";
 
         // ==================================================
+        // SLIDE / PRESENTATION GENERATION MESSAGES
+        // ==================================================
+        public const string SlideGenerationInProgress = "A presentation generation process is already running for this report.";
+        public const string PresentationTitleRequired = "Please enter a Presentation Title before generating a presentation.";
+        public const string AlaiApiKeyNotConfigured = "Alai API Key is not configured. Please enter your Alai API Key in the Tenant Credentials screen.";
+        public const string SlidesGptApiKeyNotConfigured = "SlidesGPT API Key is not configured. Please enter your SlidesGPT API Key in the Tenant Credentials screen.";
+        public const string GammaApiKeyNotConfigured = "Gamma API Key is not configured. Please enter your Gamma API Key in the Tenant Credentials screen.";
+        public const string NoGeneratedPresentation = "No presentation is available for download. Please generate a presentation first.";
+        public const string MarkdownPreviewComplete = "Markdown preview saved. Download it from the Files panel (paperclip icon).";
+
+        // ==================================================
         // GI & COLUMN MAPPING MESSAGES
         // ==================================================
         public const string GINameRequired = "Generic Inquiry Name is required to detect columns.";

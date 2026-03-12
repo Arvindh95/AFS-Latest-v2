@@ -190,7 +190,7 @@ namespace FinancialReport
     #endregion
 
     #region Status
-        [PXDBString(20, IsUnicode = true)]
+        [PXDBString(50, IsUnicode = true)]
     [PXDefault(ReportStatus.Pending)] // Default status
     [PXUIField(DisplayName = "Status", IsReadOnly = true)]
     [PXStringList(new string[]
@@ -210,6 +210,52 @@ namespace FinancialReport
     public virtual string Status { get; set; }
     public abstract class status : PX.Data.BQL.BqlString.Field<status> { }
         #endregion
+
+    #region PresentationTitle
+    [PXDBString(500, IsUnicode = true)]
+    [PXUIField(DisplayName = "Presentation Title")]
+    public virtual string PresentationTitle { get; set; }
+    public abstract class presentationTitle : PX.Data.BQL.BqlString.Field<presentationTitle> { }
+    #endregion
+
+    #region GammaTemplateId
+    [PXDBString(100, IsUnicode = true)]
+    [PXUIField(DisplayName = "Gamma Template ID")]
+    public virtual string GammaTemplateId { get; set; }
+    public abstract class gammaTemplateId : PX.Data.BQL.BqlString.Field<gammaTemplateId> { }
+    #endregion
+
+    #region PresentationDescription
+    [PXDBString(2000, IsUnicode = true)]
+    [PXUIField(DisplayName = "Presentation Description")]
+    public virtual string PresentationDescription { get; set; }
+    public abstract class presentationDescription : PX.Data.BQL.BqlString.Field<presentationDescription> { }
+    #endregion
+
+    #region SlideGeneratedFileID
+    [PXDBGuid]
+    [PXUIField(DisplayName = "Slide File ID", Visible = false)]
+    public virtual Guid? SlideGeneratedFileID { get; set; }
+    public abstract class slideGeneratedFileID : PX.Data.BQL.BqlGuid.Field<slideGeneratedFileID> { }
+    #endregion
+
+    #region PresentationMarkdown
+    [PXDBText(IsUnicode = true)]
+    [PXUIField(DisplayName = "Presentation Markdown")]
+    public virtual string PresentationMarkdown { get; set; }
+    public abstract class presentationMarkdown : PX.Data.BQL.BqlString.Field<presentationMarkdown> { }
+    #endregion
+
+    #region SlideStatus
+    [PXDBString(50, IsUnicode = true)]
+    [PXDefault(ReportStatus.Pending, PersistingCheck = PXPersistingCheck.Nothing)]
+    [PXUIField(DisplayName = "Presentation Status", IsReadOnly = true)]
+    [PXStringList(
+        new string[] { ReportStatus.Pending, ReportStatus.InProgress, ReportStatus.Completed, ReportStatus.Failed },
+        new string[] { "Pending", "In Progress", "Ready to Download", "Failed" })]
+    public virtual string SlideStatus { get; set; }
+    public abstract class slideStatus : PX.Data.BQL.BqlString.Field<slideStatus> { }
+    #endregion
 
     #region Report Status
     public static class ReportStatus
