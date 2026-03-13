@@ -51,62 +51,11 @@ namespace FinancialReport.Services
                 int? companyID = _graph.GetCompanyIDFromDB(_currentRecord.ReportID);
                 string tenantName = _graph.MapCompanyIDToTenantName(companyID);
 
-                // 1b. Load Report Definitions — multi-definition (new) or single legacy fallback
-                GIColumnMapping columnMapping = null;
-                var definitionLinks = new List<ReportCalculationEngine.DefinitionLink>();
+                // 1b. Load definitions, line items, and period strings via shared pipeline
+                var pipelineCtx = ReportDataPipeline.BuildContext(_graph, _currentRecord);
+                var definitionLinks = pipelineCtx.DefinitionLinks;
 
-                // Check for linked definitions first (multi-def path)
-                var linkedDefs = SelectFrom<FLRTReportDefinitionLink>
-                    .InnerJoin<FLRTReportDefinition>
-                        .On<FLRTReportDefinition.definitionID.IsEqual<FLRTReportDefinitionLink.definitionID>>
-                    .Where<FLRTReportDefinitionLink.reportID.IsEqual<@P.AsInt>>
-                    .OrderBy<FLRTReportDefinitionLink.displayOrder.Asc>
-                    .View.Select(_graph, _currentRecord.ReportID)
-                    .Cast<PXResult<FLRTReportDefinitionLink, FLRTReportDefinition>>()
-                    .ToList();
-
-                if (linkedDefs.Any())
-                {
-                    // Use the first definition's GI mapping for GL data fetching
-                    var firstDef = linkedDefs.First().GetItem<FLRTReportDefinition>();
-                    columnMapping = GIColumnMapping.FromDefinition(firstDef);
-
-                    foreach (var result in linkedDefs)
-                    {
-                        var def = result.GetItem<FLRTReportDefinition>();
-                        definitionLinks.Add(new ReportCalculationEngine.DefinitionLink
-                        {
-                            DefinitionID = def.DefinitionID!.Value,
-                            Prefix       = def.DefinitionPrefix,
-                            Rounding     = RoundingSettings.FromDefinition(def)
-                        });
-                    }
-
-                    PXTrace.WriteInformation($"Multi-definition report: {definitionLinks.Count} definition(s) linked — prefixes: [{string.Join(", ", definitionLinks.Select(d => d.Prefix))}]");
-                }
-                else if (_currentRecord.DefinitionID != null)
-                {
-                    // Legacy single-definition fallback
-                    var reportDef = SelectFrom<FLRTReportDefinition>
-                        .Where<FLRTReportDefinition.definitionID.IsEqual<@P.AsInt>>
-                        .View.Select(_graph, _currentRecord.DefinitionID)
-                        .TopFirst;
-
-                    if (reportDef != null)
-                    {
-                        columnMapping = GIColumnMapping.FromDefinition(reportDef);
-                        var rounding  = RoundingSettings.FromDefinition(reportDef);
-                        definitionLinks.Add(new ReportCalculationEngine.DefinitionLink
-                        {
-                            DefinitionID = reportDef.DefinitionID!.Value,
-                            Prefix       = reportDef.DefinitionPrefix,
-                            Rounding     = rounding
-                        });
-                        PXTrace.WriteInformation($"Legacy single definition '{reportDef.DefinitionCD}' (prefix: {reportDef.DefinitionPrefix}): GI={columnMapping.GIName}, Rounding={rounding.RoundingLevel}/{rounding.DecimalPlaces}dp");
-                    }
-                }
-
-                var localDataService = new FinancialDataService(_authService, tenantName, columnMapping);
+                var localDataService = new FinancialDataService(_authService, tenantName, pipelineCtx.ColumnMapping);
 
                 // 2. Get Template File
                 var (templateFileContent, originalFileName) = _fileService.GetFileContentAndName(_currentRecord.Noteid, _currentRecord);
@@ -121,7 +70,7 @@ namespace FinancialReport.Services
                 }
 
                 string extension = Path.GetExtension(originalFileName) ?? ".docx";
-                templatePath = Path.Combine(Path.GetTempPath(), $"{_currentRecord.ReportCD}_Template{extension}");
+                templatePath = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + extension);
                 File.WriteAllBytes(templatePath, templateFileContent);
 
                 // 3. Extract Placeholders
@@ -166,30 +115,27 @@ namespace FinancialReport.Services
 
                 PXTrace.WriteInformation($"API fetch flags — needsDetail={needsDetail}, needsCumulative={needsCumulative}, needsPM={needsPM}");
 
-                // 4. ✅ NEW: Separate ALL placeholder types (wildcard, exact range, regular)
+                // 4. Separate ALL placeholder types (wildcard, exact range, regular)
                 var (wildcardRangePlaceholders, exactRangePlaceholders, regularPlaceholders) =
                     localDataService.SeparateAllPlaceholderTypes(extractedKeys);
 
-                PXTrace.WriteInformation($"📊 Extracted {extractedKeys.Count} total placeholders:");
-                PXTrace.WriteInformation($"   🌟 {wildcardRangePlaceholders.Count} wildcard range (A????:B????_e_CY)");
-                PXTrace.WriteInformation($"   🎯 {exactRangePlaceholders.Count} exact range (A74101:A75101_e_CY)");
-                PXTrace.WriteInformation($"   📝 {regularPlaceholders.Count} regular (A74101_CY)");
+                PXTrace.WriteInformation($"[Step 4] Extracted {extractedKeys.Count} total placeholders:");
+                PXTrace.WriteInformation($"   wildcard range: {wildcardRangePlaceholders.Count} (A????:B????_e_CY)");
+                PXTrace.WriteInformation($"   exact range:    {exactRangePlaceholders.Count} (A74101:A75101_e_CY)");
+                PXTrace.WriteInformation($"   regular:        {regularPlaceholders.Count} (A74101_CY)");
 
-                // 5. Set up Parameters
-                string currYear = _currentRecord.CurrYear ?? DateTime.Now.ToString("yyyy");
+                // 5. Set up Parameters — reuse period strings from pipeline context
+                string currYear            = pipelineCtx.CurrYear;
+                string prevYear            = pipelineCtx.PrevYear;
+                string selectedPeriod      = pipelineCtx.SelectedPeriod;
+                string prevYearPeriod      = pipelineCtx.PrevYearPeriod;
+                string prevYearPriorPeriod = pipelineCtx.PrevYearPriorPeriod;
+                string prevMonthPeriod     = pipelineCtx.PrevMonthPeriod;
+
                 string selectedMonth = _currentRecord.FinancialMonth ?? "12";
-                int currYearInt = int.TryParse(currYear, out int parsedYear) ? parsedYear : DateTime.Now.Year;
+                int currYearInt      = int.TryParse(currYear, out int parsedYear) ? parsedYear : DateTime.Now.Year;
                 int selectedMonthInt = int.TryParse(selectedMonth, out int parsedMonth) ? parsedMonth : 12;
-                string prevYear = (currYearInt - 1).ToString();
                 string prevYearPrior = (currYearInt - 2).ToString();
-                string selectedPeriod = $"{selectedMonth}{currYear}";
-                string prevYearPeriod = $"{selectedMonth}{prevYear}";
-                string prevYearPriorPeriod = $"{selectedMonth}{prevYearPrior}";
-
-                // Previous month: wraps to December of prior year when selected month is January
-                int prevMonthInt  = selectedMonthInt == 1 ? 12 : selectedMonthInt - 1;
-                int prevMonthYear = selectedMonthInt == 1 ? currYearInt - 1 : currYearInt;
-                string prevMonthPeriod = $"{prevMonthInt:D2}{prevMonthYear}";
 
                 // Compute the fiscal year start period for cumulative (Debit/Credit/Movement) fetches.
                 // The fiscal year starts on the month immediately after the financial year-end month.
@@ -239,7 +185,7 @@ namespace FinancialReport.Services
                 var prevMonthData         = taskPM.Result;      // null when needsPM=false
 
                 int fetchCount = 6 + (needsCumulative ? 2 : 0) + (needsPM ? 1 : 0);
-                PXTrace.WriteInformation($"📊 {fetchCount} API calls completed (skipped: cumulative={!needsCumulative}, PM={!needsPM}) — prevMonth: {prevMonthPeriod}");
+                PXTrace.WriteInformation($"[Step 7] {fetchCount} API calls completed (skipped: cumulative={!needsCumulative}, PM={!needsPM}) — prevMonth: {prevMonthPeriod}");
 
                 // 7. Set up user settings for analysis
                 var userSettings = new UserSettings
@@ -260,7 +206,7 @@ namespace FinancialReport.Services
                     exactRangePlaceholders, currYearData, prevYearData, januaryBeginningDataCY,
                     januaryBeginningDataPY, cumulativeCYData, cumulativePYData);
 
-                // 10. ✅ NEW: Process wildcard range placeholders
+                // 10. Process wildcard range placeholders
                 var wildcardRangePlaceholderValues = localDataService.ProcessWildcardRangePlaceholders(
                     wildcardRangePlaceholders, currYearData, prevYearData, januaryBeginningDataCY,
                     januaryBeginningDataPY, cumulativeCYData, cumulativePYData);
@@ -318,10 +264,10 @@ namespace FinancialReport.Services
                 finalPlaceholders[Constants.CurrentYearSuffix] = currYear;
                 finalPlaceholders[Constants.PreviousYearSuffix] = prevYear;
 
-                PXTrace.WriteInformation($"📋 Final placeholder count: {finalPlaceholders.Count}");
-                PXTrace.WriteInformation($"   📝 Regular: {regularPlaceholderValues.Count}");
-                PXTrace.WriteInformation($"   🎯 Exact Range: {exactRangePlaceholderValues.Count}");
-                PXTrace.WriteInformation($"   🌟 Wildcard Range: {wildcardRangePlaceholderValues.Count}");
+                PXTrace.WriteInformation($"[Step 12] Final placeholder count: {finalPlaceholders.Count}");
+                PXTrace.WriteInformation($"   regular:        {regularPlaceholderValues.Count}");
+                PXTrace.WriteInformation($"   exact range:    {exactRangePlaceholderValues.Count}");
+                PXTrace.WriteInformation($"   wildcard range: {wildcardRangePlaceholderValues.Count}");
 
                 // 12. Populate Word Template
                 string outputFileName = $"{_currentRecord.ReportCD}_Generated_{DateTime.Now:yyyyMMdd_HHmmssfff}{extension}";

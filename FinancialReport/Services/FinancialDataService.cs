@@ -23,7 +23,7 @@ namespace FinancialReport.Services
         private readonly AuthService _authService;
         private readonly GIColumnMapping _columnMapping;
 
-        // ✅ Static HttpClient shared across all instances and methods
+        // Static HttpClient shared across all instances and methods
         private static readonly HttpClient _httpClient = new HttpClient(new HttpClientHandler
         {
             UseProxy = false,
@@ -1244,7 +1244,7 @@ namespace FinancialReport.Services
         }
         #endregion
 
-        // ✅ Optional: Static cleanup method
+        // Optional: Static cleanup method
         public static void Cleanup()
         {
             try
@@ -1466,7 +1466,7 @@ namespace FinancialReport.Services
         {
             var results = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-            // ✅ REMOVED: No more 50-call limit!
+            // No artificial call limit — process all prefix placeholders.
             // Process ALL prefix placeholders without any artificial limits
             var keysToProcess = prefixPlaceholders; // Process everything
 
@@ -1871,7 +1871,7 @@ namespace FinancialReport.Services
                 }
                 catch (Exception ex)
                 {
-                    PXTrace.WriteError($"❌ API call failed for filter '{request.ApiCall}': {ex.Message}");
+                    PXTrace.WriteError($"[API] Call failed for filter '{request.ApiCall}': {ex.Message}");
                     lock (apiResults)
                     {
                         apiResults[request.ApiCall] = new List<JToken>();
@@ -1887,13 +1887,13 @@ namespace FinancialReport.Services
             System.Threading.Tasks.Task.WaitAll(tasks.ToArray());
 
             totalStopwatch.Stop();
-            PXTrace.WriteInformation($"🎯 All API calls completed in {totalStopwatch.ElapsedMilliseconds}ms");
+            PXTrace.WriteInformation($"[API] All API calls completed in {totalStopwatch.ElapsedMilliseconds}ms");
 
             // Process results and extract placeholder values
-            PXTrace.WriteInformation($"🔄 Processing results for {requests.Sum(r => r.Placeholders.Count)} placeholders...");
+            PXTrace.WriteInformation($"[API] Processing results for {requests.Sum(r => r.Placeholders.Count)} placeholders...");
             var placeholderValues = processor.ProcessApiResults(requests, apiResults);
 
-            PXTrace.WriteInformation($"✅ Execution complete: {placeholderValues.Count} placeholder values extracted");
+            PXTrace.WriteInformation($"[API] Execution complete: {placeholderValues.Count} placeholder values extracted");
 
             return placeholderValues;
         }
@@ -1913,7 +1913,7 @@ namespace FinancialReport.Services
             var results = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var sw = System.Diagnostics.Stopwatch.StartNew();
 
-            PXTrace.WriteInformation($"🔄 Processing {placeholderRequests.Sum(r => r.Placeholders.Count)} placeholders from fetched data...");
+            PXTrace.WriteInformation($"[API] Processing {placeholderRequests.Sum(r => r.Placeholders.Count)} placeholders from fetched data...");
 
             // Process each placeholder request
             foreach (var request in placeholderRequests)
@@ -1927,7 +1927,7 @@ namespace FinancialReport.Services
             }
 
             sw.Stop();
-            PXTrace.WriteInformation($"✅ Placeholder processing completed in {sw.ElapsedMilliseconds}ms");
+            PXTrace.WriteInformation($"[API] Placeholder processing completed in {sw.ElapsedMilliseconds}ms");
 
             return results;
         }
