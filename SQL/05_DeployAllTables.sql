@@ -29,18 +29,17 @@ BEGIN
         [Organization]           [nvarchar](50)   NULL,
         [Ledger]                 [nvarchar](20)   NULL,
         [DefinitionID]           [int]            NULL,
-        [Status]                 [nvarchar](100)  NOT NULL DEFAULT('File not Generated'),
+        [Status]                 [nvarchar](1)    NOT NULL DEFAULT('N'),
         [GeneratedFileID]        [uniqueidentifier] NULL,
         [UploadedFileID]         [uniqueidentifier] NULL,
         [UploadedFileIDDisplay]  [nvarchar](225)  NULL,
         [CompanyNum]             [int]            NULL,
-        [Selected]               [bit]            NULL DEFAULT(0),
         [PresentationTitle]      [nvarchar](500)  NULL,
         [PresentationDescription][nvarchar](2000) NULL,
         [GammaTemplateId]        [nvarchar](100)  NULL,
         [SlideGeneratedFileID]   [uniqueidentifier] NULL,
         [PresentationMarkdown]   [nvarchar](max)  NULL,
-        [SlideStatus]            [nvarchar](50)   NULL DEFAULT('File not Generated'),
+        [SlideStatus]            [nvarchar](1)    NULL DEFAULT('N'),
         [NoteID]                 [uniqueidentifier] NOT NULL DEFAULT(NEWID()),
         [CreatedDateTime]        [datetime]       NOT NULL DEFAULT(GETDATE()),
         [CreatedByID]            [uniqueidentifier] NOT NULL DEFAULT('00000000-0000-0000-0000-000000000000'),
@@ -104,15 +103,31 @@ BEGIN
           PRINT '  + PresentationMarkdown' END
 
     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[FLRTFinancialReport]') AND name = 'SlideStatus')
-    BEGIN ALTER TABLE [dbo].[FLRTFinancialReport] ADD [SlideStatus] [nvarchar](50) NULL DEFAULT('File not Generated')
+    BEGIN ALTER TABLE [dbo].[FLRTFinancialReport] ADD [SlideStatus] [nvarchar](1) NULL DEFAULT('N')
           PRINT '  + SlideStatus' END
 
-    -- Expand SlideStatus to NVARCHAR(50) if still at old size
+    -- Migrate old sentence-value status codes to single-char codes
+    UPDATE [dbo].[FLRTFinancialReport] SET [Status] = 'N' WHERE [Status] = 'File not Generated'
+    UPDATE [dbo].[FLRTFinancialReport] SET [Status] = 'P' WHERE [Status] = 'File Generation In Progress'
+    UPDATE [dbo].[FLRTFinancialReport] SET [Status] = 'C' WHERE [Status] = 'Ready to Download'
+    UPDATE [dbo].[FLRTFinancialReport] SET [Status] = 'F' WHERE [Status] = 'Failed to Generate File'
+    UPDATE [dbo].[FLRTFinancialReport] SET [SlideStatus] = 'N' WHERE [SlideStatus] = 'File not Generated'
+    UPDATE [dbo].[FLRTFinancialReport] SET [SlideStatus] = 'P' WHERE [SlideStatus] = 'File Generation In Progress'
+    UPDATE [dbo].[FLRTFinancialReport] SET [SlideStatus] = 'C' WHERE [SlideStatus] = 'Ready to Download'
+    UPDATE [dbo].[FLRTFinancialReport] SET [SlideStatus] = 'F' WHERE [SlideStatus] = 'Failed to Generate File'
+
+    -- Shrink columns to NVARCHAR(1) if still at old size
+    IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+               WHERE TABLE_NAME = 'FLRTFinancialReport' AND COLUMN_NAME = 'Status'
+                 AND CHARACTER_MAXIMUM_LENGTH > 1)
+    BEGIN ALTER TABLE [dbo].[FLRTFinancialReport] ALTER COLUMN [Status] NVARCHAR(1) NOT NULL
+          PRINT '  ~ Status shrunk to NVARCHAR(1)' END
+
     IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
                WHERE TABLE_NAME = 'FLRTFinancialReport' AND COLUMN_NAME = 'SlideStatus'
-                 AND CHARACTER_MAXIMUM_LENGTH < 50)
-    BEGIN ALTER TABLE [dbo].[FLRTFinancialReport] ALTER COLUMN [SlideStatus] NVARCHAR(50) NULL
-          PRINT '  ~ SlideStatus expanded to NVARCHAR(50)' END
+                 AND CHARACTER_MAXIMUM_LENGTH > 1)
+    BEGIN ALTER TABLE [dbo].[FLRTFinancialReport] ALTER COLUMN [SlideStatus] NVARCHAR(1) NULL
+          PRINT '  ~ SlideStatus shrunk to NVARCHAR(1)' END
 
     PRINT 'FLRTFinancialReport column check done.'
 END
@@ -137,8 +152,6 @@ BEGIN
         [ClientSecretNew]        [nvarchar](255)  NULL,
         [UsernameNew]            [nvarchar](255)  NULL,
         [PasswordNew]            [nvarchar](255)  NULL,
-        [AlaiApiKey]             [nvarchar](255)  NULL,
-        [SlidesGptApiKey]        [nvarchar](255)  NULL,
         [GammaApiKey]            [nvarchar](255)  NULL,
         [NoteID]                 [uniqueidentifier] NOT NULL DEFAULT(NEWID()),
         [CreatedDateTime]        [datetime]       NOT NULL DEFAULT(GETDATE()),
@@ -177,14 +190,6 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[FLRTTenantCredentials]') AND name = 'PasswordNew')
     BEGIN ALTER TABLE [dbo].[FLRTTenantCredentials] ADD [PasswordNew] [nvarchar](255) NULL
           PRINT '  + PasswordNew' END
-
-    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[FLRTTenantCredentials]') AND name = 'AlaiApiKey')
-    BEGIN ALTER TABLE [dbo].[FLRTTenantCredentials] ADD [AlaiApiKey] [nvarchar](255) NULL
-          PRINT '  + AlaiApiKey' END
-
-    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[FLRTTenantCredentials]') AND name = 'SlidesGptApiKey')
-    BEGIN ALTER TABLE [dbo].[FLRTTenantCredentials] ADD [SlidesGptApiKey] [nvarchar](255) NULL
-          PRINT '  + SlidesGptApiKey' END
 
     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[FLRTTenantCredentials]') AND name = 'GammaApiKey')
     BEGIN ALTER TABLE [dbo].[FLRTTenantCredentials] ADD [GammaApiKey] [nvarchar](255) NULL

@@ -36,6 +36,7 @@ namespace FinancialReport.Services
         {
             // ── Derive period labels ───────────────────────────────────────────────
             int month = int.TryParse(report.FinancialMonth, out int m) ? m : 12;
+            if (month < 1 || month > 12) month = 12;
             int year  = int.TryParse(report.CurrYear,       out int y) ? y : DateTime.Now.Year;
 
             int prevMonth     = month == 1 ? 12 : month - 1;
@@ -60,61 +61,65 @@ namespace FinancialReport.Services
             sb.AppendLine($"**Prior Year (same month):** {pyLabel}");
             sb.AppendLine();
 
-            if (!string.IsNullOrWhiteSpace(report.PresentationDescription))
-            {
-                sb.AppendLine(report.PresentationDescription);
-                sb.AppendLine();
-            }
-
             sb.AppendLine("---");
             sb.AppendLine();
 
-            // ── CFO prompt ────────────────────────────────────────────────────────
-            sb.AppendLine("You are a **Chief Financial Officer (CFO)** preparing a professional financial analysis presentation for senior management and board members.");
-            sb.AppendLine();
-            sb.AppendLine("Your task is to analyze the financial data provided below and produce a professional **slide deck**.");
-            sb.AppendLine();
-            sb.AppendLine("## Presentation Requirements");
-            sb.AppendLine();
-            sb.AppendLine("The presentation should:");
-            sb.AppendLine("- Be written in a professional CFO-level tone");
-            sb.AppendLine("- Provide insights, not just repeat numbers");
-            sb.AppendLine("- Highlight key trends, risks, and opportunities");
-            sb.AppendLine("- Include recommendations where appropriate");
-            sb.AppendLine("- Suggest charts where useful (bar chart, trend chart, waterfall, etc.)");
-            sb.AppendLine("- **Calculate percentage changes yourself** (MoM %, YoY %) from the raw figures provided. Round to 1 decimal place.");
-            sb.AppendLine();
-            sb.AppendLine("## Slide Structure");
-            sb.AppendLine();
-            sb.AppendLine("Create a structured slide deck with the following sections:");
-            sb.AppendLine();
-            sb.AppendLine("1. Executive Summary");
-            sb.AppendLine("2. Financial Position Overview");
-            sb.AppendLine("3. Asset Analysis");
-            sb.AppendLine("4. Income Performance");
-            sb.AppendLine("5. Expense Analysis");
-            sb.AppendLine("6. Equity and Capital Structure");
-            sb.AppendLine("7. Liability Analysis");
-            sb.AppendLine("8. Month-over-Month Key Movements");
-            sb.AppendLine("9. Financial Health Assessment");
-            sb.AppendLine("10. Risks and Observations");
-            sb.AppendLine("11. Strategic Recommendations");
-            sb.AppendLine("12. Key Takeaways");
-            sb.AppendLine();
-            sb.AppendLine("Each slide should include:");
-            sb.AppendLine("- **Slide Title**");
-            sb.AppendLine("- **Key bullet insights**");
-            sb.AppendLine("- **Important figures referenced**");
-            sb.AppendLine("- **Suggested chart type**");
-            sb.AppendLine();
-            sb.AppendLine("## Analysis Guidance");
-            sb.AppendLine();
-            sb.AppendLine("Use management-level analysis such as:");
-            sb.AppendLine("- Operational performance");
-            sb.AppendLine("- Balance sheet movement");
-            sb.AppendLine("- Cost control effectiveness");
-            sb.AppendLine("- Sustainability of revenue growth");
-            sb.AppendLine("- Financial stability indicators");
+            // ── Prompt block: custom override or default CFO prompt ───────────────
+            if (!string.IsNullOrWhiteSpace(report.PresentationDescription))
+            {
+                // User-supplied prompt — used as-is, replacing the default CFO instructions.
+                sb.AppendLine(report.PresentationDescription.Trim());
+            }
+            else
+            {
+                // Default CFO prompt ───────────────────────────────────────────────
+                sb.AppendLine("You are a **Chief Financial Officer (CFO)** preparing a professional financial analysis presentation for senior management and board members.");
+                sb.AppendLine();
+                sb.AppendLine("Your task is to analyze the financial data provided below and produce a professional **slide deck**.");
+                sb.AppendLine();
+                sb.AppendLine("## Presentation Requirements");
+                sb.AppendLine();
+                sb.AppendLine("The presentation should:");
+                sb.AppendLine("- Be written in a professional CFO-level tone");
+                sb.AppendLine("- Provide insights, not just repeat numbers");
+                sb.AppendLine("- Highlight key trends, risks, and opportunities");
+                sb.AppendLine("- Include recommendations where appropriate");
+                sb.AppendLine("- Suggest charts where useful (bar chart, trend chart, waterfall, etc.)");
+                sb.AppendLine("- **Calculate percentage changes yourself** (MoM %, YoY %) from the raw figures provided. Round to 1 decimal place.");
+                sb.AppendLine();
+                sb.AppendLine("## Slide Structure");
+                sb.AppendLine();
+                sb.AppendLine("Create a structured slide deck with the following sections:");
+                sb.AppendLine();
+                sb.AppendLine("1. Executive Summary");
+                sb.AppendLine("2. Financial Position Overview");
+                sb.AppendLine("3. Asset Analysis");
+                sb.AppendLine("4. Income Performance");
+                sb.AppendLine("5. Expense Analysis");
+                sb.AppendLine("6. Equity and Capital Structure");
+                sb.AppendLine("7. Liability Analysis");
+                sb.AppendLine("8. Month-over-Month Key Movements");
+                sb.AppendLine("9. Financial Health Assessment");
+                sb.AppendLine("10. Risks and Observations");
+                sb.AppendLine("11. Strategic Recommendations");
+                sb.AppendLine("12. Key Takeaways");
+                sb.AppendLine();
+                sb.AppendLine("Each slide should include:");
+                sb.AppendLine("- **Slide Title**");
+                sb.AppendLine("- **Key bullet insights**");
+                sb.AppendLine("- **Important figures referenced**");
+                sb.AppendLine("- **Suggested chart type**");
+                sb.AppendLine();
+                sb.AppendLine("## Analysis Guidance");
+                sb.AppendLine();
+                sb.AppendLine("Use management-level analysis such as:");
+                sb.AppendLine("- Operational performance");
+                sb.AppendLine("- Balance sheet movement");
+                sb.AppendLine("- Cost control effectiveness");
+                sb.AppendLine("- Sustainability of revenue growth");
+                sb.AppendLine("- Financial stability indicators");
+            }
+
             sb.AppendLine();
             sb.AppendLine("---");
             sb.AppendLine();

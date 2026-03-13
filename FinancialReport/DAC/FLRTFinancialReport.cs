@@ -91,14 +91,6 @@ namespace FinancialReport
     public abstract class noteid : PX.Data.BQL.BqlGuid.Field<noteid> { }
         #endregion
 
-    #region Select 
-    [PXBool]
-    [PXUnboundDefault(false)]
-    [PXUIField(DisplayName = "Select")]
-    public virtual bool? Selected { get; set; }
-    public abstract class selected : PX.Data.BQL.BqlBool.Field<selected> { }
-        #endregion
-
     #region Current Year
     [PXDBString(4, IsUnicode = true)]
     [PXUIField(DisplayName = "Current Year")]
@@ -190,26 +182,15 @@ namespace FinancialReport
     #endregion
 
     #region Status
-        [PXDBString(50, IsUnicode = true)]
-    [PXDefault(ReportStatus.Pending)] // Default status
+    [PXDBString(1, IsUnicode = true)]
+    [PXDefault(ReportStatus.Pending)]
     [PXUIField(DisplayName = "Status", IsReadOnly = true)]
-    [PXStringList(new string[]
-    {
-        ReportStatus.Pending,
-        ReportStatus.InProgress,
-        ReportStatus.Completed,
-        ReportStatus.Failed
-    },
-    new string[]
-    {
-        "Pending",
-        "In Progress",
-        "Ready to Download",
-        "Failed"
-    })]
+    [PXStringList(
+        new[] { ReportStatus.Pending, ReportStatus.InProgress, ReportStatus.Completed, ReportStatus.Failed },
+        new[] { "File not Generated", "In Progress", "Ready to Download", "Failed" })]
     public virtual string Status { get; set; }
     public abstract class status : PX.Data.BQL.BqlString.Field<status> { }
-        #endregion
+    #endregion
 
     #region PresentationTitle
     [PXDBString(500, IsUnicode = true)]
@@ -247,12 +228,12 @@ namespace FinancialReport
     #endregion
 
     #region SlideStatus
-    [PXDBString(50, IsUnicode = true)]
+    [PXDBString(1, IsUnicode = true)]
     [PXDefault(ReportStatus.Pending, PersistingCheck = PXPersistingCheck.Nothing)]
     [PXUIField(DisplayName = "Presentation Status", IsReadOnly = true)]
     [PXStringList(
-        new string[] { ReportStatus.Pending, ReportStatus.InProgress, ReportStatus.Completed, ReportStatus.Failed },
-        new string[] { "Pending", "In Progress", "Ready to Download", "Failed" })]
+        new[] { ReportStatus.Pending, ReportStatus.InProgress, ReportStatus.Completed, ReportStatus.Failed },
+        new[] { "File not Generated", "In Progress", "Ready to Download", "Failed" })]
     public virtual string SlideStatus { get; set; }
     public abstract class slideStatus : PX.Data.BQL.BqlString.Field<slideStatus> { }
     #endregion
@@ -260,15 +241,15 @@ namespace FinancialReport
     #region Report Status
     public static class ReportStatus
     {
-        public const string Pending = "File not Generated";
-        public const string InProgress = "File Generation In Progress";
-        public const string Completed = "Ready to Download";
-        public const string Failed = "Failed to Generate File";
+        public const string Pending    = "N";  // Not generated
+        public const string InProgress = "P";  // Processing
+        public const string Completed  = "C";  // Completed
+        public const string Failed     = "F";  // Failed
 
-        public class pending : PX.Data.BQL.BqlString.Constant<pending> { public pending() : base(Pending) { } }
+        public class pending    : PX.Data.BQL.BqlString.Constant<pending>    { public pending()    : base(Pending)    { } }
         public class inProgress : PX.Data.BQL.BqlString.Constant<inProgress> { public inProgress() : base(InProgress) { } }
-        public class completed : PX.Data.BQL.BqlString.Constant<completed> { public completed() : base(Completed) { } }
-        public class failed : PX.Data.BQL.BqlString.Constant<failed> { public failed() : base(Failed) { } }
+        public class completed  : PX.Data.BQL.BqlString.Constant<completed>  { public completed()  : base(Completed)  { } }
+        public class failed     : PX.Data.BQL.BqlString.Constant<failed>     { public failed()     : base(Failed)     { } }
     }
     #endregion
 

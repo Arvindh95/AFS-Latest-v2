@@ -38,6 +38,11 @@ namespace FinancialReport.Services
         private readonly Dictionary<string, decimal> _pyGlobal = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, decimal> _pmGlobal = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
 
+        // Compiled once at class load — reused across all formula evaluations
+        private static readonly Regex FormulaTokenRegex = new Regex(
+            @"([A-Z][A-Z0-9_]*)|([\d]+\.?[\d]*)|([\+\-\*\/\(\)])",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
         public ReportCalculationEngine(PXGraph graph, RoundingSettings rounding = null)
         {
             _graph = graph ?? throw new ArgumentNullException(nameof(graph));
@@ -325,9 +330,19 @@ namespace FinancialReport.Services
         private List<LineNode> BuildAndSort(List<LineNode> allNodes, HashSet<string> knownPrefixes, Dictionary<string, List<LineNode>> childrenByParent)
         {
             // Map GlobalKey → node for fast lookup
-            var nodeMap = allNodes
-                .Where(n => !string.IsNullOrWhiteSpace(n.Line.LineCode))
-                .ToDictionary(n => n.GlobalKey, n => n, StringComparer.OrdinalIgnoreCase);
+            var validNodes = allNodes.Where(n => !string.IsNullOrWhiteSpace(n.Line.LineCode)).ToList();
+
+            // Detect duplicate GlobalKeys before building the dictionary to produce a helpful error
+            var duplicateKeys = validNodes
+                .GroupBy(n => n.GlobalKey, StringComparer.OrdinalIgnoreCase)
+                .Where(g => g.Count() > 1)
+                .Select(g => g.Key)
+                .ToList();
+
+            if (duplicateKeys.Any())
+                throw new PXException(Messages.DuplicateGlobalKey, string.Join(", ", duplicateKeys));
+
+            var nodeMap = validNodes.ToDictionary(n => n.GlobalKey, n => n, StringComparer.OrdinalIgnoreCase);
 
             // Build dependency sets: deps[key] = set of keys that key depends on
             var deps = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
@@ -488,7 +503,8 @@ namespace FinancialReport.Services
         /// </summary>
         private string ResolveToken(string token, string currentPrefix, HashSet<string> knownPrefixes)
         {
-            foreach (string prefix in knownPrefixes)
+            // Sort longest prefix first to avoid shorter prefix shadowing a longer one (e.g. PL vs PLS).
+            foreach (string prefix in knownPrefixes.OrderByDescending(p => p.Length))
             {
                 if (token.StartsWith(prefix + "_", StringComparison.OrdinalIgnoreCase))
                     return token.ToUpper(); // already fully qualified
@@ -576,9 +592,6 @@ namespace FinancialReport.Services
                 total += finalValue;
                 matched++;
             }
-
-            if (matched > 0)
-                PXTrace.WriteInformation($"    Account range {line.AccountFrom}:{line.AccountTo} matched {matched} accounts → {total:#,##0.##}");
 
             return total;
         }
@@ -676,11 +689,9 @@ namespace FinancialReport.Services
                 matched++;
             }
 
-            PXTrace.WriteInformation($"    Account range {line.AccountFrom}:{line.AccountTo} [filtered] matched {matched} of {sourceRows.Count} detail rows → {total:#,##0.##}");
-
             if (matched == 0)
             {
-                PXTrace.WriteWarning($"    Filters: Sub='{line.SubaccountFilter}' Branch='{line.BranchFilter}' Org='{line.OrganizationFilter}' Ledger='{line.LedgerFilter}'");
+                PXTrace.WriteWarning($"    [Engine] No match: range {line.AccountFrom}:{line.AccountTo} filters Sub='{line.SubaccountFilter}' Branch='{line.BranchFilter}' Org='{line.OrganizationFilter}' Ledger='{line.LedgerFilter}'");
                 var inRange = sourceRows.Where(r => IsAccountInRange(r.Account, line.AccountFrom, line.AccountTo)).Take(3).ToList();
                 foreach (var r in inRange)
                     PXTrace.WriteWarning($"    Sample row: Acct={r.Account} Sub='{r.Subaccount}' Branch='{r.BranchID}' Org='{r.OrganizationID}' Ledger='{r.Ledger}' EndBal={r.EndingBalance}");
@@ -788,9 +799,8 @@ namespace FinancialReport.Services
 
         private List<string> TokenizeFormula(string formula)
         {
-            var tokenRegex = new Regex(@"([A-Z][A-Z0-9_]*)|([\d]+\.?[\d]*)|([\+\-\*\/\(\)])", RegexOptions.IgnoreCase);
             var tokens = new List<string>();
-            foreach (Match m in tokenRegex.Matches(formula.Trim()))
+            foreach (Match m in FormulaTokenRegex.Matches(formula.Trim()))
                 tokens.Add(m.Value);
             return tokens;
         }
@@ -833,8 +843,16 @@ namespace FinancialReport.Services
             {
                 string op = tokens[pos++];
                 decimal right = ParseFactor(tokens, ref pos, currentPrefix, knownPrefixes, globalValues);
-                if (op == "/" && right != 0)
-                    result = result / right;
+                if (op == "/")
+                {
+                    if (right != 0)
+                        result = result / right;
+                    else
+                    {
+                        PXTrace.WriteWarning("[Engine] Division by zero in formula — result set to 0.");
+                        result = 0m;
+                    }
+                }
                 else if (op == "*")
                     result = result * right;
             }

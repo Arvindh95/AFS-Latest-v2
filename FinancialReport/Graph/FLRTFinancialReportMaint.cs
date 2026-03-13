@@ -89,13 +89,11 @@ namespace FinancialReport
             var row = (FLRTFinancialReport)e.Row;
             if (row == null) return;
 
-            bool isInProgress      = row.Status == ReportStatus.InProgress;
-            bool isSlideInProgress = row.SlideStatus == ReportStatus.InProgress;
+            bool isInProgress = row.Status == ReportStatus.InProgress;
 
             PXUIFieldAttribute.SetEnabled(cache, row, !isInProgress);
             GenerateReport.SetEnabled(!isInProgress);
             DownloadReport.SetEnabled(!isInProgress);
-            DownloadPresentation.SetVisible(true);
             DownloadPresentation.SetEnabled(row.SlideGeneratedFileID != null);
         }
 
@@ -247,7 +245,7 @@ namespace FinancialReport
                     }
                     finally
                     {
-                        authService?.Logout();
+                        if (authService?.IsAuthenticated == true) authService.Logout();
                         timeoutCancellation?.Dispose();
                     }
                 }, timeoutCancellation.Token);
@@ -346,10 +344,6 @@ namespace FinancialReport
             string tenantName = MapCompanyIDToTenantName(companyID);
             AcumaticaCredentials tenantCredentials = CredentialProvider.GetCredentials(tenantName);
 
-            FLRTTenantCredentials tenantCreds = PXSelect<FLRTTenantCredentials,
-                Where<FLRTTenantCredentials.companyNum, Equal<Required<FLRTTenantCredentials.companyNum>>>>
-                .Select(this, companyID);
-
             var authService = new AuthService(
                 tenantCredentials.BaseURL,
                 tenantCredentials.ClientId,
@@ -394,7 +388,7 @@ namespace FinancialReport
                 }
                 finally
                 {
-                    authService?.Logout();
+                    if (authService?.IsAuthenticated == true) authService.Logout();
                 }
             });
 
@@ -518,7 +512,7 @@ namespace FinancialReport
                 }
                 finally
                 {
-                    authService?.Logout();
+                    if (authService?.IsAuthenticated == true) authService.Logout();
                 }
             });
 
@@ -558,7 +552,7 @@ namespace FinancialReport
 
                 if (result != null) return result.GetInt32(0);
             }
-            throw new PXException(Messages.NoCompanyIDFound);
+            throw new PXException(Messages.NoCompanyIDFound, reportID);
         }
 
         public string MapCompanyIDToTenantName(int? companyID)

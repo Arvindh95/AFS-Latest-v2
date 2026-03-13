@@ -160,6 +160,9 @@ namespace FinancialReport.Services
             return newToken;
         }
 
+        /// <summary>True if an access token has been obtained and not yet cleared by Logout.</summary>
+        public bool IsAuthenticated => !string.IsNullOrEmpty(_accessToken);
+
         // Synchronous wrapper — runs on a thread-pool thread to avoid deadlock in sync contexts
         public void Logout()
         {

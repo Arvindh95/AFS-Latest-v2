@@ -95,6 +95,7 @@
     <Compile Include="Services\MarkdownBuilderService.cs" />
     <Compile Include="Services\SlideGenerationService.cs" />
     <Compile Include="Services\GammaApiService.cs" />
+    <Compile Include="Services\ReportDataPipeline.cs" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="DocumentFormat.OpenXml">

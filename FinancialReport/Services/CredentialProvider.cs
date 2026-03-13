@@ -1,6 +1,6 @@
-﻿using PX.Data;
+using PX.Data;
+using System;
 using System.Collections.Generic;
-using System.Text;
 
 namespace FinancialReport.Services
 {
@@ -10,33 +10,39 @@ namespace FinancialReport.Services
         public string ClientSecret { get; set; }
         public string Username { get; set; }
         public string Password { get; set; }
-        public string BaseURL { get; set; } // Add this line
+        public string BaseURL { get; set; }
     }
 
     public static class CredentialProvider
     {
-        // In-memory cache for credentials (thread-safe dictionary)
-        private static readonly Dictionary<string, AcumaticaCredentials> _credentialCache = new Dictionary<string, AcumaticaCredentials>();
+        private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(10);
+
+        // Cache entry wraps credentials with the time they were loaded
+        private static readonly Dictionary<string, (AcumaticaCredentials Creds, DateTime CachedAt)> _credentialCache
+            = new Dictionary<string, (AcumaticaCredentials, DateTime)>(StringComparer.OrdinalIgnoreCase);
+
         private static readonly object _cacheLock = new object();
 
         public static AcumaticaCredentials GetCredentials(string tenant)
         {
-            // Check cache first
+            if (string.IsNullOrEmpty(tenant))
+                throw new PXException(Messages.TenantNameRequired);
+
+            // Return from cache if still within TTL
             lock (_cacheLock)
             {
-                if (_credentialCache.ContainsKey(tenant))
+                if (_credentialCache.TryGetValue(tenant, out var entry) &&
+                    DateTime.UtcNow - entry.CachedAt < CacheTtl)
                 {
-                    PXTrace.WriteInformation($"✅ Credentials retrieved from cache for tenant: {tenant}");
-                    return _credentialCache[tenant];
+                    PXTrace.WriteInformation($"[Cache] Credentials retrieved from cache for tenant: {tenant}");
+                    return entry.Creds;
                 }
             }
 
-            // Not in cache - fetch from database and decrypt
-            PXTrace.WriteInformation($"🔓 Decrypting credentials for tenant: {tenant}");
-            PXGraph graph = PXGraph.CreateInstance<PXGraph>();
+            PXTrace.WriteInformation($"[Decrypt] Loading credentials for tenant: {tenant}");
+            PXGraph graph = new PXGraph();
             try
             {
-                // Query the FLRTTenantCredentials table by TenantName
                 FLRTTenantCredentials record = PXSelect<FLRTTenantCredentials,
                     Where<FLRTTenantCredentials.tenantName, Equal<Required<FLRTTenantCredentials.tenantName>>>>
                     .Select(graph, tenant);
@@ -47,43 +53,21 @@ namespace FinancialReport.Services
                     throw new PXException(Messages.TenantMissingFromDatabase);
                 }
 
-                // Convert byte[] fields to strings and return
-                AcumaticaCredentials credentials = new AcumaticaCredentials
+                var credentials = new AcumaticaCredentials
                 {
-                    //ClientId = !string.IsNullOrWhiteSpace(record.ClientIDNew)
-                    //    ? record.ClientIDNew
-                    //    : Encoding.UTF8.GetString(record.ClientID),
-
-                    //ClientSecret = !string.IsNullOrWhiteSpace(record.ClientSecretNew)
-                    //    ? record.ClientSecretNew
-                    //    : Encoding.UTF8.GetString(record.SecretID),
-
-                    //Username = !string.IsNullOrWhiteSpace(record.UsernameNew)
-                    //    ? record.UsernameNew
-                    //    : Encoding.UTF8.GetString(record.Username),
-
-                    //Password = !string.IsNullOrWhiteSpace(record.PasswordNew)
-                    //    ? record.PasswordNew
-                    //    : Encoding.UTF8.GetString(record.Password),
-
-                    //BaseURL = record.BaseURL
-
-                    ClientId = record.ClientIDNew,
+                    ClientId     = record.ClientIDNew,
                     ClientSecret = record.ClientSecretNew,
-                    Username = record.UsernameNew,
-                    Password = record.PasswordNew,
-                    BaseURL = record.BaseURL
+                    Username     = record.UsernameNew,
+                    Password     = record.PasswordNew,
+                    BaseURL      = record.BaseURL
                 };
 
-                PXTrace.WriteInformation($"Credentials decrypted and cached for tenant {tenant} (CompanyNum {record.CompanyNum}): ClientId={credentials.ClientId}, Username={credentials.Username}");
+                // Log only non-sensitive confirmation — no credential values
+                PXTrace.WriteInformation($"[Decrypt] Credentials loaded for tenant {tenant} (CompanyNum {record.CompanyNum}).");
 
-                // Add to cache
                 lock (_cacheLock)
                 {
-                    if (!_credentialCache.ContainsKey(tenant))
-                    {
-                        _credentialCache[tenant] = credentials;
-                    }
+                    _credentialCache[tenant] = (credentials, DateTime.UtcNow);
                 }
 
                 return credentials;
@@ -95,7 +79,7 @@ namespace FinancialReport.Services
         }
 
         /// <summary>
-        /// Clears the credential cache. Should be called after report generation completes.
+        /// Clears all cached credentials. Call this when any tenant's credentials change.
         /// </summary>
         public static void ClearCache()
         {
@@ -104,23 +88,21 @@ namespace FinancialReport.Services
                 int count = _credentialCache.Count;
                 _credentialCache.Clear();
                 if (count > 0)
-                {
-                    PXTrace.WriteInformation($"🧹 Cleared credential cache ({count} tenant(s))");
-                }
+                    PXTrace.WriteInformation($"[Cache] Cleared credential cache ({count} tenant(s)).");
             }
         }
 
         /// <summary>
-        /// Clears credentials for a specific tenant from the cache.
+        /// Clears cached credentials for a specific tenant.
+        /// Call this from the RowPersisted event of FLRTTenantCredentials.
         /// </summary>
         public static void ClearCache(string tenant)
         {
+            if (string.IsNullOrEmpty(tenant)) return;
             lock (_cacheLock)
             {
                 if (_credentialCache.Remove(tenant))
-                {
-                    PXTrace.WriteInformation($"🧹 Cleared cached credentials for tenant: {tenant}");
-                }
+                    PXTrace.WriteInformation($"[Cache] Cleared cached credentials for tenant: {tenant}.");
             }
         }
     }

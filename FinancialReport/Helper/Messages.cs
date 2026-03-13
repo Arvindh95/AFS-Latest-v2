@@ -19,8 +19,6 @@ namespace FinancialReport
         // ==================================================
         public const string FailedToFetchOData = "Failed to fetch OData";
         public const string PutRequestFailed = "PUT request failed: {0}";
-        public const string PTDBalanceNotFound = "PTDBalance not found in OData response.";
-        public const string EndingBalanceNotFound = "Ending Balance not found in API response.";
         public const string NoAPIFound = "No API credentials found for company";
         public const string NoCompanyIDFound = "No CompanyID found for ReportID {0}.";
 
@@ -48,12 +46,9 @@ namespace FinancialReport
         // ==================================================
         // USER INPUT VALIDATION MESSAGES
         // ==================================================
-        public const string FailedToSelectBranch = "Please select a Branch";
         public const string PleaseSelectABranch = "Please select a Branch";
-        public const string FailedToSelectLedger = "Please select a Ledger";
         public const string PleaseSelectALedger = "Please select a Ledger";
         public const string FailedToSelectBranchorOrg = "Please select a Branch or Organization";
-        public const string NoValueMapping = "No Month or Year Specified";
 
         // ==================================================
         // COMPANY & TENANT CONFIGURATION MESSAGES
@@ -105,6 +100,7 @@ namespace FinancialReport
         public const string DefinitionRequired = "Please select a Report Definition.";
         public const string DuplicatePrefixInReport = "Prefix '{0}' is already used by another linked definition in this report. Each definition must have a unique prefix.";
         public const string CircularDependencyDetected = "Circular dependency detected in report definitions. The following line codes form a cycle and cannot be resolved: {0}. Please revise the formulas to break the cycle.";
+        public const string DuplicateGlobalKey = "Duplicate line code(s) detected: {0}. Each definition prefix and line code combination must be unique across all linked definitions.";
 
         // ==================================================
         // SLIDE / PRESENTATION GENERATION MESSAGES
