@@ -115,7 +115,7 @@ namespace FinancialReport
 
         #region GammaApiKey
         [PXRSACryptString]
-        [PXUIField(DisplayName = "Gamma API Key")]
+        [PXUIField(DisplayName = "Presentation API Key")]
         public virtual string GammaApiKey { get; set; }
         public abstract class gammaApiKey : PX.Data.BQL.BqlString.Field<gammaApiKey> { }
         #endregion

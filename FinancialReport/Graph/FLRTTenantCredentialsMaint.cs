@@ -21,7 +21,7 @@ namespace FinancialReport
         protected void FLRTTenantCredentials_RowPersisting(PXCache cache, PXRowPersistingEventArgs e)
         {
             var row = (FLRTTenantCredentials)e.Row;
-            if (row == null) return;       
+            if (row == null) return;
 
             // Validate required fields
             if (row.CompanyNum == null)

@@ -115,13 +115,13 @@ namespace FinancialReport.Services
             string body  = Task.Run(() => response.Content.ReadAsStringAsync()).GetAwaiter().GetResult();
 
             if (!response.IsSuccessStatusCode)
-                throw new PXException($"[Gamma] Template generation request failed ({(int)response.StatusCode}): {body}");
+                throw new PXException($"[Presentation] Template generation request failed ({(int)response.StatusCode}): {body}");
 
             var result   = JObject.Parse(body);
             string genId = result["generationId"]?.ToString();
 
             if (string.IsNullOrEmpty(genId))
-                throw new PXException($"[Gamma] No generationId returned from template endpoint. Response: {body}");
+                throw new PXException($"[Presentation] No generationId returned from template endpoint. Response: {body}");
 
             return genId;
         }
@@ -154,13 +154,13 @@ namespace FinancialReport.Services
             string body  = Task.Run(() => response.Content.ReadAsStringAsync()).GetAwaiter().GetResult();
 
             if (!response.IsSuccessStatusCode)
-                throw new PXException($"[Gamma] Generation request failed ({(int)response.StatusCode}): {body}");
+                throw new PXException($"[Presentation] Generation request failed ({(int)response.StatusCode}): {body}");
 
             var result   = JObject.Parse(body);
             string genId = result["generationId"]?.ToString();
 
             if (string.IsNullOrEmpty(genId))
-                throw new PXException($"[Gamma] No generationId returned. Response: {body}");
+                throw new PXException($"[Presentation] No generationId returned. Response: {body}");
 
             return genId;
         }
@@ -181,7 +181,17 @@ namespace FinancialReport.Services
                     string body  = await response.Content.ReadAsStringAsync();
 
                     if (!response.IsSuccessStatusCode)
-                        throw new PXException($"[Gamma] Poll failed ({(int)response.StatusCode}): {body}");
+                    {
+                        int statusCode = (int)response.StatusCode;
+                        // Transient gateway errors (502/503/504) — skip this poll and retry
+                        if (statusCode >= 500)
+                        {
+                            PXTrace.WriteWarning($"[Gamma] Poll {i + 1}/{MaxPolls} — transient {statusCode}, retrying...");
+                            continue;
+                        }
+                        // 4xx = real error (bad key, not found, etc.) — fail immediately
+                        throw new PXException($"[Presentation] Poll failed ({statusCode}): {body}");
+                    }
 
                     var result    = JObject.Parse(body);
                     string status = result["status"]?.ToString();
@@ -194,18 +204,18 @@ namespace FinancialReport.Services
                         // gammaUrl is the viewer URL (gamma.app/docs/...) — not downloadable directly.
                         string exportUrl = result["exportUrl"]?.ToString();
                         if (string.IsNullOrEmpty(exportUrl))
-                            throw new PXException($"[Gamma] Generation completed but no exportUrl found. Response: {body}");
+                            throw new PXException($"[Presentation] Generation completed but no exportUrl found. Response: {body}");
                         return exportUrl;
                     }
 
                     if (status == "failed")
                     {
                         string errorMsg = result["error"]?["message"]?.ToString() ?? "Unknown error";
-                        throw new PXException($"[Gamma] Generation failed: {errorMsg}");
+                        throw new PXException($"[Presentation] Generation failed: {errorMsg}");
                     }
                 }
 
-                throw new PXException($"[Gamma] Timed out after {MaxPolls * PollIntervalMs / 1000} seconds waiting for generation to complete.");
+                throw new PXException($"[Presentation] Timed out after {MaxPolls * PollIntervalMs / 1000} seconds waiting for generation to complete.");
             }).GetAwaiter().GetResult();
         }
 
@@ -215,7 +225,7 @@ namespace FinancialReport.Services
             var response = Task.Run(() => _httpClient.GetAsync(url)).GetAwaiter().GetResult();
 
             if (!response.IsSuccessStatusCode)
-                throw new PXException($"[Gamma] File download failed ({(int)response.StatusCode}). URL: {url}");
+                throw new PXException($"[Presentation] File download failed ({(int)response.StatusCode}). URL: {url}");
 
             return Task.Run(() => response.Content.ReadAsByteArrayAsync()).GetAwaiter().GetResult();
         }

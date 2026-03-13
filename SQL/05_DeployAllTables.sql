@@ -195,6 +195,15 @@ BEGIN
     BEGIN ALTER TABLE [dbo].[FLRTTenantCredentials] ADD [GammaApiKey] [nvarchar](255) NULL
           PRINT '  + GammaApiKey' END
 
+    -- Drop deprecated columns if they still exist
+    IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[FLRTTenantCredentials]') AND name = 'AlaiApiKey')
+    BEGIN ALTER TABLE [dbo].[FLRTTenantCredentials] DROP COLUMN [AlaiApiKey]
+          PRINT '  - AlaiApiKey (dropped)' END
+
+    IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[FLRTTenantCredentials]') AND name = 'SlidesGptApiKey')
+    BEGIN ALTER TABLE [dbo].[FLRTTenantCredentials] DROP COLUMN [SlidesGptApiKey]
+          PRINT '  - SlidesGptApiKey (dropped)' END
+
     -- Migrate: add CompanyID column and rebuild PK if CompanyID is missing
     IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[FLRTTenantCredentials]') AND name = 'CompanyID')
     BEGIN

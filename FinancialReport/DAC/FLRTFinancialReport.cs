@@ -201,7 +201,7 @@ namespace FinancialReport
 
     #region GammaTemplateId
     [PXDBString(100, IsUnicode = true)]
-    [PXUIField(DisplayName = "Gamma Template ID")]
+    [PXUIField(DisplayName = "Presentation Template ID")]
     public virtual string GammaTemplateId { get; set; }
     public abstract class gammaTemplateId : PX.Data.BQL.BqlString.Field<gammaTemplateId> { }
     #endregion

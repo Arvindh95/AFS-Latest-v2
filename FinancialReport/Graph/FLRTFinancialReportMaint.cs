@@ -7,6 +7,7 @@ using PX.SM;
 using System.Linq;
 using FinancialReport.Helper;
 using FinancialReport.Services;
+using PX.Data.WorkflowAPI;
 using static FinancialReport.FLRTFinancialReport;
 
 namespace FinancialReport
@@ -139,8 +140,8 @@ namespace FinancialReport
         public PXAction<FLRTFinancialReport> PreviewMarkdown = null!; // Initialized by PXGraph framework
         public PXAction<FLRTFinancialReport> GenerateGamma = null!; // Initialized by PXGraph framework
 
-        [PXButton(CommitChanges = false)]
-        [PXUIField(DisplayName = "Generate Report")]
+        [PXButton(CommitChanges = false, ImageKey = "RecordAdd", ImageSet = "main", Tooltip = "Generate Report", Connotation = ActionConnotation.Success)]
+        [PXUIField(DisplayName = "")]
         protected virtual System.Collections.IEnumerable generateReport(PXAdapter adapter)
         {
             var selectedRecord = FinancialReport.Current;
@@ -284,8 +285,8 @@ namespace FinancialReport
             return adapter.Get();
         }
 
-        [PXButton]
-        [PXUIField(DisplayName = "Download Report", MapEnableRights = PXCacheRights.Select, Visible = true)]
+        [PXButton(ImageKey = "DataEntryF", ImageSet = "main", Tooltip = "Download Report", Connotation = ActionConnotation.Success)]
+        [PXUIField(DisplayName = "", MapEnableRights = PXCacheRights.Select, Visible = true)]
         protected virtual System.Collections.IEnumerable downloadReport(PXAdapter adapter)
         {
             var selectedRecord = FinancialReport.Current;
@@ -299,8 +300,8 @@ namespace FinancialReport
             throw new PXRedirectToFileException(selectedRecord.GeneratedFileID.Value, true);
         }
 
-        [PXButton(CommitChanges = true)]
-        [PXUIField(DisplayName = "Reset Status", MapEnableRights = PXCacheRights.Update, Visible = true)]
+        [PXButton(CommitChanges = true, ImageKey = "Refresh", ImageSet = "main", Tooltip = "Reset Status", Connotation = ActionConnotation.Warning)]
+        [PXUIField(DisplayName = "", MapEnableRights = PXCacheRights.Update, Visible = true)]
         protected virtual System.Collections.IEnumerable resetStatus(PXAdapter adapter)
         {
             var selectedRecord = FinancialReport.Current;
@@ -331,8 +332,8 @@ namespace FinancialReport
             return adapter.Get();
         }
 
-        [PXButton(CommitChanges = true)]
-        [PXUIField(DisplayName = "Preview Markdown", MapEnableRights = PXCacheRights.Update, Visible = true)]
+        [PXButton(CommitChanges = true, ImageKey = "RecordEdit", ImageSet = "main", Tooltip = "Preview Markdown", Connotation = ActionConnotation.Info)]
+        [PXUIField(DisplayName = "", MapEnableRights = PXCacheRights.Update, Visible = true)]
         protected virtual System.Collections.IEnumerable previewMarkdown(PXAdapter adapter)
         {
             var selectedRecord = FinancialReport.Current;
@@ -395,8 +396,8 @@ namespace FinancialReport
             return adapter.Get();
         }
 
-        [PXButton(CommitChanges = true)]
-        [PXUIField(DisplayName = "Generate Gamma", MapEnableRights = PXCacheRights.Update, Visible = true)]
+        [PXButton(CommitChanges = true, ImageKey = "DataEntry", ImageSet = "main", Tooltip = "Generate Presentation", Connotation = ActionConnotation.Info)]
+        [PXUIField(DisplayName = "", MapEnableRights = PXCacheRights.Update, Visible = true)]
         protected virtual System.Collections.IEnumerable generateGamma(PXAdapter adapter)
         {
             var selectedRecord = FinancialReport.Current;
@@ -488,7 +489,7 @@ namespace FinancialReport
 
                     PXTrace.WriteInformation($"[Gamma] Downloaded {pptBytes.Length} bytes.");
 
-                    string fileName = $"{dbRecord.ReportCD}_Gamma_{DateTime.Now:yyyyMMdd_HHmm}.pptx";
+                    string fileName = $"{dbRecord.ReportCD}_Presentation_{DateTime.Now:yyyyMMdd_HHmm}.pptx";
                     var fileService = new FileService(reportGraph);
                     fileID = fileService.SaveGeneratedDocument(fileName, pptBytes, dbRecord);
 
@@ -519,8 +520,8 @@ namespace FinancialReport
             return adapter.Get();
         }
 
-        [PXButton]
-        [PXUIField(DisplayName = "Download Presentation", MapEnableRights = PXCacheRights.Select, Visible = true)]
+        [PXButton(ImageKey = "Copy", ImageSet = "main", Tooltip = "Download Presentation", Connotation = ActionConnotation.Info)]
+        [PXUIField(DisplayName = "", MapEnableRights = PXCacheRights.Select, Visible = true)]
         protected virtual System.Collections.IEnumerable downloadPresentation(PXAdapter adapter)
         {
             var selectedRecord = FinancialReport.Current;
