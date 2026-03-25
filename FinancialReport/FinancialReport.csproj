@@ -96,6 +96,9 @@
     <Compile Include="Services\SlideGenerationService.cs" />
     <Compile Include="Services\GammaApiService.cs" />
     <Compile Include="Services\ReportDataPipeline.cs" />
+    <Compile Include="DAC\FLRTPresentationDefinitionLink.cs" />
+    <Compile Include="DAC\FLRTPresentationGeneration.cs" />
+    <Compile Include="Graph\FLRTFinancialPresentationMaint.cs" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="DocumentFormat.OpenXml">
